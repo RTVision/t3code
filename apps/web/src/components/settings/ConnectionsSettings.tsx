@@ -44,6 +44,7 @@ import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
@@ -59,6 +60,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { EnvironmentIconPicker } from "./EnvironmentIconPicker";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
@@ -1890,7 +1892,9 @@ export function ConnectionsSettings() {
   const setDefaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.setDefaultAdvertisedEndpointKey,
   );
-  const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
+  const canManageLocalBackend =
+    !isLocalEnvironmentDisabled() &&
+    (currentSessionScopes?.includes(AuthAccessWriteScope) ?? false);
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
   const authAccessChanges = useEnvironmentQuery(
     canManageLocalBackend && primaryEnvironmentId !== null
@@ -3125,9 +3129,10 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
-      {canManageLocalBackend ? (
+      {desktopBridge || canManageLocalBackend ? (
         <>
           <SettingsSection {...searchableSetting("connections-environment")}>
+            <LocalEnvironmentSetting />
             {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
               <SettingsRow
                 title={
@@ -3190,7 +3195,7 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
-            {desktopBridge ? (
+            {canManageLocalBackend && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
@@ -3198,12 +3203,12 @@ export function ConnectionsSettings() {
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
-            ) : (
+            ) : canManageLocalBackend ? (
               <>
                 {renderDisabledNetworkAccessRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
-            )}
+            ) : null}
           </SettingsSection>
 
           {isLocalBackendRemotelyReachable ? (
