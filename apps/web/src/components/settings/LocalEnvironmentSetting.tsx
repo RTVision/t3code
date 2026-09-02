@@ -74,7 +74,7 @@ export function LocalEnvironmentSetting() {
                 : "T3 Code will restart and start the local server with your saved settings."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? <p className="px-6 pb-4 text-sm text-destructive">{error}</p> : null}
           <AlertDialogFooter>
             <AlertDialogClose disabled={isUpdating} render={<Button variant="outline" />}>
               Cancel
