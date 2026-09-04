@@ -244,11 +244,10 @@ describe("EnvironmentSupervisor", () => {
         Effect.provideService(RelayClientTracer, Option.some(tracer)),
       );
 
-      const failed = yield* awaitState(
+      yield* awaitState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
       );
-      expect(failed.lastFailure?.message).toBe(`Connection failed. ${NETWORK_BLOCKING_HINT}`);
       const firstAttempt = spans.find((span) => span.name === "relay.connection.attempt");
       expect(firstAttempt).toBeDefined();
 
@@ -506,7 +505,7 @@ describe("EnvironmentSupervisor", () => {
             ? Effect.die(new Error("Native transport defect."))
             : Effect.succeed(PREPARED_CONNECTION),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 

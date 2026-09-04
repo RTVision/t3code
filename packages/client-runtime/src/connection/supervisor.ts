@@ -916,16 +916,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       const attemptSpan: Option.Option<Tracer.Span> = outcome.failure.attemptSpan;
-      const failure: ConnectionAttemptError = outcome.failure.error;
-      const error: ConnectionAttemptError =
-        target._tag === "RelayConnectionTarget" &&
-        failure._tag === "ConnectionTransientError" &&
-        failure.reason === "transport"
-          ? new ConnectionTransientError({
-              ...failure,
-              detail: `${failure.message} ${NETWORK_BLOCKING_HINT}`,
-            })
-          : failure;
+      const error: ConnectionAttemptError = outcome.failure.error;
       latestFailure = error;
       if (error._tag === "ConnectionBlockedError") {
         const blockedIntent = yield* Ref.get(intent);

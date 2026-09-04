@@ -9,11 +9,15 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+
+const encodeRelayError = Schema.encodeEffect(ManagedRelay.ManagedRelayClientError);
+const decodeRelayError = Schema.decodeUnknownEffect(ManagedRelay.ManagedRelayClientError);
 
 function managedRelayTestLayer(
   fetchFn: typeof globalThis.fetch,
@@ -545,8 +549,12 @@ describe("ManagedRelayClient", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "ManagedRelayRequestFailedError",
+        transportFailed: true,
         message: `Could not list relay-managed environments. ${NETWORK_BLOCKING_HINT}`,
       });
+      const encoded = yield* encodeRelayError(error);
+      const decoded = yield* decodeRelayError(encoded);
+      expect(decoded.message).toBe(error.message);
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
   });
 

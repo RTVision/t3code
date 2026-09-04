@@ -146,6 +146,7 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<Mana
   "ManagedRelayRequestFailedError",
   {
     action: ManagedRelayRequestAction,
+    transportFailed: Schema.optionalKey(Schema.Boolean),
     cause: Schema.Defect(),
     relayError: Schema.optional(RelayProtectedError),
     traceId: Schema.optional(Schema.String),
@@ -153,10 +154,7 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<Mana
 ) {
   override get message(): string {
     const message = `Could not ${this.action}.`;
-    return HttpClientError.isHttpClientError(this.cause) &&
-      this.cause.reason._tag === "TransportError"
-      ? `${message} ${NETWORK_BLOCKING_HINT}`
-      : message;
+    return this.transportFailed ? `${message} ${NETWORK_BLOCKING_HINT}` : message;
   }
 }
 
@@ -312,6 +310,8 @@ function relayRequestError(action: ManagedRelayRequestAction) {
   return (cause: RelayHttpRequestError): ManagedRelayClientError =>
     new ManagedRelayRequestFailedError({
       action,
+      transportFailed:
+        HttpClientError.isHttpClientError(cause) && cause.reason._tag === "TransportError",
       cause,
       ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
     });
