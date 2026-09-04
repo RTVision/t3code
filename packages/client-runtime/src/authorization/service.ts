@@ -83,9 +83,7 @@ const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescript
   connectionMethod: ClientConnectionMethod,
 ) {
   return yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError(
-      connectionMethod === "relay" ? mapRemoteDpopEnvironmentError : mapRemoteEnvironmentError,
-    ),
+    Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)),
   );
 });
 

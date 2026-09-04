@@ -5,7 +5,11 @@ import {
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
-import { mapManagedRelayError, mapRemoteDpopEnvironmentError } from "./errors.ts";
+import {
+  mapManagedRelayError,
+  mapRemoteDpopEnvironmentError,
+  mapRemoteEnvironmentError,
+} from "./errors.ts";
 import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -72,6 +76,20 @@ describe("mapManagedRelayError", () => {
 });
 
 describe("mapRemoteDpopEnvironmentError", () => {
+  it("keeps relay descriptor auth failures distinct from DPoP proof failures", () => {
+    const error = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-descriptor",
+    });
+    expect(mapRemoteEnvironmentError(error, "relay").message).toBe(
+      "The environment credential is invalid.",
+    );
+    expect(mapRemoteDpopEnvironmentError(error).message).toBe(
+      `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
+    );
+  });
+
   it.each([
     new RemoteEnvironmentAuthFetchError({
       message: "Failed to fetch remote environment endpoint.",
