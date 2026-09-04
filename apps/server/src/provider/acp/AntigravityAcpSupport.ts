@@ -31,6 +31,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "cancelBehavior"
   | "clientCapabilities"
   | "onStderr"
+  | "onStderrEnd"
   | "resumeMethod"
   | "transformSessionUpdate"
   | "transformStdout"
@@ -59,6 +60,10 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > {
+  const handleStderr = makeAntigravityStderrHandler({
+    ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+    ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
+  });
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
@@ -75,10 +80,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      onStderr: makeAntigravityStderrHandler({
-        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
-        ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
-      }),
+      onStderr: handleStderr,
+      ...(input.onDiagnostic ? { onStderrEnd: handleStderr.flushDiagnostics } : {}),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(

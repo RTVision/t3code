@@ -439,6 +439,24 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expected: "last startup diagnostic",
     },
     {
+      name: "unterminated diagnostic",
+      stderr: ["Failed to create an AF_INET6 socket."],
+      expected: "Failed to create an AF_INET6 socket.",
+    },
+    {
+      name: "oversized diagnostic",
+      stderr: [`discarded prefix ${"x".repeat(65_536)} last startup diagnostic\n`],
+      expected: "last startup diagnostic",
+    },
+    {
+      name: "fragmented oversized authorization message",
+      stderr: [
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${"x".repeat(65_536)}`,
+        "secret-authorization-tail\nlast startup diagnostic",
+      ],
+      expected: "last startup diagnostic",
+    },
+    {
       name: "no diagnostic",
       stderr: [],
       expected: "The downloaded Antigravity runtime could not start in this environment.",
@@ -453,6 +471,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           }
           const helper = command.args[0] === "-e";
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const exitObserved = yield* Deferred.make<void>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1)).pipe(
             Effect.asVoid,
           );
@@ -461,22 +480,26 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
             pid: ChildProcessSpawner.ProcessId(helper ? 1 : 2),
             exitCode: helper
               ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
-              : Deferred.await(exited),
+              : Deferred.await(exited).pipe(
+                  Effect.tap(() => Deferred.succeed(exitObserved, undefined)),
+                ),
             isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
             kill: () => terminate,
             unref: Effect.succeed(Effect.void),
             stdin: Sink.drain,
             stdout: helper
               ? Stream.empty
-              : Stream.fromEffect(Deferred.await(exited)).pipe(Stream.flatMap(() => Stream.empty)),
+              : Stream.fromEffect(terminate).pipe(Stream.flatMap(() => Stream.empty)),
             stderr: helper
               ? Stream.make(
                   encoder.encode(
                     `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeJsonString(command.args.at(-1))}\n`,
                   ),
                 )
-              : Stream.fromIterable(testCase.stderr.map((line) => encoder.encode(line))).pipe(
-                  Stream.ensuring(terminate),
+              : Stream.fromEffect(Deferred.await(exitObserved)).pipe(
+                  Stream.flatMap(() =>
+                    Stream.fromIterable(testCase.stderr.map((line) => encoder.encode(line))),
+                  ),
                 ),
             all: Stream.empty,
             getInputFd: () => Sink.drain,
@@ -494,6 +517,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(state.message).toContain(testCase.expected);
       expect(state.message?.length).toBeLessThan(4_200);
       expect(state.message).not.toContain("discarded prefix");
+      expect(state.message).not.toContain("secret-authorization-tail");
       yield* Deferred.await(stagingReleased);
       yield* expectPreviousRelease(installation);
     }),

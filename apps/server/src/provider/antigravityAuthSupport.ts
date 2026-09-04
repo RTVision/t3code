@@ -470,23 +470,20 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
+  let oversizedLine: "diagnostic" | "discard" | undefined;
+  const isAuthorizationLine = (message: string) =>
+    message.includes(ANTIGRAVITY_AUTH_STDOUT_PREFIX) ||
+    message.includes(ANTIGRAVITY_AUTH_BROWSER_MARKER);
   const handleLine = (line: string) => {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
-    if (message.length > maxBrowserHelperLineLength) {
-      return Effect.void;
-    }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
       : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
         ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
         : undefined;
     if (url === undefined) {
-      // Malformed or indented auth messages must not enter installation diagnostics.
-      const trimmed = message.trimStart();
-      if (
-        trimmed.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX) ||
-        trimmed.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
-      ) {
+      // Malformed or log-prefixed auth messages must not enter installation diagnostics.
+      if (isAuthorizationLine(message)) {
         return Effect.void;
       }
       return input.onDiagnostic?.(message) ?? Effect.void;
@@ -503,10 +500,47 @@ export function makeAntigravityStderrHandler(
     );
   };
 
-  return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
-    const lines = `${pending}${text}`.split("\n");
-    pending = lines.pop() ?? "";
-    if (pending.length > maxBrowserHelperLineLength) pending = "";
-    yield* Effect.forEach(lines, handleLine, { discard: true });
+  const finishLine = () => {
+    const message = pending;
+    const kind = oversizedLine;
+    pending = "";
+    oversizedLine = undefined;
+    if (kind === "discard") {
+      return Effect.void;
+    }
+    if (kind === "diagnostic") return input.onDiagnostic?.(message) ?? Effect.void;
+    return handleLine(message);
+  };
+
+  const handleStderr = Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
+    let offset = 0;
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      const end = newline === -1 ? text.length : newline;
+      if (oversizedLine !== "discard") {
+        pending += text.slice(offset, end);
+        if (pending.length > maxBrowserHelperLineLength) {
+          oversizedLine =
+            isAuthorizationLine(pending) || pending.trimStart().length === 0
+              ? "discard"
+              : "diagnostic";
+          pending = oversizedLine === "discard" ? "" : pending.slice(-maxBrowserHelperLineLength);
+        }
+      }
+      if (newline !== -1) yield* finishLine();
+      offset = end + 1;
+    }
+  });
+
+  return Object.assign(handleStderr, {
+    flushDiagnostics: Effect.suspend(() => {
+      if (pending.length === 0 || oversizedLine === "discard" || isAuthorizationLine(pending)) {
+        return Effect.void;
+      }
+      const message = pending.endsWith("\r") ? pending.slice(0, -1) : pending;
+      pending = "";
+      oversizedLine = undefined;
+      return input.onDiagnostic?.(message) ?? Effect.void;
+    }),
   });
 }
