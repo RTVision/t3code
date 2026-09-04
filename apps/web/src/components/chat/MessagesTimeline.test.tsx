@@ -240,9 +240,14 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it.each([true, false])(
-    "restores the composer after closing tool output only at the end: %s",
-    async (isAtEnd) => {
+  it.each([
+    { toolLifecycleStatus: "inProgress", isAtEnd: true },
+    { toolLifecycleStatus: "inProgress", isAtEnd: false },
+    { toolLifecycleStatus: "completed", isAtEnd: true },
+    { toolLifecycleStatus: "completed", isAtEnd: false },
+  ] as const)(
+    "restores the composer after closing $toolLifecycleStatus tool output only at the end: $isAtEnd",
+    async ({ toolLifecycleStatus, isAtEnd }) => {
       const frames = new Map<number, FrameRequestCallback>();
       let nextFrame = 0;
       vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -279,7 +284,7 @@ describe("MessagesTimeline", () => {
         return (
           <MessagesTimeline
             {...props}
-            isWorking
+            isWorking={toolLifecycleStatus === "inProgress"}
             onToolOutputCollapsedAtEnd={composer.restoreAfterTimelineReachedEnd}
             timelineEntries={[
               {
@@ -291,7 +296,8 @@ describe("MessagesTimeline", () => {
                   createdAt: MESSAGE_CREATED_AT,
                   label: "Run command",
                   tone: "tool",
-                  toolLifecycleStatus: "inProgress",
+                  toolLifecycleStatus,
+                  detail: "Command output",
                 },
               },
             ]}

@@ -1738,7 +1738,11 @@ const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
+  const onToggleStandaloneEntry = useCallback(
+    (collapsed: boolean) => onToggleWorkEntry(anchorKey, collapsed),
+    [anchorKey, onToggleWorkEntry],
+  );
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroup)),
     [groupedEntries, isExpandedToolGroup],
@@ -1766,6 +1770,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             workspaceRoot={workspaceRoot}
             isExpandedToolGroupEntry={false}
             displayLabel={displayLabel}
+            onToggleEntry={onToggleStandaloneEntry}
           />
         ))}
       </div>
@@ -3068,6 +3073,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
   isExpandedToolGroupEntry: boolean;
   displayLabel?: string | undefined;
+  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   // Before any hooks: spawn CTA rows render their own component.
@@ -3080,6 +3086,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       workspaceRoot={workspaceRoot}
       isExpandedToolGroupEntry={isExpandedToolGroupEntry}
       displayLabel={displayLabel}
+      onToggleEntry={props.onToggleEntry}
     />
   );
 });
@@ -3089,6 +3096,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workspaceRoot: string | undefined;
   isExpandedToolGroupEntry: boolean;
   displayLabel?: string | undefined;
+  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
   const { threadRef, onImageExpand } = use(TimelineRowCtx);
@@ -3102,6 +3110,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       groupView.onToggleEntry(!next);
       if (next) groupView.state.expandedEntries.add(workEntry.id);
       else groupView.state.expandedEntries.delete(workEntry.id);
+    } else {
+      props.onToggleEntry?.(!next);
     }
     setExpanded(next);
   };
