@@ -37,6 +37,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Receives native stderr lines with authorization messages excluded. */
+  readonly onDiagnostic?: (message: string) => Effect.Effect<void>;
   /**
    * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
    * workspace reads and writes through T3, which turns each edit into a
@@ -73,9 +75,10 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      onStderr: makeAntigravityStderrHandler(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
-      ),
+      onStderr: makeAntigravityStderrHandler({
+        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
+      }),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(

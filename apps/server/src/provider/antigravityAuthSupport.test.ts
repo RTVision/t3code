@@ -391,6 +391,26 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
+  it.effect("keeps sign-in URLs out of collected native diagnostics", () =>
+    Effect.gen(function* () {
+      const diagnostics: string[] = [];
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: () => Effect.void,
+        onDiagnostic: (message) => Effect.sync(() => void diagnostics.push(message)),
+      });
+      yield* handleStderr("Failed to create an AF_");
+      yield* handleStderr("INET6 socket.\r\n");
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+      yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+      );
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      expect(diagnostics).toEqual(["Failed to create an AF_INET6 socket."]);
+    }),
+  );
+
   it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
     Effect.gen(function* () {
       const urls: string[] = [];

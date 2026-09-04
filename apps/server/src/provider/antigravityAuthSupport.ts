@@ -460,12 +460,13 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
-/** Receives native 1.1.1 sign-in URLs and T3 browser-helper URLs without logging stderr. */
+/** Routes sign-in URLs separately from optional native diagnostic lines. */
 export function makeAntigravityStderrHandler(
   input: {
     readonly onAuthorizationUrl?: (
       authorizationUrl: string,
     ) => Effect.Effect<void, AcpErrors.AcpError>;
+    readonly onDiagnostic?: (message: string) => Effect.Effect<void>;
   } = {},
 ) {
   let pending = "";
@@ -479,7 +480,17 @@ export function makeAntigravityStderrHandler(
       : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
         ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
         : undefined;
-    if (url === undefined) return Effect.void;
+    if (url === undefined) {
+      // Malformed or indented auth messages must not enter installation diagnostics.
+      const trimmed = message.trimStart();
+      if (
+        trimmed.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX) ||
+        trimmed.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
+      ) {
+        return Effect.void;
+      }
+      return input.onDiagnostic?.(message) ?? Effect.void;
+    }
     return url.pipe(
       Effect.flatMap(parseAntigravityAuthorizationUrl),
       Effect.matchEffect({
