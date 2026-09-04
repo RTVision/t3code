@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   CommandId,
+  CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -667,7 +668,107 @@ describe("CheckpointReactor", () => {
     }),
   );
 
-  it("refreshes local git status state on turn completion using the session cwd", async () => {
+  effectIt.effect("captures every edit after a mid-turn diff update in the same turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const turnId = asTurnId("turn-1");
+      const assistantMessageId = MessageId.make("assistant:mid-turn");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("evt-mid-turn-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId,
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.baseline.captured",
+      });
+
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "early.ts"), "export const early = 1;\n");
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-mid-turn-diff"),
+        threadId,
+        turnId,
+        completedAt: createdAt,
+        checkpointRef: CheckpointRef.make("provider-diff:mid-turn"),
+        assistantMessageId,
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "late.ts"), "export const late = 2;\n");
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-mid-turn-complete"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId,
+        payload: { state: "completed" },
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        turnId,
+        checkpointTurnCount: 1,
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "turn.processing.quiesced",
+        turnId,
+      });
+      yield* Effect.promise(harness.drain);
+      const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.checkpoints).toHaveLength(1);
+      expect(thread?.checkpoints[0]?.assistantMessageId).toBe(assistantMessageId);
+      expect(thread?.checkpoints[0]?.files.map((file) => file.path)).toEqual([
+        "early.ts",
+        "late.ts",
+      ]);
+      expect(
+        gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "late.ts"),
+      ).toBe("export const late = 2;\n");
+
+      const followUpTurnId = asTurnId("turn-2");
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("evt-follow-up-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId: followUpTurnId,
+      });
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-follow-up-complete"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt,
+        threadId,
+        turnId: followUpTurnId,
+        payload: { state: "completed" },
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        turnId: followUpTurnId,
+        checkpointTurnCount: 2,
+      });
+      const followUp = (yield* Effect.promise(harness.readModel)).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(
+        followUp?.checkpoints.find((checkpoint) => checkpoint.turnId === followUpTurnId),
+      ).toMatchObject({ checkpointTurnCount: 2, files: [] });
+    }),
+  );
     const gitStatusRefreshCalls: string[] = [];
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
