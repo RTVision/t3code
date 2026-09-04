@@ -3,6 +3,7 @@ import type { RelayProtectedError } from "@t3tools/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -178,6 +179,15 @@ export function mapRemoteEnvironmentError(
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
 ): ConnectionAttemptError {
+  if (
+    error._tag === "RemoteEnvironmentAuthFetchError" ||
+    error._tag === "RemoteEnvironmentAuthTimeoutError"
+  ) {
+    return new ConnectionTransientError({
+      reason: error._tag === "RemoteEnvironmentAuthFetchError" ? "network" : "timeout",
+      detail: `${error.message} ${NETWORK_BLOCKING_HINT}`,
+    });
+  }
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
       reason: "authentication",

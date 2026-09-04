@@ -30,6 +30,7 @@ import {
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -243,10 +244,11 @@ describe("EnvironmentSupervisor", () => {
         Effect.provideService(RelayClientTracer, Option.some(tracer)),
       );
 
-      yield* awaitState(
+      const failed = yield* awaitState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
       );
+      expect(failed.lastFailure?.message).toBe(`Connection failed. ${NETWORK_BLOCKING_HINT}`);
       const firstAttempt = spans.find((span) => span.name === "relay.connection.attempt");
       expect(firstAttempt).toBeDefined();
 
@@ -465,6 +467,35 @@ describe("EnvironmentSupervisor", () => {
         },
       });
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "shows a network hint for a stalled relay connection and clears it after recovery",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          prepare: (attempt) =>
+            attempt === 1 ? Effect.never : Effect.succeed(PREPARED_CONNECTION),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connecting");
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        expect(failed.lastFailure?.message).toBe(
+          `Test environment did not respond during connection setup. ${NETWORK_BLOCKING_HINT}`,
+        );
+
+        yield* TestClock.adjust("3 seconds");
+        const recovered = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected",
+        );
+        expect(recovered.lastFailure).toBeNull();
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("converts unexpected driver defects into retryable failures", () =>
