@@ -679,6 +679,21 @@ describe("CheckpointReactor", () => {
         const turnId = asTurnId("turn-1");
         const assistantMessageId = MessageId.make("assistant:mid-turn");
         const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-running"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
         harness.provider.emit({
           type: "turn.started",
           eventId: EventId.make("evt-mid-turn-start"),
@@ -708,6 +723,21 @@ describe("CheckpointReactor", () => {
         yield* Effect.promise(harness.drain);
 
         NodeFS.writeFileSync(NodePath.join(harness.cwd, "late.ts"), "export const late = 2;\n");
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-settled"),
+          threadId,
+          session: {
+            threadId,
+            status: terminalEventType === "turn.aborted" ? "interrupted" : "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
         harness.provider.emit({
           eventId: EventId.make("evt-mid-turn-complete"),
           provider: ProviderDriverKind.make("codex"),
@@ -735,6 +765,9 @@ describe("CheckpointReactor", () => {
         );
         expect(thread?.checkpoints).toHaveLength(1);
         expect(thread?.checkpoints[0]?.status).toBe("ready");
+        expect(thread?.latestTurn?.state).toBe(
+          terminalEventType === "turn.aborted" ? "interrupted" : "completed",
+        );
         expect(thread?.checkpoints[0]?.assistantMessageId).toBe(assistantMessageId);
         expect(thread?.checkpoints[0]?.files.map((file) => file.path)).toEqual([
           "early.ts",
