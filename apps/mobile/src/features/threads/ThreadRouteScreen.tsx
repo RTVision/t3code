@@ -7,7 +7,13 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  AuthTerminalOperateScope,
+  AuthTerminalReadScope,
+  EnvironmentId,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -36,6 +42,7 @@ import {
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -193,6 +200,14 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const canReadTerminal = useEnvironmentScope(
+    selectedThread?.environmentId ?? null,
+    AuthTerminalReadScope,
+  );
+  const canOperateTerminal = useEnvironmentScope(
+    selectedThread?.environmentId ?? null,
+    AuthTerminalOperateScope,
+  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -506,7 +521,12 @@ function ThreadRouteContent(
         hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
       });
 
-      if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (
+        !selectedThread ||
+        !selectedThreadProject?.workspaceRoot ||
+        (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope) &&
+          !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope))
+      ) {
         return;
       }
 
@@ -526,7 +546,11 @@ function ThreadRouteContent(
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
-    if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (
+      !selectedThread ||
+      !selectedThreadProject?.workspaceRoot ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+    ) {
       return;
     }
 
@@ -549,10 +573,14 @@ function ThreadRouteContent(
         hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
       });
 
-      if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (
+        !selectedThread ||
+        !selectedThreadProject?.workspaceRoot ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+      ) {
         terminalDebugLog("project-script:abort", {
           scriptId: script.id,
-          reason: "no-thread-or-workspace",
+          reason: "no-thread-workspace-or-terminal-access",
         });
         return;
       }
@@ -625,7 +653,9 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenTerminal:
+      Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
+    canOperateTerminal,
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
     projectScripts: selectedThreadProject?.scripts ?? [],
     terminalSessions: terminalMenuSessions,
@@ -697,7 +727,7 @@ function ThreadRouteContent(
         onPress: handleOpenFilesInspector,
       });
     }
-    if (selectedThreadProject?.workspaceRoot) {
+    if (selectedThreadProject?.workspaceRoot && (canReadTerminal || canOperateTerminal)) {
       actions.push({
         accessibilityLabel: "Open terminal",
         icon: "terminal",
@@ -718,6 +748,8 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    canReadTerminal,
+    canOperateTerminal,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
