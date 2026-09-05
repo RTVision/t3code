@@ -950,51 +950,42 @@ layer("GiteaPullRequestApi", (it) => {
     "marks review activity truncated when nested review comments exceed the conversation bound",
     () =>
       Effect.gen(function* () {
-        mockedRequest
-          .mockReturnValueOnce(
-            Effect.succeed(
-              response([
-                {
-                  id: 21,
-                  body: "Review",
-                  state: "COMMENT",
-                  submitted_at: "2026-09-03T11:00:00Z",
-                },
-              ]),
-            ),
-          )
-          .mockReturnValueOnce(
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "Review", state: "COMMENT", submitted_at: "2026-09-03T11:00:00Z" },
+            ]),
+          ),
+        );
+        for (let page = 0; page < 4; page += 1) {
+          mockedRequest.mockReturnValueOnce(
             Effect.succeed(
               response(
-                [
-                  {
-                    id: 31,
-                    body: "First",
-                    path: "src/a.ts",
-                    position: 1,
-                    created_at: "2026-09-03T11:01:00Z",
-                  },
-                ],
+                Array.from({ length: 50 }, (_, index) => ({
+                  id: 31 + page * 50 + index,
+                  body: "Comment",
+                  path: "src/a.ts",
+                  position: 1,
+                  created_at: "2026-09-03T11:01:00Z",
+                })),
                 { "x-total-count": "501" },
               ),
             ),
-          )
-          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
-          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
-          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
-          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })));
+          );
+        }
         const api = yield* GiteaPullRequestApi.make;
         const result = yield* api.listReviews({
           host: "forge.example.test",
           repository: "acme/web",
           number: 7,
         });
-
         assert.isTrue(result.truncated);
         expect(result.comments).toContainEqual(
           expect.objectContaining({ id: "review-comment:31" }),
         );
-        expect(callAt(5).path).toContain("page=5");
+        expect(result.comments).toHaveLength(201);
+        expect(callAt(4).path).toContain("page=4");
+        expect(mockedRequest).toHaveBeenCalledTimes(5);
       }),
   );
 
