@@ -1173,6 +1173,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   >();
   const authSecrets = new Map<string, string>();
 
+  const hasTunnelForRemoteServer = (target: DesktopSshEnvironmentTarget) => {
+    const stateKey = remoteStateKey(target);
+    return [...tunnels.values()].some((candidate) => remoteStateKey(candidate.target) === stateKey);
+  };
+
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
@@ -1394,6 +1399,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           remotePort: tunnelEntry.remotePort,
         });
         tunnels.delete(tunnelEntry.key);
+        const shouldStopRemoteServer = !hasTunnelForRemoteServer(tunnelEntry.target);
         const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
         yield* Effect.all(
           [
@@ -1401,24 +1407,28 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               killSignal: "SIGTERM",
               forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
             }),
-            stopRemoteServer(
-              tunnelEntry.target,
-              authSecret === null
-                ? {
-                    batchMode: "yes",
-                    interactiveAuth: false,
-                  }
-                : {
-                    authSecret,
-                    batchMode: "no",
-                    interactiveAuth: true,
-                  },
-            ).pipe(
-              Effect.provideService(SshRunner, sshRunnerService),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-              Effect.provideService(FileSystem.FileSystem, fileSystemService),
-              Effect.provideService(Path.Path, pathService),
-            ),
+            ...(shouldStopRemoteServer
+              ? [
+                  stopRemoteServer(
+                    tunnelEntry.target,
+                    authSecret === null
+                      ? {
+                          batchMode: "yes",
+                          interactiveAuth: false,
+                        }
+                      : {
+                          authSecret,
+                          batchMode: "no",
+                          interactiveAuth: true,
+                        },
+                  ).pipe(
+                    Effect.provideService(SshRunner, sshRunnerService),
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
+                    Effect.provideService(FileSystem.FileSystem, fileSystemService),
+                    Effect.provideService(Path.Path, pathService),
+                  ),
+                ]
+              : []),
           ],
           { concurrency: "unbounded" },
         ).pipe(Effect.ignore);
@@ -1599,7 +1609,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       yield* closeTunnelEntry(entry);
     }
     yield* cancelPendingTunnelEntry(key, resolvedTarget);
-    if (entry === null) {
+    if (entry === null && !hasTunnelForRemoteServer(resolvedTarget)) {
       yield* runWithSshAuth({
         key,
         target: resolvedTarget,
