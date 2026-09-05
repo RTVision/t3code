@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
@@ -123,6 +124,44 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(path).toContain("projects/acme%2Fweb/merge_requests");
       expect(path).toContain("per_page=11");
       expect(path).toContain("state=opened");
+    }),
+  );
+
+  it.effect("uses the requested repository for a standard same-project REST row", () =>
+    Effect.gen(function* () {
+      // Standard GitLab REST rows commonly carry only the numeric project ids. Equal ids prove
+      // this is the requested project; the request path supplies its qualified repository name.
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))([
+              {
+                iid: 7,
+                title: "Merge request 7",
+                web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+                source_branch: "feat/page",
+                target_branch: "main",
+                source_project_id: 100,
+                target_project_id: 100,
+                created_at: "2026-07-01T00:00:00Z",
+                updated_at: "2026-07-02T00:00:00Z",
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const batch = yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(batch.items[0]?.headRepositoryNameWithOwner).toBe("acme/web");
     }),
   );
 
@@ -866,6 +905,30 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(argsOfCall(0)[1]).toBe(
         "projects/acme%2Fweb/merge_requests/7?include_diverged_commits_count=true",
       );
+    }),
+  );
+
+  it.effect("uses the requested repository for a standard same-project detail row", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              source_project_id: 100,
+              target_project_id: 100,
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(detail.headRepositoryNameWithOwner).toBe("acme/web");
     }),
   );
 

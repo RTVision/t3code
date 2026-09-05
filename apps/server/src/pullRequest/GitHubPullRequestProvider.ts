@@ -210,6 +210,8 @@ export const make = Effect.gen(function* () {
     kind: "github",
     capabilities: CAPABILITIES,
 
+    getNativeDependencyMembership: (input) => cli.getNativeDependencyMembership(input),
+
     getViewer: (input) =>
       cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
 
@@ -223,6 +225,7 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
+          relationshipOnly: input.relationshipOnly,
           query: input.query,
           cursor: input.cursor,
           filters: input.filters,
@@ -230,25 +233,27 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              // A listing without faces is still a listing, so a failed lookup falls back to
-              // the initials rather than taking the rows down with it.
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
+            input.relationshipOnly
+              ? Effect.succeed(page)
+              : cli
+                  .listActorAvatars({
+                    cwd: input.cwd,
+                    repository: input.repository,
+                    host: input.host,
+                    ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
+                  })
+                  // A listing without faces is still a listing, so a failed lookup falls back to
+                  // the initials rather than taking the rows down with it.
+                  .pipe(
+                    Effect.orElseSucceed(() => new Map<string, string>()),
+                    Effect.map((avatarsByLogin) => ({
+                      ...page,
+                      items: page.items.map((item) => ({
+                        ...item,
+                        author: withAvatar(item.author, avatarsByLogin, input.host),
+                      })),
+                    })),
+                  ),
           ),
         ),
 

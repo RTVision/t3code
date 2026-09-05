@@ -306,7 +306,13 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   bootstrapToken: Schema.optionalKey(Schema.String),
 });
 
+export const DesktopSshRunnerSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("windows") }),
+  Schema.Struct({ kind: Schema.Literal("wsl"), distro: Schema.String }),
+]);
+
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
+  runner: Schema.optionalKey(DesktopSshRunnerSchema),
   alias: Schema.String,
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),
@@ -364,6 +370,7 @@ export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
 
 export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
   issuePairingToken: Schema.optionalKey(Schema.Boolean),
+  isNewTarget: Schema.optionalKey(Schema.Boolean),
 });
 
 export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
@@ -491,6 +498,7 @@ export interface DesktopWslState {
   // started. Toggling this requires an app restart because the
   // primary backend's spec is captured once at layer init.
   wslOnly: boolean;
+  sshRunner?: "windows" | "wsl";
   distros: readonly DesktopWslDistro[];
   // Reason the dual-mode WSL backend last failed preflight (no node, wrong
   // version, missing build tools), or null. Surfaced inline in Connections
@@ -504,6 +512,7 @@ export const DesktopWslStateSchema = Schema.Struct({
   distro: Schema.NullOr(Schema.String),
   available: Schema.Boolean,
   wslOnly: Schema.Boolean,
+  sshRunner: Schema.optionalKey(Schema.Literals(["windows", "wsl"])),
   distros: Schema.Array(DesktopWslDistroSchema),
   preflightError: Schema.NullOr(Schema.String),
 });
@@ -1085,7 +1094,7 @@ export interface DesktopBridge {
   resolveSshHost: (alias: string) => Promise<DesktopSshEnvironmentTarget>;
   ensureSshEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { issuePairingToken?: boolean },
+    options?: { issuePairingToken?: boolean; isNewTarget?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
@@ -1111,6 +1120,7 @@ export interface DesktopBridge {
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
+  setSshRunner: (runner: "windows" | "wsl") => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;

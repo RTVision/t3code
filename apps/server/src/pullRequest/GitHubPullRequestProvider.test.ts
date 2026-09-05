@@ -8,6 +8,30 @@ import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
+it.effect("dependency listings do not spend host requests loading actor avatars", () =>
+  Effect.gen(function* () {
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          listPullRequests: () => Effect.succeed({ items: [], truncated: false, continues: false }),
+          listActorAvatars: () => Effect.die("relationship read requested avatars"),
+        }),
+      ),
+    );
+    const page = yield* provider.listChangeRequests({
+      cwd: "/w",
+      host: "github.com",
+      repository: "acme/web",
+      state: "open",
+      involvement: "all",
+      viewer: "reader",
+      limit: 200,
+      relationshipOnly: true,
+    });
+    expect(page).toEqual({ items: [], truncated: false, continues: false });
+  }),
+);
+
 it.effect("uses one narrow read for a linked pull request summary", () =>
   Effect.gen(function* () {
     let summaryReads = 0;

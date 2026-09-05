@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -44,6 +44,37 @@ export T3CODE_BITBUCKET_API_TOKEN="your-token"
 The access token takes precedence if both are configured. Restart the server after changing these
 variables.
 
+### Gitea
+
+Set your Gitea web address and an access token in the environment of the machine running the
+T3 Code server:
+
+```bash
+export T3CODE_GITEA_BASE_URL="https://gitea.example.com"
+export T3CODE_GITEA_TOKEN="your-access-token"
+```
+
+Use the web root, including a proxy subpath if your server uses one. The token needs user read
+access for account discovery, repository access for pull requests, and issue access for ordinary
+comments and labels. Grant write access to repositories and issues for review and lifecycle actions.
+Restart the server after setting these variables, then choose **Settings → Source Control → Rescan**.
+
+One Gitea server can be configured per T3 environment. HTTPS remotes must use that web root;
+SSH remotes can use the same hostname or an explicitly configured SSH hostname or alias:
+
+```bash
+export T3CODE_GITEA_SSH_HOSTS="git.example.com,work-forge"
+```
+
+Use SSH aliases as `git@work-forge:owner/repository.git` or
+`ssh://git@work-forge/owner/repository.git`. API requests always go to the configured web address.
+Configure Git authentication separately for cloning, fetching, and pushing.
+
+Gitea drafts use a title prefix. If your server uses custom work-in-progress prefixes, configure
+`T3CODE_GITEA_DRAFT_PREFIXES` with the same comma-separated values and restart T3. T3 verifies
+that draft/ready changes take effect. Auto-merge uses Gitea's own scheduler and can merge immediately
+when the request already satisfies its requirements.
+
 ### Azure DevOps
 
 Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:
@@ -76,15 +107,25 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+When the host can confirm that one pull request targets another pull request's branch, its review
+panel shows the dependency chain. Select a related pull request there to open its usual review
+panel. T3 marks incomplete discovery instead of guessing whether a release branch or another
+unrelated non-default branch is part of a stack.
+
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.
 
+Gitea supports PR tracking, comments, reviews, diffs, reviewer and label updates, merge methods,
+branch updates, close/reopen, draft/ready changes, and auto-merge controls. Reactions, comment
+editing, workflow approval, and revert PRs are not currently available in T3. Use your Gitea
+website for those tasks.
+
 ## Troubleshooting
 
-- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
+- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket or Gitea,
   confirm the running server received the environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS

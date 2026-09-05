@@ -81,6 +81,7 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     url: pullRequest.url,
     author: pullRequest.author,
     headBranch: pullRequest.headBranch,
+    headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner,
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
     isDraft: pullRequest.isDraft,
@@ -94,6 +95,9 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     // Azure keeps labels on work items rather than on the pull request.
     labels: [],
+    ...(pullRequest.isCrossRepository === undefined
+      ? {}
+      : { isCrossRepository: pullRequest.isCrossRepository }),
   };
 }
 
@@ -141,6 +145,7 @@ export const make = Effect.gen(function* () {
           viewer: input.viewer,
           limit: input.limit,
           cursor: input.cursor,
+          relationshipOnly: input.relationshipOnly,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),

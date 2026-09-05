@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DesktopWslStateSchema } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
-import { setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
+import { setWslBackendEnabled, setWslDistro, setWslOnly, setSshRunner } from "./wsl.ts";
 
 const decodeWslState = Schema.decodeUnknownEffect(DesktopWslStateSchema);
 
@@ -85,6 +86,27 @@ const unusedLifecycleRuntimeLayer = Layer.mergeAll(
 );
 
 describe("WSL IPC", () => {
+  it.effect("persists the SSH runner and relaunches when dual-mode credentials change", () => {
+    const reasons: string[] = [];
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        wslBackendEnabled: true,
+        sshRunner: "wsl",
+      }),
+      DesktopWslEnvironment.layerTest({ isAvailable: true }),
+      makeWslBackendLayer(),
+      makeLifecycleLayer(reasons),
+      unusedLifecycleRuntimeLayer,
+      NodeServices.layer,
+    );
+    return Effect.gen(function* () {
+      const state = yield* setSshRunner.handler("windows").pipe(Effect.flatMap(decodeWslState));
+      assert.equal(state.sshRunner, "windows");
+      assert.deepEqual(reasons, ["sshRunner=windows"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("stages dual-backend preferences before enabling without relaunching", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(
@@ -111,6 +133,7 @@ describe("WSL IPC", () => {
         wslOnly: false,
         distros: [],
         preflightError: null,
+        sshRunner: "windows",
       });
       assert.deepEqual(relaunchReasons, []);
     }).pipe(Effect.provide(layer));
@@ -147,6 +170,7 @@ describe("WSL IPC", () => {
         wslOnly: true,
         distros: [],
         preflightError: null,
+        sshRunner: "windows",
       });
       assert.deepEqual(relaunchReasons, ["wslBackendEnabled=true"]);
     }).pipe(Effect.provide(layer));
@@ -181,6 +205,7 @@ describe("WSL IPC", () => {
         wslOnly: true,
         distros: [],
         preflightError: null,
+        sshRunner: "windows",
       });
       assert.equal(reconcileCount, 0);
       assert.deepEqual(relaunchReasons, ["wslBackendEnabled=true"]);
@@ -247,6 +272,7 @@ describe("WSL IPC", () => {
         wslOnly: false,
         distros: [],
         preflightError: null,
+        sshRunner: "windows",
       });
       assert.equal(settings.wslBackendEnabled, false);
       assert.equal(settings.wslOnly, false);

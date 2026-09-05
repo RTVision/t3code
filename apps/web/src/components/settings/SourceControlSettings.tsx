@@ -76,6 +76,7 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   gitlab: GitLabIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
+  gitea: GitPullRequestIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {

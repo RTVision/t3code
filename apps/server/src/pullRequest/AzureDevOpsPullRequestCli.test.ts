@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
@@ -61,6 +62,34 @@ afterEach(() => {
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect("bounds dependency discovery when full raw pages contain no usable rows", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              Array.from({ length: 201 }, () => ({ pullRequestId: "invalid" })),
+            ),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
+      expect(batch.items).toHaveLength(0);
+      expect(batch.truncated).toBe(true);
+      expect(batch.cursorAdvance).toBe(804);
+    }),
+  );
+
   it.effect("asks for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));

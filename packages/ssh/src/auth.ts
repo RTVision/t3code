@@ -8,6 +8,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
+import { SshRunner } from "./runner.ts";
+
 import { SshPasswordPromptError } from "./errors.ts";
 
 export interface SshPasswordRequest {
@@ -184,6 +186,14 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     return baseEnv;
   }
 
+  const runner = yield* SshRunner;
+  if (runner.kind === "wsl") {
+    return {
+      ...baseEnv,
+      SSH_ASKPASS_REQUIRE: "force",
+      ...(input.authSecret === undefined ? {} : { T3_SSH_AUTH_SECRET: input.authSecret ?? "" }),
+    };
+  }
   const platform = yield* HostProcessPlatform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY

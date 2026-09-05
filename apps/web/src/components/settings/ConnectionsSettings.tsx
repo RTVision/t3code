@@ -1866,6 +1866,7 @@ export function ConnectionsSettings() {
     // wsl-only switch separately. Resolved through enable-mode action
     // buttons on the dialog rather than a single Confirm.
     | { readonly kind: "enable"; readonly nextDistro: string | null }
+    | { readonly kind: "ssh-runner"; readonly nextRunner: "windows" | "wsl" }
     | { readonly kind: "wsl-only"; readonly nextValue: boolean };
   const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
   const isWslConfirmDialogOpen = pendingWslChange !== null;
@@ -2859,6 +2860,10 @@ export function ConnectionsSettings() {
       void applyWslSettingChange(() => desktopBridge.setWslDistro(change.nextDistro));
       return;
     }
+    if (change.kind === "ssh-runner") {
+      void applyWslSettingChange(() => desktopBridge.setSshRunner(change.nextRunner));
+      return;
+    }
     void applyWslSettingChange(() => desktopBridge.setWslOnly(change.nextValue));
   }, [applyWslSettingChange, desktopBridge, pendingWslChange]);
 
@@ -2991,6 +2996,42 @@ export function ConnectionsSettings() {
             </Select>
           }
         />
+        {desktopWslState.enabled && !desktopWslState.wslOnly ? (
+          <SettingsRow
+            title="SSH credentials"
+            description="Choose where SSH reads your keys, agent, and host configuration. T3 Code restarts when this changes."
+            className="bg-muted/20 pl-7 sm:pl-8"
+            control={
+              <Select
+                value={desktopWslState.sshRunner ?? "windows"}
+                onValueChange={(value) => {
+                  if (!desktopBridge || (value !== "windows" && value !== "wsl")) return;
+                  if (value === (desktopWslState.sshRunner ?? "windows")) return;
+                  setPendingWslChange({ kind: "ssh-runner", nextRunner: value });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-56"
+                  aria-label="SSH credentials"
+                  disabled={isUpdatingWslBackend}
+                >
+                  <SelectValue>
+                    {desktopWslState.sshRunner === "wsl" ? "WSL" : "Windows OpenSSH"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="windows">
+                    Windows OpenSSH
+                  </SelectItem>
+                  <SelectItem hideIndicator value="wsl">
+                    WSL
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"
@@ -3296,11 +3337,13 @@ export function ConnectionsSettings() {
                       : "Disable WSL backend?"
                     : pendingWslChange?.kind === "distro"
                       ? "Switch WSL distro?"
-                      : pendingWslChange?.kind === "enable"
-                        ? "Start the WSL backend"
-                        : pendingWslChange?.nextValue
-                          ? "Run only the WSL backend?"
-                          : "Re-enable the Windows backend?"}
+                      : pendingWslChange?.kind === "ssh-runner"
+                        ? "Change SSH credentials?"
+                        : pendingWslChange?.kind === "enable"
+                          ? "Start the WSL backend"
+                          : pendingWslChange?.nextValue
+                            ? "Run only the WSL backend?"
+                            : "Re-enable the Windows backend?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {pendingWslChange?.kind === "disable"
@@ -3309,11 +3352,13 @@ export function ConnectionsSettings() {
                       : "The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in T3 Code until you re-enable WSL."
                     : pendingWslChange?.kind === "distro"
                       ? "T3 Code will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted."
-                      : pendingWslChange?.kind === "enable"
-                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
-                        : pendingWslChange?.nextValue
-                          ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
-                          : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
+                      : pendingWslChange?.kind === "ssh-runner"
+                        ? "T3 Code will restart and reconnect SSH environments using the selected keys, agent, and host configuration. Running SSH sessions will be interrupted."
+                        : pendingWslChange?.kind === "enable"
+                          ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
+                          : pendingWslChange?.nextValue
+                            ? "T3 Code will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again."
+                            : "T3 Code will restart and bring the Windows backend back up alongside WSL."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -3378,6 +3423,8 @@ export function ConnectionsSettings() {
                       )
                     ) : pendingWslChange?.kind === "distro" ? (
                       "Switch distro"
+                    ) : pendingWslChange?.kind === "ssh-runner" ? (
+                      "Restart and change"
                     ) : pendingWslChange?.nextValue ? (
                       "Restart and enable"
                     ) : (

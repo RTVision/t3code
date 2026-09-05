@@ -133,6 +133,7 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
+          relationshipOnly: input.relationshipOnly,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),

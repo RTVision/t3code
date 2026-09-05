@@ -467,7 +467,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "WSL backend",
     to: "/settings/connections",
     searchTerms: [
-      "windows subsystem linux distro second server projects stop windows backend restart",
+      "windows subsystem linux distro second server projects stop windows backend restart ssh credentials keys agent openssh",
     ],
     desktopOnly: true,
     windowsOnly: true,

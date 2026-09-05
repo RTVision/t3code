@@ -55,7 +55,11 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
+import {
+  changeRequestRepositoryUrl,
+  giteaPullRequestBrowserUrl,
+  gitHubPullRequestBrowserUrl,
+} from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -70,7 +74,7 @@ import {
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { vcsEnvironment } from "~/state/vcs";
+import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import {
@@ -118,7 +122,6 @@ import {
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
-  isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -140,6 +143,11 @@ import {
   type PickableEnvironment,
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import {
+  PullRequestDependencyNavButtons,
+  PullRequestDependencyRow,
+} from "./PullRequestDependencyNavigator";
+import { pullRequestDependencyNavigation } from "./pullRequestDependencyNavigation.logic";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
@@ -456,6 +464,7 @@ export function PullRequestDetailPanel({
   onActed,
   onClose,
   onStateChange,
+  onOpenPullRequest,
   context = "page",
   composerDraftTarget,
 }: {
@@ -485,6 +494,8 @@ export function PullRequestDetailPanel({
   onClose?: () => void;
   /** Keeps surrounding inferred thread state in step with refreshed host state. */
   onStateChange?: (status: { repository: string; number: number; state: PullRequestState }) => void;
+  /** Opens a same-repository dependency in the existing PR surface owner. */
+  onOpenPullRequest?: (number: number) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -670,28 +681,36 @@ export function PullRequestDetailPanel({
         detail.headRepositoryNameWithOwner,
       )
     : null;
-  const branchRefsQuery = useEnvironmentQuery(
-    detail === null
+  const dependencyContextQuery = useEnvironmentQuery(
+    detail === null || detail.capabilities.dependencies?.branchRelationships !== true
       ? null
-      : vcsEnvironment.listRefs({
-          environmentId,
-          input: {
-            cwd: detail.workspaceRoot,
-            includeMatchingRemoteRefs: true,
-            // listRefs keeps the current ref first and a known default second.
-            limit: 2,
-          },
-        }),
+      : pullRequestEnvironment.dependencyContext({ environmentId, input: reference }),
   );
-  const isStackedPullRequest =
-    detail !== null &&
-    isStackedPullRequestBase(detail.baseBranch, branchRefsQuery.data?.refs ?? []);
+  const dependencyNavigation = pullRequestDependencyNavigation({
+    supported: detail?.capabilities.dependencies?.branchRelationships === true,
+    context: dependencyContextQuery.data ?? null,
+    pending: dependencyContextQuery.isPending,
+    failed: dependencyContextQuery.error !== null,
+  });
+  const dependencyHostLabel = detail
+    ? getSourceControlPresentationForKind(detail.provider).providerName
+    : "host";
+  const condensedDependencyIndicator =
+    dependencyNavigation.status === "ready" &&
+    (dependencyNavigation.path.length > 1 ||
+      dependencyNavigation.children.length > 0 ||
+      dependencyNavigation.native.status === "present");
+  const condensedDependencyTooltip =
+    dependencyNavigation.status !== "ready" || dependencyNavigation.path.length <= 1
+      ? "Stacked pull request"
+      : `Stacked pull request · ${dependencyNavigation.focusIndex + 1} of ${dependencyNavigation.path.length}${dependencyNavigation.coverage === "partial" ? " · partial" : ""}`;
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = useCallback(() => {
     detailQuery.refresh();
     activityQuery.refresh();
-  }, [activityQuery.refresh, detailQuery.refresh]);
+    dependencyContextQuery.refresh();
+  }, [activityQuery.refresh, dependencyContextQuery.refresh, detailQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
@@ -720,6 +739,7 @@ export function PullRequestDetailPanel({
   useLiveRefresh(
     () => {
       detailQuery.refresh();
+      dependencyContextQuery.refresh();
       setRefreshToken((token) => token + 1);
     },
     { key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}` },
@@ -729,6 +749,10 @@ export function PullRequestDetailPanel({
   // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
+  const retryDependencies = useCallback(async () => {
+    await invalidate({ environmentId, input: { reference } });
+    dependencyContextQuery.refresh();
+  }, [dependencyContextQuery.refresh, environmentId, invalidate, reference]);
   const refreshFromHost = useCallback(async () => {
     await invalidate({ environmentId, input: { reference } });
     refreshDetail();
@@ -759,12 +783,21 @@ export function PullRequestDetailPanel({
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
   const projects = useProjects();
-  const unavailableGitHubUrl = useMemo(() => {
+  const unavailableBrowserUrl = useMemo(() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
-    return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
-  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
+    return matchingListEntry?.provider === "gitea" || identity?.provider === "gitea"
+      ? giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
+      : gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
+  }, [
+    environmentId,
+    matchingListEntry?.provider,
+    projects,
+    reference.number,
+    reference.projectId,
+    reference.repository,
+  ]);
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
@@ -1890,19 +1923,16 @@ export function PullRequestDetailPanel({
                       <TooltipTrigger
                         render={
                           <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                            {isStackedPullRequest ? (
-                              <LayersIcon
-                                aria-label="Stacked pull request"
-                                className="size-3 shrink-0"
-                              />
+                            {condensedDependencyIndicator ? (
+                              <LayersIcon aria-hidden className="size-3 shrink-0" />
                             ) : null}
                             <code className="min-w-0 truncate">{detail.baseBranch}</code>
                           </span>
                         }
                       />
                       <TooltipPopup side="top">
-                        {isStackedPullRequest
-                          ? `Stacked on ${detail.baseBranch}`
+                        {condensedDependencyIndicator
+                          ? condensedDependencyTooltip
                           : detail.baseBranch}
                       </TooltipPopup>
                     </Tooltip>
@@ -1929,6 +1959,13 @@ export function PullRequestDetailPanel({
                     </Tooltip>
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-[11px]">
+                    {onOpenPullRequest ? (
+                      <PullRequestDependencyNavButtons
+                        navigation={dependencyNavigation}
+                        refreshing={dependencyContextQuery.isPending}
+                        onOpenPullRequest={onOpenPullRequest}
+                      />
+                    ) : null}
                     <span
                       className="inline-flex items-center gap-1 tabular-nums"
                       aria-label={`${detail.changedFiles.toLocaleString()} changed ${
@@ -2074,21 +2111,11 @@ export function PullRequestDetailPanel({
                       <TooltipTrigger
                         render={
                           <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                            {isStackedPullRequest ? (
-                              <LayersIcon
-                                aria-label="Stacked pull request"
-                                className="size-3 shrink-0"
-                              />
-                            ) : null}
                             <code className="min-w-0 truncate">{detail.baseBranch}</code>
                           </span>
                         }
                       />
-                      <TooltipPopup side="top">
-                        {isStackedPullRequest
-                          ? `Stacked on ${detail.baseBranch}`
-                          : detail.baseBranch}
-                      </TooltipPopup>
+                      <TooltipPopup side="top">{detail.baseBranch}</TooltipPopup>
                     </Tooltip>
                     {freshness ? (
                       <PullRequestBaseFreshnessWarning
@@ -2123,6 +2150,15 @@ export function PullRequestDetailPanel({
                     />
                   </span>
                 </div>
+                {onOpenPullRequest ? (
+                  <PullRequestDependencyRow
+                    navigation={dependencyNavigation}
+                    hostLabel={dependencyHostLabel}
+                    refreshing={dependencyContextQuery.isPending}
+                    onOpenPullRequest={onOpenPullRequest}
+                    onRetry={retryDependencies}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -2312,7 +2348,7 @@ export function PullRequestDetailPanel({
           <PullRequestsUnavailableState
             error={detailQuery.error}
             onRetry={refreshDetail}
-            {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
+            {...(unavailableBrowserUrl ? { browserUrl: unavailableBrowserUrl } : {})}
           />
         ) : detail ? (
           <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>

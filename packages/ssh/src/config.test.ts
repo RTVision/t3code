@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { SshRunner } from "./runner.ts";
+
 import {
   discoverSshHosts,
   parseKnownHostsHostnames,
@@ -19,6 +21,44 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
+  it.effect("reads only the selected distro and resolves absolute Linux Includes", () => {
+    const prefix = String.raw`\\wsl.localhost\Debian`;
+    const files = new Map([
+      [
+        String.raw`${prefix}\home\test\.ssh\config`,
+        "Host distro-host\nInclude /etc/ssh/custom.conf\n",
+      ],
+      [String.raw`${prefix}\etc\ssh\custom.conf`, "Host included-host\n"],
+      [String.raw`${prefix}\home\test\.ssh\known_hosts`, "known-host ssh-ed25519 AAAA\n"],
+    ]);
+    const accessed: string[] = [];
+    const fs = FileSystem.makeNoop({
+      exists: (path) =>
+        Effect.sync(() => {
+          accessed.push(path);
+          return files.has(path);
+        }),
+      readFileString: (path) => Effect.succeed(files.get(path) ?? ""),
+    });
+    return Effect.gen(function* () {
+      const hosts = yield* discoverSshHosts({ homeDir: String.raw`C:\Users\windows` });
+      assert.deepEqual(
+        hosts.map((host) => host.alias),
+        ["distro-host", "included-host", "known-host"],
+      );
+      assert.isTrue(accessed.every((path) => path.startsWith(prefix)));
+    }).pipe(
+      Effect.provideService(SshRunner, {
+        kind: "wsl",
+        distro: "Debian",
+        homeDir: "/home/test",
+        tunnelHost: "127.0.0.1",
+      }),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provide(NodePath.layerWin32),
+    );
+  });
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

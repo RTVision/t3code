@@ -44,8 +44,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
  * nothing, which is what every listing did before there were any. Optional as a whole so a page
  * and a server of different ages still speak to each other.
  *
- * `checks` is host-side only: no row carries its own check state, so a host that cannot match it
- * answers unnarrowed rather than the page pretending to know.
+ * `checks` is host-side where supported, and is also judged from a row's own state when the
+ * provider carries one. A host that cannot match it answers unnarrowed rather than the page
+ * pretending to know.
  */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
@@ -352,6 +353,46 @@ export const PullRequestEditCapabilities = Schema.Struct({
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
+/** A reaction target as the pull request conversation presents it. */
+export const PullRequestReactionSubject = Schema.Literals([
+  "change-request",
+  "issue-comment",
+  "review-comment",
+  "review",
+]);
+export type PullRequestReactionSubject = typeof PullRequestReactionSubject.Type;
+
+/**
+ * Hosts sometimes expose reactions for issue-backed records but not review summaries. This keeps
+ * that boundary visible without weakening the original all-subject `reactions` capability.
+ */
+export const PullRequestReactionCapabilities = Schema.Struct({
+  changeRequest: Schema.Boolean,
+  issueComment: Schema.Boolean,
+  reviewComment: Schema.Boolean,
+  review: Schema.Boolean,
+});
+export type PullRequestReactionCapabilities = typeof PullRequestReactionCapabilities.Type;
+
+export function pullRequestCanReact(
+  capabilities: PullRequestCapabilities,
+  subject: PullRequestReactionSubject,
+): boolean {
+  if (capabilities.reactions === true) return true;
+  const granular = capabilities.reactionSubjects;
+  if (granular === undefined) return false;
+  switch (subject) {
+    case "change-request":
+      return granular.changeRequest;
+    case "issue-comment":
+      return granular.issueComment;
+    case "review-comment":
+      return granular.reviewComment;
+    case "review":
+      return granular.review;
+  }
+}
+
 /**
  * What a host can do about who reviews. The two are independent: a host can take a request without
  * publishing who may receive one, which is Azure DevOps.
@@ -367,6 +408,15 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
   listCandidates: Schema.Boolean,
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
+
+/** Read-only dependency information a provider can contribute to the pull request panel. */
+export const PullRequestDependencyCapabilities = Schema.Struct({
+  /** Ordinary pull requests can be related by their repository-qualified head and base refs. */
+  branchRelationships: Schema.Boolean,
+  /** The host can additionally report an explicit, ordered native stack membership. */
+  nativeMembership: Schema.Boolean,
+});
+export type PullRequestDependencyCapabilities = typeof PullRequestDependencyCapabilities.Type;
 
 /**
  * What a provider can actually do, so a surface can hide what is missing rather than offer an
@@ -404,6 +454,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * Per-subject reaction routes, for hosts that cannot support every conversation record. This
+   * augments the legacy all-subject flag; when that flag is true every subject remains enabled.
+   */
+  reactionSubjects: Schema.optional(PullRequestReactionCapabilities),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**
@@ -418,6 +473,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * to change them, which is what every server before this field was.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * Dependency reads are optional so clients remain compatible with servers that predate them.
+   * An absent value means the client must leave dependency navigation unavailable.
+   */
+  dependencies: Schema.optional(PullRequestDependencyCapabilities),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -621,6 +681,81 @@ export const PullRequestRef = Schema.Struct({
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+export const PullRequestDependencyCoverage = Schema.Literals([
+  "complete",
+  "partial",
+  "unavailable",
+]);
+export type PullRequestDependencyCoverage = typeof PullRequestDependencyCoverage.Type;
+
+export const PullRequestDependencyNode = Schema.Struct({
+  ref: PullRequestRef,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  baseBranch: TrimmedNonEmptyString,
+  /** Null when the host did not qualify the source branch with its repository identity. */
+  head: Schema.NullOr(
+    Schema.Struct({
+      repository: TrimmedNonEmptyString,
+      branch: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type PullRequestDependencyNode = typeof PullRequestDependencyNode.Type;
+
+export const PullRequestDependencyEdge = Schema.Struct({
+  /** The pull request whose base targets the parent's head branch. */
+  child: PositiveInt,
+  parent: PositiveInt,
+  /** Only a unique, repository-qualified match from a complete read is confirmed. */
+  certainty: Schema.Literals(["confirmed", "candidate"]),
+});
+export type PullRequestDependencyEdge = typeof PullRequestDependencyEdge.Type;
+
+export const PullRequestDependencyIssue = Schema.Struct({
+  number: Schema.optional(PositiveInt),
+  reason: Schema.Literals([
+    "budget",
+    "identity-unknown",
+    "source-unavailable",
+    "ambiguous-parent",
+    "cycle",
+    "host-unavailable",
+  ]),
+});
+export type PullRequestDependencyIssue = typeof PullRequestDependencyIssue.Type;
+
+export const PullRequestNativeDependencyMembership = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("present"),
+    /** Opaque outside the provider and scoped to this context's host and repository. */
+    id: TrimmedNonEmptyString,
+    members: Schema.Array(PositiveInt).check(Schema.isMaxLength(100)),
+    coverage: Schema.Literals(["complete", "partial"]),
+  }),
+  Schema.Struct({ status: Schema.Literals(["none", "unavailable"]) }),
+]);
+export type PullRequestNativeDependencyMembership =
+  typeof PullRequestNativeDependencyMembership.Type;
+
+/** A bounded dependency read for one exact provider, host, and target repository. */
+export const PullRequestDependencyContext = Schema.Struct({
+  focus: PullRequestRef,
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+  /** Up to 200 relationship rows plus 100 additional native members. */
+  nodes: Schema.Array(PullRequestDependencyNode).check(Schema.isMaxLength(300)),
+  edges: Schema.Array(PullRequestDependencyEdge).check(Schema.isMaxLength(400)),
+  coverage: PullRequestDependencyCoverage,
+  issues: Schema.Array(PullRequestDependencyIssue).check(Schema.isMaxLength(400)),
+  /** Omitted until a provider attempts a native membership read. */
+  native: Schema.optional(PullRequestNativeDependencyMembership),
+});
+export type PullRequestDependencyContext = typeof PullRequestDependencyContext.Type;
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
@@ -1074,6 +1209,12 @@ const PROVIDER_REQUIREMENT: Partial<
       "Bitbucket needs API credentials on the server. Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
     unauthenticated:
       "Bitbucket rejected the configured credentials. Check T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
+  },
+  gitea: {
+    missing:
+      "Gitea needs API configuration on the server. Set T3CODE_GITEA_BASE_URL and T3CODE_GITEA_TOKEN.",
+    unauthenticated:
+      "Gitea rejected the configured token. Check T3CODE_GITEA_BASE_URL and T3CODE_GITEA_TOKEN.",
   },
 };
 

@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { resolveDesktopSshRunner } from "../../ssh/DesktopSshRunner.ts";
+
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -31,6 +33,7 @@ const readWslState: Effect.Effect<
     distro: settings.wslDistro,
     available,
     wslOnly: settings.wslOnly,
+    sshRunner: settings.sshRunner,
     distros,
     // Only the dual-mode secondary records this; a wsl-only failure surfaces via
     // a dialog + Windows fallback, so it stays null there.
@@ -64,7 +67,7 @@ export const setWslBackendEnabled = makeIpcMethod({
     const changedWslOnlyPrimary = enabled
       ? settings.wslOnly
       : previousSettings.wslBackendEnabled && previousSettings.wslOnly;
-    if (changedWslOnlyPrimary && change.changed) {
+    if ((changedWslOnlyPrimary || previousSettings.sshRunner === "wsl") && change.changed) {
       const state = yield* readWslState;
       yield* lifecycle.relaunch(`wslBackendEnabled=${enabled}`);
       return state;
@@ -91,7 +94,11 @@ export const setWslDistro = makeIpcMethod({
     // In active wsl-only mode the pool's primary IS the WSL backend, and its
     // distro is captured when that backend starts, so relaunch to replace it.
     // When WSL is disabled, this only stages a preference for the next enable.
-    if (settings.wslBackendEnabled && settings.wslOnly && change.changed) {
+    if (
+      settings.wslBackendEnabled &&
+      (settings.wslOnly || settings.sshRunner === "wsl") &&
+      change.changed
+    ) {
       const state = yield* readWslState;
       yield* lifecycle.relaunch(`wslDistro=${distro ?? "default"}`);
       return state;
@@ -116,6 +123,26 @@ export const setWslOnly = makeIpcMethod({
     const state = yield* readWslState;
     if (state.enabled && change.changed) {
       yield* lifecycle.relaunch(`wslOnly=${enabled}`);
+    }
+    return state;
+  }),
+});
+
+export const setSshRunner = makeIpcMethod({
+  channel: IpcChannels.SET_SSH_RUNNER_CHANNEL,
+  payload: Schema.Literals(["windows", "wsl"]),
+  result: DesktopWslStateSchema,
+  handler: Effect.fn("desktop.ipc.wsl.setSshRunner")(function* (runner) {
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    const current = yield* settings.get;
+    if (runner === "wsl" && current.wslBackendEnabled) {
+      yield* resolveDesktopSshRunner({ ...current, sshRunner: runner });
+    }
+    const change = yield* settings.setSshRunner(runner);
+    const state = yield* readWslState;
+    if (change.changed && state.enabled && !state.wslOnly) {
+      yield* lifecycle.relaunch(`sshRunner=${runner}`);
     }
     return state;
   }),

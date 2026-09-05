@@ -17,6 +17,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
 import { SshReadinessError } from "./errors.ts";
+import { SshRunner } from "./runner.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -757,6 +758,172 @@ describe("ssh tunnel scripts", () => {
 
         assert.equal(launchCount, 2);
         assert.equal(tunnelCount, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps a shared remote server alive until the last runner disconnects", () => {
+    let tunnelSpawnCount = 0;
+    let tunnelKillCount = 0;
+    let stopCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          tunnelSpawnCount += 1;
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+        }
+        if (args.includes("sh") && args.includes("-c")) {
+          return makeSuccessfulProcess("\n");
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const wslTarget = {
+      ...target,
+      runner: { kind: "wsl", distro: "Debian" } as const,
+    };
+    const wslRunner = {
+      kind: "wsl",
+      distro: "Debian",
+      homeDir: "/home/test",
+      tunnelHost: "127.0.0.1",
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.ensureEnvironment(target);
+      const wsl = yield* manager
+        .ensureEnvironment(wslTarget)
+        .pipe(Effect.provideService(SshRunner, wslRunner));
+
+      yield* manager.disconnectEnvironment(target);
+      assert.equal(tunnelKillCount, 1);
+      assert.equal(stopCommandCount, 0);
+      const remaining = yield* manager
+        .ensureEnvironment(wslTarget)
+        .pipe(Effect.provideService(SshRunner, wslRunner));
+      assert.equal(remaining.httpBaseUrl, wsl.httpBaseUrl);
+      assert.equal(tunnelSpawnCount, 2);
+      yield* manager
+        .disconnectEnvironment(wslTarget)
+        .pipe(Effect.provideService(SshRunner, wslRunner));
+      assert.equal(tunnelKillCount, 2);
+      assert.equal(stopCommandCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("holds a shared remote server lease while another runner tunnel is pending", () =>
+    Effect.gen(function* () {
+      const secondLaunchStarted = yield* Deferred.make<void>();
+      const releaseSecondLaunch = yield* Deferred.make<void>();
+      let launchCount = 0;
+      let tunnelSpawnCount = 0;
+      let tunnelKillCount = 0;
+      let stopCommandCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            tunnelSpawnCount += 1;
+            return makeRunningProcess(() => {
+              tunnelKillCount += 1;
+            });
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            launchCount += 1;
+            if (launchCount === 2) {
+              yield* Deferred.succeed(secondLaunchStarted, undefined);
+              yield* Deferred.await(releaseSecondLaunch);
+            }
+            return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+          }
+          if (args.includes("sh") && args.includes("-c")) {
+            return makeSuccessfulProcess("\n");
+          }
+          if (args.includes("sh")) {
+            stopCommandCount += 1;
+            return makeSuccessfulProcess('{"stopped":true}\n');
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+      const wslTarget = {
+        ...target,
+        runner: { kind: "wsl", distro: "Debian" } as const,
+      };
+      const wslRunner = {
+        kind: "wsl",
+        distro: "Debian",
+        homeDir: "/home/test",
+        tunnelHost: "127.0.0.1",
+      } as const;
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        const pendingWsl = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment(wslTarget).pipe(Effect.provideService(SshRunner, wslRunner)),
+          ),
+        );
+        yield* Deferred.await(secondLaunchStarted);
+
+        yield* manager.disconnectEnvironment(target);
+        assert.equal(stopCommandCount, 0);
+
+        const disconnectWsl = yield* Effect.forkChild(
+          manager
+            .disconnectEnvironment(wslTarget)
+            .pipe(Effect.provideService(SshRunner, wslRunner)),
+        );
+        yield* Effect.yieldNow;
+        assert.isUndefined(disconnectWsl.pollUnsafe());
+
+        yield* Deferred.succeed(releaseSecondLaunch, undefined);
+        assert.isTrue(Result.isFailure(yield* Fiber.join(pendingWsl)));
+        yield* Fiber.join(disconnectWsl);
+
+        assert.equal(tunnelSpawnCount, 2);
+        assert.equal(tunnelKillCount, 2);
+        assert.equal(stopCommandCount, 1);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );

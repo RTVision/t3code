@@ -136,6 +136,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GiteaApi from "./sourceControl/GiteaApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -2091,6 +2092,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.pullRequestsDetail, pullRequests.detail(input), {
             "rpc.aggregate": "pull-requests",
           }),
+        [WS_METHODS.pullRequestsDependencyContext]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDependencyContext,
+            pullRequests.dependencyContext(input),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsActivity]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsActivity, pullRequests.activity(input), {
             "rpc.aggregate": "pull-requests",
@@ -2874,6 +2881,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                         Layer.mergeAll(
                           AzureDevOpsCli.layer,
                           BitbucketApi.layer,
+                          GiteaApi.layer,
                           GitHubCli.layer,
                           GitLabCli.layer,
                         ),

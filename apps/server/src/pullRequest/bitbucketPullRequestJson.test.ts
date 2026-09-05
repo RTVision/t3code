@@ -106,6 +106,34 @@ describe("decodePullRequestPageJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it("keeps a deleted source repository unresolved on detail responses", () => {
+    const decoded = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(
+          pullRequest({
+            source: { branch: { name: "feat/deleted" }, repository: null },
+          }),
+        ),
+      ),
+    );
+
+    expect(decoded.headRepositoryNameWithOwner).toBeNull();
+  });
+
+  it("does not treat a bare source repository name as a qualified identity", () => {
+    const decoded = expectSuccess(
+      decodePullRequestJson(
+        JSON.stringify(
+          pullRequest({
+            source: { branch: { name: "feat/unqualified" }, repository: { full_name: "web" } },
+          }),
+        ),
+      ),
+    );
+
+    expect(decoded.headRepositoryNameWithOwner).toBeNull();
+  });
+
   it("reads reviewers as review requests", () => {
     const decoded = expectSuccess(
       decodePullRequestJson(

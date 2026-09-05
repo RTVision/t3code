@@ -121,6 +121,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     }) => Effect.Effect<string, AzureDevOpsPullRequestCliError>;
 
     readonly listPullRequests: (input: {
+      readonly relationshipOnly?: boolean | undefined;
       readonly cwd: string;
       readonly repository: string;
       readonly state: PullRequestListState;
@@ -294,6 +295,8 @@ export const make = Effect.gen(function* () {
     readonly skip: number;
     readonly cursorAdvance: number;
     readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
+    readonly relationshipOnly?: boolean | undefined;
+    readonly page: number;
   }): Effect.Effect<
     {
       readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
@@ -363,8 +366,16 @@ export const make = Effect.gen(function* () {
             cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
           });
         }
+        if (input.relationshipOnly === true && input.page >= 4) {
+          return Effect.succeed({
+            items,
+            truncated: true,
+            cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
+          });
+        }
         return listPullRequestPage({
           ...input,
+          page: input.page + 1,
           skip: input.skip + decoded.success.rawCount,
           cursorAdvance: input.cursorAdvance + decoded.success.rawCount,
           items,
@@ -411,6 +422,8 @@ export const make = Effect.gen(function* () {
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
         items: [],
+        page: 1,
+        relationshipOnly: input.relationshipOnly,
       }),
 
     getPullRequest: (input) =>
