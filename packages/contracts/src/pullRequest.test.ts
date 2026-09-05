@@ -7,6 +7,7 @@ import {
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
+  pullRequestCanReact,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
@@ -236,6 +237,25 @@ describe("PullRequestCapabilities", () => {
 
   it("decodes a server that says nothing about reactions as a server with none", () => {
     expect(decodeCapabilities(base).reactions).toBeUndefined();
+  });
+
+  it("keeps the legacy all-subject reaction flag while allowing an exact subject gate", () => {
+    const granular = decodeCapabilities({
+      ...base,
+      reactions: false,
+      reactionSubjects: {
+        changeRequest: true,
+        issueComment: true,
+        reviewComment: true,
+        review: false,
+      },
+    });
+
+    expect(pullRequestCanReact(granular, "review-comment")).toBe(true);
+    expect(pullRequestCanReact(granular, "review")).toBe(false);
+    expect(pullRequestCanReact(decodeCapabilities({ ...base, reactions: true }), "review")).toBe(
+      true,
+    );
   });
 });
 
