@@ -372,6 +372,103 @@ describe("orchestration projector", () => {
       }),
   );
 
+  effectIt.effect.each([null, "ready", "interrupted", "stopped"] as const)(
+    "replaces a missing checkpoint without inventing interruption for a %s session",
+    (sessionStatus) =>
+      Effect.gen(function* () {
+        const now = "2026-09-04T23:00:00.000Z";
+        const threadId = "thread-placeholder";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `placeholder-${sequence}`,
+          });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Placeholder",
+            modelSelection: { instanceId: "codex", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        const checkpoint = {
+          threadId,
+          turnId: "turn-placeholder",
+          checkpointTurnCount: 1,
+          checkpointRef: "provider-diff:placeholder",
+          files: [],
+          assistantMessageId: "assistant:placeholder",
+          completedAt: now,
+        };
+        if (sessionStatus === "interrupted" || sessionStatus === "stopped") {
+          model = yield* projectEvent(
+            model,
+            event(2, "thread.session-set", {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: "turn-placeholder",
+                lastError: null,
+                updatedAt: now,
+              },
+            }),
+          );
+        }
+        model = yield* projectEvent(
+          model,
+          event(3, "thread.turn-diff-completed", {
+            ...checkpoint,
+            status: "missing",
+          }),
+        );
+        if (sessionStatus !== null) {
+          model = yield* projectEvent(
+            model,
+            event(4, "thread.session-set", {
+              threadId,
+              session: {
+                threadId,
+                status: sessionStatus,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: now,
+              },
+            }),
+          );
+        }
+        model = yield* projectEvent(
+          model,
+          event(5, "thread.turn-diff-completed", {
+            ...checkpoint,
+            status: "ready",
+            checkpointRef: "refs/t3/checkpoints/thread-placeholder/turn/1",
+          }),
+        );
+        expect(model.threads[0]?.latestTurn?.state).toBe(
+          sessionStatus === "interrupted" || sessionStatus === "stopped"
+            ? "interrupted"
+            : "completed",
+        );
+      }),
+  );
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";
