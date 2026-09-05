@@ -1367,9 +1367,8 @@ export const make = Effect.gen(function* () {
 
   const getAutoMergeEnabled = Effect.fn("GiteaPullRequestApi.getAutoMergeEnabled")(
     function* (input: { host: string; repository: string; number: number }) {
-      const features = yield* getFeatures.pipe(Effect.option);
-      if (Option.isNone(features)) return undefined;
-      if (features.value.includes("pull-auto-merge-state")) {
+      const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+      if (features.includes("pull-auto-merge-state")) {
         return (yield* getPullRequest(input)).autoMergeEnabled;
       }
       const operation = "getAutoMergeEnabled";

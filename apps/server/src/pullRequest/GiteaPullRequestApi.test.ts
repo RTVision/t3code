@@ -141,6 +141,13 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
+  it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () => Effect.gen(function* () {
+    mockedRequest.mockReturnValueOnce(Effect.fail(new GiteaApi.GiteaApiError({operation: "getFeatures", reason: "failed", detail: "temporarily unavailable"}))).mockReturnValueOnce(Effect.succeed(response([{id: 1, type: "pull_scheduled_merge"}])));
+    const api = yield* GiteaPullRequestApi.make;
+    expect(yield* api.getAutoMergeEnabled({host: "forge.example.test", repository: "acme/web", number: 7})).toBe(true);
+    expect(callAt(1).path).toContain("/timeline?");
+  }));
+
   it.effect("validates the requested host before making an HTTP request", () =>
     Effect.gen(function* () {
       const api = yield* GiteaPullRequestApi.make;

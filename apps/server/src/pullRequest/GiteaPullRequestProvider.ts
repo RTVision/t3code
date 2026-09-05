@@ -137,10 +137,10 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "gitea",
     capabilities: CAPABILITIES,
-    getCapabilities: ({ host }) =>
+    getCapabilities: () =>
       api.getFeatures().pipe(
+        Effect.orElseSucceed(() => []),
         Effect.map((features) => giteaForkCapabilities(CAPABILITIES, features)),
-        Effect.mapError(fail(`getCapabilities:${host}`)),
       ),
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
