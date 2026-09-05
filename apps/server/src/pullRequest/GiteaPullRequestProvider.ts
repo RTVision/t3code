@@ -14,8 +14,9 @@ import {
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [],
-  mergeMethods: [],
+  actions: ["merge", "close", "reopen", "update-branch"],
+  mergeMethods: ["merge", "squash", "rebase"],
+  updateMethods: ["merge", "rebase"],
   // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
   // narrowing correct at the service boundary without claiming host-side search.
   search: false,
