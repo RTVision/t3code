@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { giteaProviderFailure, giteaViewerPermissions } from "./GiteaPullRequestProvider.ts";
+import {
+  giteaBaseComparison,
+  giteaProviderFailure,
+  giteaViewerPermissions,
+} from "./GiteaPullRequestProvider.ts";
 import { GiteaPullRequestApiError } from "./GiteaPullRequestApi.ts";
 
 describe("giteaViewerPermissions", () => {
@@ -12,7 +16,16 @@ describe("giteaViewerPermissions", () => {
         updateMethods: ["rebase"],
       }),
     ).toEqual({
-      actions: ["merge", "close", "reopen", "update-branch"],
+      actions: [
+        "merge",
+        "ready",
+        "draft",
+        "close",
+        "reopen",
+        "update-branch",
+        "enable-auto-merge",
+        "disable-auto-merge",
+      ],
       comment: true,
       resolve: true,
       verdicts: ["comment", "approve", "request-changes"],
@@ -30,10 +43,10 @@ describe("giteaViewerPermissions", () => {
         updateMethods: ["merge", "rebase"],
       }),
     ).toEqual({
-      actions: ["close", "reopen"],
+      actions: ["ready", "draft", "close", "reopen"],
       comment: true,
-      resolve: false,
-      verdicts: ["comment", "approve", "request-changes"],
+      resolve: true,
+      verdicts: ["comment"],
       requestReviewers: false,
       updateMethods: [],
       labels: false,
@@ -48,6 +61,19 @@ describe("giteaViewerPermissions", () => {
         updateMethods: [],
       }).actions,
     ).toEqual([]);
+  });
+});
+
+describe("giteaBaseComparison", () => {
+  it("compares Gitea's merge base with the current base tip", () => {
+    expect(giteaBaseComparison({ baseSha: "base", mergeBaseSha: "base" })).toBe("up-to-date");
+    expect(
+      giteaBaseComparison({
+        baseSha: "new-base",
+        mergeBaseSha: "old-base",
+      }),
+    ).toBe("behind");
+    expect(giteaBaseComparison({ baseSha: "base", mergeBaseSha: "" })).toBe("unknown");
   });
 });
 

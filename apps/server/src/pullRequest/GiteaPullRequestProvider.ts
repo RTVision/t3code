@@ -14,7 +14,16 @@ import {
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: ["merge", "close", "reopen", "update-branch"],
+  actions: [
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
   // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
@@ -55,16 +64,24 @@ export function giteaViewerPermissions(input: {
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter((action) => {
-      if (action === "close" || action === "reopen") return input.canWrite || input.ownsPullRequest;
+      if (action === "ready" || action === "draft" || action === "close" || action === "reopen")
+        return input.canWrite || input.ownsPullRequest;
       return input.canWrite;
     }),
     comment: true,
-    resolve: input.canWrite,
-    verdicts: CAPABILITIES.review.verdicts,
+    resolve: input.canWrite || input.ownsPullRequest,
+    verdicts: input.ownsPullRequest ? ["comment"] : CAPABILITIES.review.verdicts,
     requestReviewers: input.canWrite,
     updateMethods: input.canWrite ? input.updateMethods : [],
     labels: input.canWrite,
   };
+}
+
+export function giteaBaseComparison(
+  pullRequest: Pick<GiteaPullRequestApi.GiteaPullRequest, "baseSha" | "mergeBaseSha">,
+): "up-to-date" | "behind" | "unknown" {
+  if (pullRequest.baseSha === "" || pullRequest.mergeBaseSha === "") return "unknown";
+  return pullRequest.baseSha === pullRequest.mergeBaseSha ? "up-to-date" : "behind";
 }
 
 function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): ProviderChangeRequest {
@@ -140,30 +157,36 @@ export const make = Effect.gen(function* () {
         ),
 
     getChangeRequest: (input) =>
-      Effect.all([api.getPullRequest(input), api.getRepositoryAccess(input), api.getViewer()], {
-        concurrency: 3,
-      }).pipe(
-        Effect.flatMap(([pullRequest, access, viewer]) =>
-          api
-            .listChecks({ ...input, sha: pullRequest.headSha })
-            .pipe(Effect.orElseSucceed(() => []))
-            .pipe(
-              Effect.map((checks): ProviderChangeRequestDetail => ({
-                ...toChangeRequest(pullRequest),
-                body: pullRequest.body,
-                changedFiles: pullRequest.changedFiles,
-                mergedAt: pullRequest.mergedAt,
-                closedAt: pullRequest.closedAt,
-                reviewers: pullRequest.reviewers,
-                checks,
-                mergeCapabilities: access.mergeCapabilities,
-                viewerPermissions: permissions({
-                  access,
-                  viewer,
-                  author: pullRequest.author?.login,
-                }),
-              })),
-            ),
+      Effect.all(
+        [
+          api.getPullRequest(input),
+          api.getRepositoryAccess(input),
+          api.getViewer(),
+          api.getAutoMergeEnabled(input),
+        ],
+        { concurrency: 4 },
+      ).pipe(
+        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled]) =>
+          api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
+            Effect.orElseSucceed(() => []),
+            Effect.map((checks): ProviderChangeRequestDetail => ({
+              ...toChangeRequest(pullRequest),
+              body: pullRequest.body,
+              changedFiles: pullRequest.changedFiles,
+              mergedAt: pullRequest.mergedAt,
+              closedAt: pullRequest.closedAt,
+              reviewers: pullRequest.reviewers,
+              checks,
+              mergeCapabilities: access.mergeCapabilities,
+              baseComparison: giteaBaseComparison(pullRequest),
+              autoMergeEnabled,
+              viewerPermissions: permissions({
+                access,
+                viewer,
+                author: pullRequest.author?.login,
+              }),
+            })),
+          ),
         ),
         Effect.mapError(fail("getChangeRequest")),
       ),
