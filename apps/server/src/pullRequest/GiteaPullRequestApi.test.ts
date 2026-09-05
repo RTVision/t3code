@@ -1655,6 +1655,7 @@ layer("GiteaPullRequestApi", (it) => {
                 id,
                 type: "comment",
               })),
+              { "x-total-count": "50" },
             ),
           ),
         )
@@ -1672,17 +1673,20 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("honors a server timeline page-size cap before reading the final merge state", () =>
+  it.effect("follows a timeline next link before reading the final merge state", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
-          response([{ id: 1, type: "pull_scheduled_merge" }], { "x-total-count": "2" }),
+          response([{ id: 1, type: "pull_scheduled_merge" }], {
+            link: '</repos/acme/web/issues/7/timeline?page=2&limit=1>; rel="next"',
+            "x-total-count": "1",
+          }),
         ),
       );
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
-          response([{ id: 2, type: "pull_cancel_scheduled_merge" }], { "x-total-count": "2" }),
+          response([{ id: 2, type: "pull_cancel_scheduled_merge" }], { "x-total-count": "1" }),
         ),
       );
       const api = yield* GiteaPullRequestApi.make;
@@ -1693,7 +1697,7 @@ layer("GiteaPullRequestApi", (it) => {
           number: 7,
         }),
       );
-      expect(callAt(2).path).toContain("page=2");
+      expect(callAt(2).path).toBe("/repos/acme/web/issues/7/timeline?page=2&limit=1");
     }),
   );
 
