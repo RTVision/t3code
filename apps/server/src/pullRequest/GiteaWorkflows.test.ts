@@ -1,9 +1,12 @@
 import { assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import { isCurrentPullWorkflow, list } from "./GiteaWorkflows.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const run = {
   id: 7,
@@ -33,7 +36,7 @@ it.effect("reads capped pages completely and selects only this PR's current bloc
     const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
     request.mockReturnValueOnce(
       Effect.succeed({
-        body: JSON.stringify({
+        body: encodeJson({
           total_count: 2,
           workflow_runs: [{ ...run, pull_request_head_sha: "old" }],
         }),
@@ -43,7 +46,7 @@ it.effect("reads capped pages completely and selects only this PR's current bloc
     );
     request.mockReturnValueOnce(
       Effect.succeed({
-        body: JSON.stringify({ total_count: 2, workflow_runs: [run] }),
+        body: encodeJson({ total_count: 2, workflow_runs: [run] }),
         truncated: false,
         headers: {},
       }),
@@ -62,7 +65,7 @@ it.effect("fails incomplete pagination instead of reporting no approvals", () =>
   Effect.gen(function* () {
     const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>(() =>
       Effect.succeed({
-        body: JSON.stringify({ total_count: 1, workflow_runs: [] }),
+        body: encodeJson({ total_count: 1, workflow_runs: [] }),
         truncated: false,
         headers: {},
       }),
