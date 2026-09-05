@@ -192,6 +192,9 @@ export const make = Effect.gen(function* () {
               : `Gitea returned HTTP ${response.status}.`,
         });
       }
+      if (response.status === 204 || response.status === 205) {
+        return { body: "", truncated: false, headers: response.headers };
+      }
       const body = yield* collectUint8StreamText({
         stream: response.stream,
         maxBytes: input.maxBytes ?? MAX_RESPONSE_BYTES,

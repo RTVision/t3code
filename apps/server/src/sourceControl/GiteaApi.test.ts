@@ -270,3 +270,18 @@ it.effect("explains invalid base URL configuration without making a request", ()
     assert.strictEqual(execute.mock.calls.length, 0);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("accepts successful deletion with no response body", () => {
+  const { layer, execute } = makeLayer({ response: () => new Response(null, { status: 204 }) });
+  return Effect.gen(function* () {
+    const api = yield* GiteaApi.GiteaApi;
+    const response = yield* api.request({
+      operation: "deleteLabel",
+      method: "DELETE",
+      path: "/repos/team/repo/labels/1",
+    });
+    assert.strictEqual(response.body, "");
+    assert.isFalse(response.truncated);
+    assert.strictEqual(execute.mock.calls.length, 1);
+  }).pipe(Effect.provide(layer));
+});
