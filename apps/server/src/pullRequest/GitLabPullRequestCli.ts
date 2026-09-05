@@ -596,7 +596,7 @@ export const make = Effect.gen(function* () {
             cursorAdvance: input.cursorAdvance,
           });
         }
-        const decoded = decodeMergeRequestListJson(raw);
+        const decoded = decodeMergeRequestListJson(raw, input.repository);
         if (!Result.isSuccess(decoded)) {
           return Effect.fail(
             new GitLabMergeRequestReadError({
@@ -914,7 +914,7 @@ export const make = Effect.gen(function* () {
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
-        const decoded = decodeMergeRequestDetailJson(result.stdout.trim());
+        const decoded = decodeMergeRequestDetailJson(result.stdout.trim(), input.repository);
         return Result.isSuccess(decoded)
           ? Effect.succeed(decoded.success)
           : Effect.fail(

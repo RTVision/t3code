@@ -198,6 +198,77 @@ it.effect("parses pull request responses from the Bitbucket REST API", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("does not guess the target repository when Bitbucket omits the source", () => {
+  const { execute, layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          branch: { name: "feature/deleted" },
+          repository: null,
+        },
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+    assert.isUndefined(result.headRepositoryNameWithOwner);
+    assert.isUndefined(result.isCrossRepository);
+    assert.strictEqual(
+      execute.mock.calls[0]?.[0].url,
+      "https://api.test.local/2.0/repositories/pingdotgg/t3code/pullrequests/42",
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("does not expose a bare source repository name as an identity", () => {
+  const { layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          ...bitbucketPullRequest.source,
+          repository: { full_name: "t3code" },
+        },
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+    assert.isUndefined(result.headRepositoryNameWithOwner);
+    assert.isUndefined(result.isCrossRepository);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("compares Bitbucket repository identities without case sensitivity", () => {
+  const { layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          ...bitbucketPullRequest.source,
+          repository: { full_name: "PINGDOTGG/t3code", workspace: { slug: "PINGDOTGG" } },
+        },
+        destination: {
+          ...bitbucketPullRequest.destination,
+          repository: { full_name: "pingdotgg/t3code", workspace: { slug: "pingdotgg" } },
+        },
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+    assert.strictEqual(result.headRepositoryNameWithOwner, "PINGDOTGG/t3code");
+    assert.isUndefined(result.isCrossRepository);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("lists pull requests with Bitbucket state and source branch query params", () => {
   const { execute, layer } = makeLayer({
     response: () =>
