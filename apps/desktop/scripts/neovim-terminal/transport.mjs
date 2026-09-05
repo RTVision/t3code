@@ -150,16 +150,28 @@ export function wslArgs(route) {
 /** Staging owns a separate stdin pipe; the editor process always inherits the terminal. */
 export function run(command, args, { input, timeout, cwd, capture = false, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = NodeChildProcess.spawn(command, args, {
-      shell: false,
-      cwd,
-      env,
-      stdio: [
-        input === undefined ? "inherit" : "pipe",
-        capture ? "pipe" : "inherit",
-        capture ? "pipe" : "inherit",
-      ],
-    });
+    // Packaged Electron can inherit a pipe as fd 0 from PowerShell even in a
+    // terminal window. Open the console explicitly for the interactive child.
+    const consoleInput =
+      // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaged helper owns its platform-specific console handles.
+      input === undefined && process.platform === "win32"
+        ? NodeFS.openSync("\\\\.\\CONIN$", "r")
+        : undefined;
+    let child;
+    try {
+      child = NodeChildProcess.spawn(command, args, {
+        shell: false,
+        cwd,
+        env,
+        stdio: [
+          input === undefined ? (consoleInput ?? "inherit") : "pipe",
+          capture ? "pipe" : "inherit",
+          capture ? "pipe" : "inherit",
+        ],
+      });
+    } finally {
+      if (consoleInput !== undefined) NodeFS.closeSync(consoleInput);
+    }
     let output = "";
     let timer;
     let killTimer;

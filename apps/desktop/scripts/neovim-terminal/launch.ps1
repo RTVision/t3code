@@ -10,9 +10,12 @@ try {
   }
   # The packaged Electron executable supplies Node; no separate Windows runtime is required.
   $env:ELECTRON_RUN_AS_NODE = '1'
-  & $Runtime (Join-Path $PSScriptRoot 'session.mjs') $Token
-  if ($LASTEXITCODE -ne 0) {
-    throw "The editor session exited with code $LASTEXITCODE."
+  # Start-Process waits for Electron's GUI-subsystem executable without
+  # PowerShell competing with the child for console input.
+  $helper = Join-Path $PSScriptRoot 'session.mjs'
+  $child = Start-Process -FilePath $Runtime -ArgumentList @(('"' + $helper + '"'), $Token) -NoNewWindow -Wait -PassThru
+  if ($child.ExitCode -ne 0) {
+    throw "The editor session exited with code $($child.ExitCode)."
   }
 } catch {
   Write-Host $_ -ForegroundColor Red

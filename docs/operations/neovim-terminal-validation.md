@@ -75,6 +75,10 @@ PowerShell wrapper holds failures until Enter is pressed.
 Validate each route on the packaged Windows desktop:
 
 1. Confirm exactly one new window, then close T3 Code and continue editing there.
+   Check actual keyboard edits, not only a successful launch or rendered screen.
+   The packaged Electron helper must open the Windows console input device for
+   interactive children: PowerShell can give a GUI executable a pipe as stdin.
+   Preparation still uses its separate stdin pipe.
 2. Use the active worktree and two WSL distros/accounts. Changing WSL defaults
    must not redirect an explicit route.
 3. Verify native SSH and WSL SSH alias, nondefault port, ProxyJump, key-passphrase,
