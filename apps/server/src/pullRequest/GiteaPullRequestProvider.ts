@@ -93,7 +93,9 @@ export function giteaBaseComparison(
   return pullRequest.baseSha === pullRequest.mergeBaseSha ? "up-to-date" : "behind";
 }
 
-function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): ProviderChangeRequest {
+export function giteaToChangeRequest(
+  pullRequest: GiteaPullRequestApi.GiteaPullRequest,
+): ProviderChangeRequest {
   return {
     number: pullRequest.number,
     title: pullRequest.title,
@@ -111,6 +113,10 @@ function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): Pro
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     labels: pullRequest.labels,
+    ...(pullRequest.reviewDecision === undefined
+      ? {}
+      : { reviewDecision: pullRequest.reviewDecision }),
+    ...(pullRequest.checksState === undefined ? {} : { checksState: pullRequest.checksState }),
   };
 }
 
@@ -160,13 +166,14 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
+          includeTracking: true,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((page) => ({
-            items: page.items.map(toChangeRequest),
+            items: page.items.map(giteaToChangeRequest),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,
@@ -176,7 +183,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.all(
         [
-          api.getPullRequest(input),
+          api.getPullRequest({ ...input, includeTracking: true }),
           api.getRepositoryAccess(input),
           api.getViewer(),
           api.getAutoMergeEnabled(input),
@@ -190,7 +197,7 @@ export const make = Effect.gen(function* () {
           api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
             Effect.orElseSucceed(() => []),
             Effect.map((checks): ProviderChangeRequestDetail => ({
-              ...toChangeRequest(pullRequest),
+              ...giteaToChangeRequest(pullRequest),
               body: pullRequest.body,
               changedFiles: pullRequest.changedFiles,
               mergedAt: pullRequest.mergedAt,
