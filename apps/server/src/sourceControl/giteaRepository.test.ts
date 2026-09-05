@@ -60,3 +60,21 @@ it("accepts PR numbers and URLs only from the selected repository", () => {
     assert.isNull(giteaPullRequestNumber(ref, "team/repo", base));
   }
 });
+
+it("accepts only explicit SSH aliases without extending the trusted HTTP origin", () => {
+  const base = "https://forge.example.test/gitea";
+  const aliases = ["work-forge", "ssh.example.test"];
+  assert.strictEqual(
+    giteaRepositoryFromRemote("git@work-forge:team/repo.git", base, aliases),
+    "team/repo",
+  );
+  assert.strictEqual(
+    giteaRepositoryFromRemote("ssh://git@SSH.EXAMPLE.TEST:2222/team/repo.git", base, aliases),
+    "team/repo",
+  );
+  assert.isNull(giteaRepositoryFromRemote("git@other-forge:team/repo.git", base, aliases));
+  assert.isNull(
+    giteaRepositoryFromRemote("https://ssh.example.test/gitea/team/repo.git", base, aliases),
+  );
+  assert.isNull(giteaRepositoryFromRemote("git@work-forge:../repo.git", base, aliases));
+});

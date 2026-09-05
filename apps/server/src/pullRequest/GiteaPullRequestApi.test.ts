@@ -17,6 +17,7 @@ const layer = it.layer(
         GiteaApi.GiteaApi,
         GiteaApi.GiteaApi.of({
           baseUrl: Option.some("https://forge.example.test/gitea"),
+          sshHosts: ["work-forge"],
           request: mockedRequest,
           probeAuth: Effect.die("not used"),
         }),
@@ -103,6 +104,19 @@ layer("GiteaPullRequestApi", (it) => {
 
       assert.strictEqual(pullRequest.number, 7);
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("accepts a configured SSH alias for pull request reads", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      assert.strictEqual(
+        (yield* api.getPullRequest({ host: "work-forge", repository: "acme/web", number: 7 }))
+          .number,
+        7,
+      );
+      assert.strictEqual(callAt(0).path, "/repos/acme/web/pulls/7");
     }),
   );
 
