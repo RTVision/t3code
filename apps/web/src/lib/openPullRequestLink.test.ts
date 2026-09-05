@@ -4,6 +4,7 @@ import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
   gitHubPullRequestBrowserUrl,
+  giteaPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
   openPullRequestLink,
   parseChangeRequestUrl,
@@ -111,6 +112,34 @@ describe("gitHubPullRequestBrowserUrl", () => {
       ).toBeNull();
     },
   );
+});
+
+describe("giteaPullRequestBrowserUrl", () => {
+  it("uses the configured Gitea HTTP origin and pulls path", () => {
+    expect(
+      giteaPullRequestBrowserUrl(
+        repositoryIdentity(
+          "gitea",
+          "gitea.example.test/acme/default",
+          "https://gitea.example.test/acme/default.git",
+        ),
+        "acme/other",
+        42,
+      ),
+    ).toBe("https://gitea.example.test/acme/other/pulls/42");
+  });
+});
+
+describe("Gitea pull request URLs", () => {
+  it("parses the Gitea pulls path and finds its repository root", () => {
+    const url = "https://gitea.example.test/Acme/Repository/pulls/42/files#diff-1";
+    expect(parseChangeRequestUrl(url)).toEqual({
+      host: "gitea.example.test",
+      repository: "acme/repository",
+      number: 42,
+    });
+    expect(changeRequestRepositoryUrl(url)).toBe("https://gitea.example.test/Acme/Repository");
+  });
 });
 
 describe("changeRequestRepositoryUrl", () => {

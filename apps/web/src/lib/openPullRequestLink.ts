@@ -90,6 +90,39 @@ export function gitHubPullRequestBrowserUrl(
   }
 }
 
+/** Builds a Gitea URL when the pull request API cannot be read. */
+export function giteaPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  if (identity?.provider !== "gitea" || !Number.isSafeInteger(number) || number < 1) return null;
+  const repositoryPath = repository.split("/");
+  if (
+    repositoryPath.length !== 2 ||
+    repositoryPath.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  )
+    return null;
+
+  let origin: string | null = null;
+  try {
+    const remoteUrl = new URL(identity.locator.remoteUrl.trim());
+    if (remoteUrl.protocol === "http:" || remoteUrl.protocol === "https:")
+      origin = remoteUrl.origin;
+  } catch {
+    // SCP-style remotes are read from their normalized identity below.
+  }
+  const hostname = identity.canonicalKey.split("/")[0];
+  if (origin === null && !hostname) return null;
+  try {
+    const url = new URL(origin ?? `https://${hostname}`);
+    url.pathname = `/${repositoryPath.join("/")}/pulls/${number}`;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A change request the page can open, named the way the page names one: the host below which the
  * repository is addressed, the repository path as that host writes it, and the number.
@@ -151,6 +184,10 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
+  // Gitea: /{owner}/{repo}/pulls/{n}. The configured host is resolved server-side, and this
+  // parser only claims the link after it matches a checked-out repository.
+  const gitea = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (gitea) return claim(host, gitea);
   // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
   // of the repository path there, as it is in the remote URL the identity is read from.
   if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
@@ -207,7 +244,7 @@ export function changeRequestRepositoryUrl(targetUrl: string): string | null {
   const url = new URL(targetUrl);
   const repositoryPath =
     /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
-    /^(.*?)(?:\/pull\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+    /^(.*?)(?:\/pull\/\d+|\/pulls\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
       url.pathname,
     )?.[1];
   if (!repositoryPath) return null;

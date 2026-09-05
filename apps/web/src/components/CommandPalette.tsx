@@ -53,6 +53,7 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
+  GitPullRequestIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -215,7 +216,7 @@ interface AddProjectEnvironmentOption {
 
 type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "gitea"
 >;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -240,12 +241,14 @@ const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 
 function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
@@ -258,6 +261,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "gitea":
+      return "Gitea";
     case "url":
       return "Git URL";
   }
@@ -273,6 +278,8 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "gitea":
+      return "owner/repository";
     case "url":
       return "URL";
   }
@@ -294,6 +301,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <BitbucketIcon className={className} />;
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
+    case "gitea":
+      return <GitPullRequestIcon className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }

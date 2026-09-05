@@ -37,6 +37,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  GitPullRequestIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -123,7 +124,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "gitea"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -202,6 +203,14 @@ const PUBLISH_PROVIDER_OPTIONS = [
     host: "dev.azure.com",
     pathPlaceholder: "project/repository",
     Icon: AzureDevOpsIcon,
+  },
+  {
+    value: "gitea",
+    label: "Gitea",
+    description: "configured server",
+    host: "configured server",
+    pathPlaceholder: "owner/repository",
+    Icon: GitPullRequestIcon,
   },
 ] as const satisfies ReadonlyArray<{
   readonly value: PublishProviderKind;
