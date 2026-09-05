@@ -4,6 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import {
+  PullRequestChecksState as PullRequestChecksStateSchema,
+  PullRequestReviewDecision as PullRequestReviewDecisionSchema,
+} from "@t3tools/contracts";
 import type {
   PullRequestAction,
   PullRequestActor,
@@ -93,10 +97,8 @@ const RawPullRequest = Schema.Struct({
   merged: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.Boolean)),
   draft: Schema.optional(Schema.Boolean),
-  review_decision: Schema.optional(
-    Schema.NullOr(Schema.Literals(["approved", "changes-requested", "review-required"])),
-  ),
-  checks_state: Schema.optional(Schema.NullOr(Schema.Literals(["passing", "failing", "pending"]))),
+  review_decision: Schema.optional(Schema.NullOr(PullRequestReviewDecisionSchema)),
+  checks_state: Schema.optional(Schema.NullOr(PullRequestChecksStateSchema)),
   auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
   auto_merge_method: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.String,
