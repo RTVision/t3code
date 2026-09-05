@@ -128,6 +128,34 @@ describe("giteaPullRequestBrowserUrl", () => {
       ),
     ).toBe("https://gitea.example.test/acme/other/pulls/42");
   });
+
+  it("preserves the configured Gitea web root from an HTTP remote", () => {
+    expect(
+      giteaPullRequestBrowserUrl(
+        repositoryIdentity(
+          "unknown",
+          "forge.example.test/gitea/acme/default",
+          "https://token@forge.example.test/gitea/acme/default.git",
+        ),
+        "acme/other",
+        42,
+      ),
+    ).toBe("https://forge.example.test/gitea/acme/other/pulls/42");
+  });
+
+  it("does not invent a Gitea web root for an SSH remote", () => {
+    expect(
+      giteaPullRequestBrowserUrl(
+        repositoryIdentity(
+          "gitea",
+          "forge.example.test/acme/default",
+          "git@forge.example.test:acme/default.git",
+        ),
+        "acme/other",
+        42,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("Gitea pull request URLs", () => {
@@ -139,6 +167,19 @@ describe("Gitea pull request URLs", () => {
       number: 42,
     });
     expect(changeRequestRepositoryUrl(url)).toBe("https://gitea.example.test/Acme/Repository");
+  });
+
+  it("parses a Gitea pull request below a configured web root", () => {
+    const url = "https://forge.example.test/gitea/Acme/Repository/pulls/42/files#diff-1";
+    expect(parseChangeRequestUrl(url)).toEqual({
+      host: "forge.example.test",
+      repository: "acme/repository",
+      number: 42,
+      basePath: "/gitea",
+    });
+    expect(changeRequestRepositoryUrl(url)).toBe(
+      "https://forge.example.test/gitea/Acme/Repository",
+    );
   });
 });
 
@@ -208,6 +249,19 @@ describe("matchesLinkedPullRequestUrl", () => {
       matchesLinkedPullRequestUrl(
         linkedPullRequest,
         "https://github.example.com/pingdotgg/t3code/pull/42",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps Gitea pull requests on different web roots apart", () => {
+    const giteaPullRequest = {
+      ...linkedPullRequest,
+      url: "https://forge.example.test/gitea/acme/repository/pulls/42",
+    };
+    expect(
+      matchesLinkedPullRequestUrl(
+        giteaPullRequest,
+        "https://forge.example.test/other/acme/repository/pulls/42",
       ),
     ).toBe(false);
   });
@@ -410,6 +464,52 @@ describe("findProjectForChangeRequest", () => {
         host: "github.com-evil.test",
         repository: "pingdotgg/t3code",
         number: 1,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("matches an unknown Gitea identity through its configured web root", () => {
+    const projects = [
+      project({
+        canonicalKey: "forge.example.test/gitea/acme/repository",
+        provider: "unknown",
+        displayName: "gitea/acme/repository",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://forge.example.test/gitea/acme/repository.git",
+        },
+      }),
+    ];
+    expect(
+      findProjectForChangeRequest(projects, {
+        host: "forge.example.test",
+        repository: "acme/repository",
+        number: 42,
+        basePath: "/gitea",
+      }),
+    ).toBe(projects[0]);
+  });
+
+  it("does not match a Gitea URL below a different web root", () => {
+    const projects = [
+      project({
+        canonicalKey: "forge.example.test/acme/repository",
+        provider: "gitea",
+        displayName: "acme/repository",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://forge.example.test/gitea/acme/repository.git",
+        },
+      }),
+    ];
+    expect(
+      findProjectForChangeRequest(projects, {
+        host: "forge.example.test",
+        repository: "acme/repository",
+        number: 42,
+        basePath: "/other",
       }),
     ).toBeUndefined();
   });

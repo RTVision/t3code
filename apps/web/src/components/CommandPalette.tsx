@@ -351,6 +351,7 @@ function buildAddProjectRemoteSourceReadiness(
     github: unavailable,
     gitlab: unavailable,
     bitbucket: unavailable,
+    gitea: unavailable,
     "azure-devops": unavailable,
   };
 

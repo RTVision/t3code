@@ -435,6 +435,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       github: null,
       gitlab: null,
       bitbucket: null,
+      gitea: null,
       "azure-devops": null,
     };
     for (const provider of sourceControlDiscovery.data?.sourceControlProviders ?? []) {

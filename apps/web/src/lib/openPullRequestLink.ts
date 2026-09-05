@@ -90,13 +90,13 @@ export function gitHubPullRequestBrowserUrl(
   }
 }
 
-/** Builds a Gitea URL when the pull request API cannot be read. */
+/** Builds a Gitea URL when the caller has identified the provider but its API cannot be read. */
 export function giteaPullRequestBrowserUrl(
   identity: RepositoryIdentity | null | undefined,
   repository: string,
   number: number,
 ): string | null {
-  if (identity?.provider !== "gitea" || !Number.isSafeInteger(number) || number < 1) return null;
+  if (!identity || !Number.isSafeInteger(number) || number < 1) return null;
   const repositoryPath = repository.split("/");
   if (
     repositoryPath.length !== 2 ||
@@ -104,20 +104,20 @@ export function giteaPullRequestBrowserUrl(
   )
     return null;
 
-  let origin: string | null = null;
   try {
     const remoteUrl = new URL(identity.locator.remoteUrl.trim());
-    if (remoteUrl.protocol === "http:" || remoteUrl.protocol === "https:")
-      origin = remoteUrl.origin;
-  } catch {
-    // SCP-style remotes are read from their normalized identity below.
-  }
-  const hostname = identity.canonicalKey.split("/")[0];
-  if (origin === null && !hostname) return null;
-  try {
-    const url = new URL(origin ?? `https://${hostname}`);
-    url.pathname = `/${repositoryPath.join("/")}/pulls/${number}`;
-    return url.toString();
+    if (remoteUrl.protocol !== "http:" && remoteUrl.protocol !== "https:") return null;
+    const remotePath = remoteUrl.pathname.split("/").filter((segment) => segment.length > 0);
+    if (remotePath.length < 2) return null;
+    remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
+    if (remotePath.some((segment) => segment.length === 0)) return null;
+
+    remoteUrl.username = "";
+    remoteUrl.password = "";
+    remoteUrl.pathname = `/${[...remotePath.slice(0, -2), ...repositoryPath, "pulls", number].join("/")}`;
+    remoteUrl.search = "";
+    remoteUrl.hash = "";
+    return remoteUrl.toString();
   } catch {
     return null;
   }
@@ -135,6 +135,8 @@ export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
   readonly number: number;
+  /** The Gitea web-root path, when the forge is served below one. */
+  readonly basePath?: string;
 }
 
 /** The host itself, one of its subdomains, or an install named after the provider. */
@@ -184,10 +186,14 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  // Gitea: /{owner}/{repo}/pulls/{n}. The configured host is resolved server-side, and this
-  // parser only claims the link after it matches a checked-out repository.
-  const gitea = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (gitea) return claim(host, gitea);
+  // Gitea: /{web-root/}{owner}/{repo}/pulls/{n}. The configured host is resolved server-side,
+  // and this parser only claims the link after it matches a checked-out repository.
+  const gitea = /^((?:\/[^/]+)*)\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (gitea?.[2] !== undefined && gitea[3] !== undefined) {
+    const parsed = claim(host, [gitea[0], gitea[2], gitea[3]]);
+    const basePath = gitea[1] ?? "";
+    return parsed === null || basePath === "" ? parsed : { ...parsed, basePath };
+  }
   // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
   // of the repository path there, as it is in the remote URL the identity is read from.
   if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
@@ -233,7 +239,8 @@ export function matchesLinkedPullRequestUrl(
     target !== null &&
     linked.host === target.host &&
     linked.repository === target.repository &&
-    linked.number === target.number
+    linked.number === target.number &&
+    (linked.basePath ?? "") === (target.basePath ?? "")
   );
 }
 
@@ -254,7 +261,10 @@ export function changeRequestRepositoryUrl(targetUrl: string): string | null {
   return url.toString();
 }
 
-function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
+function claim(
+  host: string,
+  match: ReadonlyArray<string | undefined> | null,
+): ChangeRequestLink | null {
   const repository = match?.[1];
   const number = Number(match?.[2]);
   return repository && Number.isSafeInteger(number) && number > 0
@@ -284,6 +294,15 @@ export function findProjectForChangeRequest(
     if (!identity) return false;
     const kind = identity.provider as SourceControlProviderKind | undefined;
     if (kind === undefined) return false;
+
+    // Gitea's configured web root is not part of the provider repository name. Identities made
+    // from a git remote still include it, and can remain `unknown` until the server refines them.
+    // An HTTP remote supplies the root exactly, so it takes precedence over displayName. SSH
+    // remotes cannot establish a web root and continue through the ordinary identity match.
+    if (identity.provider === "gitea" || identity.provider === "unknown") {
+      const remoteMatch = giteaHttpRemoteMatchesLink(identity, link);
+      if (remoteMatch !== null) return remoteMatch;
+    }
     const repository =
       identity.displayName ??
       (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
@@ -293,6 +312,30 @@ export function findProjectForChangeRequest(
       pullRequestHostOf(identity, kind) === link.host.toLowerCase()
     );
   });
+}
+
+/** Returns null when a remote cannot authoritatively identify a Gitea web root. */
+function giteaHttpRemoteMatchesLink(
+  identity: RepositoryIdentity,
+  link: ChangeRequestLink,
+): boolean | null {
+  try {
+    const remote = new URL(identity.locator.remoteUrl.trim());
+    if (remote.protocol !== "http:" && remote.protocol !== "https:") return null;
+    if (remote.hostname.toLowerCase() !== link.host.toLowerCase()) return false;
+    const remotePath = remote.pathname.split("/").filter((segment) => segment.length > 0);
+    if (remotePath.length < 2) return false;
+    remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
+    if (remotePath.some((segment) => segment.length === 0)) return false;
+    const remoteRepository = remotePath.slice(-2).join("/");
+    const remoteBasePath = `/${remotePath.slice(0, -2).join("/")}`.replace(/\/$/u, "");
+    return (
+      remoteRepository.toLowerCase() === link.repository.toLowerCase() &&
+      remoteBasePath === (link.basePath ?? "")
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**

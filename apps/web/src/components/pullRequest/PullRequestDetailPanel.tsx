@@ -767,11 +767,17 @@ export function PullRequestDetailPanel({
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
-    return (
-      gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number) ??
-      giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
-    );
-  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
+    return matchingListEntry?.provider === "gitea" || identity?.provider === "gitea"
+      ? giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
+      : gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
+  }, [
+    environmentId,
+    matchingListEntry?.provider,
+    projects,
+    reference.number,
+    reference.projectId,
+    reference.repository,
+  ]);
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
