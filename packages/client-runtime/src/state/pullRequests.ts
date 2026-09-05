@@ -121,6 +121,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 15_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
+    /** One bounded repository relationship read for the open PR panel, never for list rows. */
+    dependencyContext: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:dependency-context",
+      tag: WS_METHODS.pullRequestsDependencyContext,
+      staleTimeMs: 30_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
