@@ -5,6 +5,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
+  | "/settings/editors"
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
@@ -50,6 +51,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
+  "/settings/editors": "Editors",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
@@ -63,6 +65,12 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "editors",
+    title: "Preferred editor and Neovim terminal",
+    to: "/settings/editors",
+    searchTerms: ["neovim", "nvim", "terminal", "executable", "rescan", "open editor"],
+  },
   {
     id: "color-scheme",
     title: "Color scheme",

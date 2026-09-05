@@ -129,6 +129,7 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
+let pendingProbedEditors: Promise<ReadonlyArray<EditorId>> | null = null;
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
@@ -145,10 +146,16 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
       return;
     }
     let cancelled = false;
-    probe().then(
+    pendingProbedEditors ??= probe().then(
       (ids) => {
         const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-        cachedProbedEditors = remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
+        return remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
+      },
+      () => REMOTE_FALLBACK_EDITORS,
+    );
+    pendingProbedEditors.then(
+      (ids) => {
+        cachedProbedEditors = ids;
         if (!cancelled) {
           setEditors(cachedProbedEditors);
         }

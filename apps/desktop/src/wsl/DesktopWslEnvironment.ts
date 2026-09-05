@@ -58,6 +58,7 @@ export type EnsureWslNodePtyResult =
       readonly ok: true;
       readonly nodePath: string;
       readonly resolvedPath: string;
+      readonly runningUser?: string;
     }
   | {
       readonly ok: false;
@@ -501,6 +502,7 @@ const NODE_PTY_PROBE_SCRIPT = (
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
+printf 'runningUser:%s\\n' "$(id -un)"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The WSL Node can't read inside app.asar, so confirm what the server needs is
 // unpacked on the real filesystem before reporting the backend healthy. Exit 3
@@ -679,6 +681,11 @@ const ensureNodePtyImpl = (
     );
     const nodePath = parseNodePath(probe.stdout);
     const resolvedPath = parseResolvedPath(probe.stdout);
+    const runningUser = probe.stdout
+      .split(/\r?\n/u)
+      .find((line) => line.startsWith("runningUser:"))
+      ?.slice(12)
+      .trim();
 
     const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
     if (transportFailureReason !== null) {
@@ -754,7 +761,7 @@ const ensureNodePtyImpl = (
           fatal: true,
         } as const;
       }
-      return { ok: true, nodePath, resolvedPath } as const;
+      return { ok: true, nodePath, resolvedPath, ...(runningUser ? { runningUser } : {}) } as const;
     }
 
     if (options.allowBuild !== true) {
@@ -835,7 +842,8 @@ const ensureNodePtyImpl = (
         retryLimit: BUILD_TRANSPORT_RETRY_LIMIT,
       } as const;
     }
-    if (build.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
+    if (build.exitCode === 0)
+      return { ok: true, nodePath, resolvedPath, ...(runningUser ? { runningUser } : {}) } as const;
     const trimmedTail = `${build.stdout}${build.stderr}`.trim().slice(-500);
     return {
       ok: false,

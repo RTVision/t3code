@@ -34,7 +34,7 @@ export const preflightWslSsh = Effect.fn("desktop.ssh.preflightWsl")(function* (
             "--exec",
             "bash",
             "-lc",
-            'ssh -V >&2 || exit; if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then printf agent-ready; else printf agent-unavailable; fi',
+            'printf "\\nT3SSH-USER:%s\\nT3SSH-HOME:%s\\n" "$(id -un)" "$HOME"; ssh -V >&2 || exit; if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then printf agent-ready; else printf agent-unavailable; fi',
           ],
           { stdin: "ignore" },
         ),
@@ -52,8 +52,24 @@ export const preflightWslSsh = Effect.fn("desktop.ssh.preflightWsl")(function* (
         });
       yield* Effect.logDebug("ssh.wsl.preflight", {
         distro,
-        agentAvailable: stdout.trim() === "agent-ready",
+        agentAvailable: stdout.trim().endsWith("agent-ready"),
       });
+      const user = stdout
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith("T3SSH-USER:"))
+        ?.slice(11);
+      const homeDir = stdout
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith("T3SSH-HOME:"))
+        ?.slice(11);
+      if (!user || !homeDir)
+        return yield* new SshCommandError({
+          command: ["wsl.exe"],
+          exitCode: null,
+          stderr: "",
+          message: "Could not bind the WSL SSH account. Reconnect in Settings → Connections.",
+        });
+      return { user, homeDir };
     }),
   ).pipe(
     Effect.timeoutOrElse({
@@ -119,12 +135,13 @@ export const resolveDesktopSshRunner = Effect.fn("desktop.ssh.resolveRunner")(fu
       message: `Could not resolve SSH home or network address via WSL (${distro}).`,
     });
   }
-  yield* preflightWslSsh(distro);
+  const account = yield* preflightWslSsh(distro);
   const addresses = yield* yield* HostProcessAddresses;
   return {
     kind: "wsl",
     distro,
-    homeDir: home.value,
+    homeDir: account.homeDir,
+    user: account.user,
     tunnelHost: addresses.has(ip.value) ? "127.0.0.1" : ip.value,
   } as const;
 });
@@ -134,7 +151,7 @@ export function sshRunnerIdentity(
   platform: NodeJS.Platform,
 ): DesktopSshEnvironmentTarget["runner"] {
   return runner.kind === "wsl"
-    ? { kind: "wsl", distro: runner.distro }
+    ? { kind: "wsl", distro: runner.distro, ...(runner.user ? { user: runner.user } : {}) }
     : platform === "win32"
       ? { kind: "windows" }
       : undefined;
@@ -147,6 +164,7 @@ export function matchesSshRunner(
   if (!saved) return current?.kind !== "wsl";
   return (
     saved.kind === current?.kind &&
-    (saved.kind !== "wsl" || (current.kind === "wsl" && saved.distro === current.distro))
+    (saved.kind !== "wsl" ||
+      (current.kind === "wsl" && saved.distro === current.distro && saved.user === current.user))
   );
 }

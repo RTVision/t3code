@@ -1,3 +1,8 @@
+import {
+  probeTerminalEditor,
+  openTerminalEditor,
+  setTerminalEditorSettings,
+} from "./methods/terminalEditors.ts";
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -104,6 +109,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(openExternal);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(probeRemoteEditors);
+  yield* ipc.handle(probeTerminalEditor);
+  yield* ipc.handle(openTerminalEditor);
+  yield* ipc.handle(setTerminalEditorSettings);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);
