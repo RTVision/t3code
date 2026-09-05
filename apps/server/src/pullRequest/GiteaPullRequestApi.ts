@@ -957,6 +957,7 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     limit: number;
+    requirePaginationEvidence?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -978,14 +979,18 @@ export const make = Effect.gen(function* () {
         rowsSeen,
         headers: result.headers,
       });
+      const hasPaginationEvidence =
+        nextLink(result.headers) !== null || totalCount(result.headers) !== null;
+      const paginationNext =
+        input.requirePaginationEvidence && !hasPaginationEvidence ? null : next;
       if (result.rows.length > remaining || rows.length >= input.limit) {
         return {
           rows,
-          truncated: result.rows.length > remaining || next !== null,
+          truncated: result.rows.length > remaining || paginationNext !== null,
         };
       }
-      if (next === null) return { rows, truncated: false };
-      path = next;
+      if (paginationNext === null) return { rows, truncated: false };
+      path = paginationNext;
     }
     return { rows, truncated: true };
   });
@@ -1183,7 +1188,7 @@ export const make = Effect.gen(function* () {
     }
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
-    const commentsTruncated = reviewsTruncated;
+    let commentsTruncated = reviewsTruncated;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -1200,11 +1205,17 @@ export const make = Effect.gen(function* () {
           reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
         });
       }
-      const codeRows = yield* readUnknownArray({
+      const codeRows = yield* readUnknownSlice({
         operation: "listReviewComments",
         ...input,
-        path: `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+        path: query(
+          `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+          { page: 1, limit: PAGE_SIZE },
+        ),
+        limit: PAGE_SIZE * CONVERSATION_PAGES,
+        requirePaginationEvidence: true,
       });
+      commentsTruncated ||= codeRows.truncated;
       const grouped = new Map<
         string,
         Array<{
@@ -1216,7 +1227,7 @@ export const make = Effect.gen(function* () {
           readonly comment: PullRequestReviewThread["comments"][number];
         }>
       >();
-      for (const codeRow of codeRows) {
+      for (const codeRow of codeRows.rows) {
         const decoded = decodeReviewComment(codeRow);
         if (Option.isNone(decoded)) continue;
         const mapped = decoded.value;
