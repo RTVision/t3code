@@ -1192,6 +1192,26 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("maps native warning statuses to failing checks", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response({
+            total_count: 1,
+            statuses: [{ context: "scan", status: "warning", updated_at: "2026-09-03T11:00:00Z" }],
+          }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const checks = yield* api.listChecks({
+        host: "forge.example.test",
+        repository: "acme/web",
+        sha: "head-sha",
+      });
+      expect(checks).toEqual([expect.objectContaining({ name: "scan", status: "failure" })]);
+    }),
+  );
+
   it.effect("does not request commit statuses without a head revision", () =>
     Effect.gen(function* () {
       const api = yield* GiteaPullRequestApi.make;
