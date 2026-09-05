@@ -1661,7 +1661,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         Effect.onExit((exit) =>
           (Exit.isSuccess(exit) ? Effect.void : releaseRemoteServerLease(remoteServerLease)).pipe(
             Effect.andThen(Deferred.done(result, exit)),
-            Effect.andThen(Deferred.succeed(settled, undefined)),
             Effect.andThen(
               Effect.sync(() => {
                 if (pendingTunnelEntries.get(key) === pendingEntry) {
@@ -1669,6 +1668,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                 }
               }),
             ),
+            Effect.andThen(Deferred.succeed(settled, undefined)),
           ),
         ),
       ),
