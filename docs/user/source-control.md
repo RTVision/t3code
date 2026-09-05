@@ -70,6 +70,11 @@ Use SSH aliases as `git@work-forge:owner/repository.git` or
 `ssh://git@work-forge/owner/repository.git`. API requests always go to the configured web address.
 Configure Git authentication separately for cloning, fetching, and pushing.
 
+Gitea drafts use a title prefix. If your server uses custom work-in-progress prefixes, configure
+`T3CODE_GITEA_DRAFT_PREFIXES` with the same comma-separated values and restart T3. T3 verifies
+that draft/ready changes take effect. Auto-merge uses Gitea's own scheduler and can merge immediately
+when the request already satisfies its requirements.
+
 ### Azure DevOps
 
 Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:

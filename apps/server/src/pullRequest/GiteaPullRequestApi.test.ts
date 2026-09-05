@@ -870,9 +870,34 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("uses Gitea's native update style and refuses unverified draft transitions", () =>
+  it.effect("uses Gitea's native update style and verifies reversible draft transitions", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response({})));
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({})))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+        .mockReturnValueOnce(Effect.succeed(response({})))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                title: "WIP: Pull request 7",
+                draft: true,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                title: "WIP: Pull request 7",
+                draft: true,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response({})))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))));
       const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
       yield* api.runAction({
         host: "forge.example.test",
@@ -881,6 +906,47 @@ layer("GiteaPullRequestApi", (it) => {
         action: "update-branch",
         updateMethod: "rebase",
       });
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "draft",
+      });
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "ready",
+      });
+
+      expect(callAt(0).path).toBe("/repos/acme/web/pulls/7/update?style=rebase");
+      expect(decodeJson(callAt(2).body ?? "{}")).toEqual({
+        title: "WIP: Pull request 7",
+      });
+      expect(decodeJson(callAt(5).body ?? "{}")).toEqual({
+        title: "Pull request 7",
+      });
+      assert.strictEqual(mockedRequest.mock.calls.length, 7);
+    }),
+  );
+
+  it.effect("restores the title when Gitea does not recognize the configured draft prefix", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+        .mockReturnValueOnce(Effect.succeed(response({})))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                title: "WIP: Pull request 7",
+                draft: false,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
       const error = yield* api
         .runAction({
           host: "forge.example.test",
@@ -890,9 +956,123 @@ layer("GiteaPullRequestApi", (it) => {
         })
         .pipe(Effect.flip);
 
-      expect(callAt(0).path).toBe("/repos/acme/web/pulls/7/update?style=rebase");
-      expect(error.detail).toContain("does not expose a reliable draft operation");
-      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+      expect(error.detail).toContain("T3CODE_GITEA_DRAFT_PREFIXES");
+      expect(decodeJson(callAt(3).body ?? "{}")).toEqual({
+        title: "Pull request 7",
+      });
+    }),
+  );
+
+  it.effect("reads armed auto-merge state from Gitea's durable timeline events", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([
+            { id: 10, type: "pull_scheduled_merge" },
+            { id: 11, type: "comment" },
+            { id: 12, type: "pull_cancel_scheduled_merge" },
+            { id: 13, type: "pull_scheduled_merge" },
+          ]),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+
+      assert.isTrue(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      );
+      expect(callAt(0).path).toBe("/repos/acme/web/issues/7/timeline?page=1&limit=50");
+    }),
+  );
+
+  it.effect("paginates the timeline before deciding that auto-merge is armed", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length: 50 }, (_, id) => ({
+                id,
+                type: "comment",
+              })),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response([{ id: 51, type: "pull_scheduled_merge" }])));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+
+      assert.isTrue(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      );
+      expect(callAt(1).path).toContain("page=2");
+    }),
+  );
+
+  it.effect("honors a server timeline page-size cap before reading the final merge state", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([{ id: 1, type: "pull_scheduled_merge" }], { "x-total-count": "2" }),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([{ id: 2, type: "pull_cancel_scheduled_merge" }], { "x-total-count": "2" }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      assert.isFalse(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      );
+      expect(callAt(1).path).toContain("page=2");
+    }),
+  );
+
+  it.effect("arms and cancels Gitea auto-merge through the native merge route", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+        .mockReturnValueOnce(Effect.succeed(response({})))
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+      });
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "disable-auto-merge",
+      });
+
+      expect(callAt(1)).toMatchObject({
+        method: "POST",
+        path: "/repos/acme/web/pulls/7/merge",
+      });
+      expect(decodeJson(callAt(1).body ?? "{}")).toEqual({
+        do: "squash",
+        head_commit_id: "head-sha",
+        merge_when_checks_succeed: true,
+      });
+      expect(callAt(2)).toMatchObject({
+        method: "DELETE",
+        path: "/repos/acme/web/pulls/7/merge",
+      });
     }),
   );
 });
