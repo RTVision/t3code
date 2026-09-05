@@ -1547,13 +1547,17 @@ layer("GiteaPullRequestApi", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(
             response([
-              { reaction: "+1", user: { login: "reader" } },
-              { reaction: "+1", user: { login: "teammate" } },
+              {
+                content: "+1",
+                created_at: "2026-09-05T00:00:00Z",
+                user: { login: "reader" },
+              },
+              { content: "+1", user: { login: "teammate" } },
             ]),
           ),
         )
         .mockReturnValueOnce(
-          Effect.succeed(response([{ reaction: "heart", user: { login: "friend" } }])),
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
         )
         .mockReturnValueOnce(Effect.succeed(response([])));
       const api = yield* GiteaPullRequestApi.make;
@@ -1588,11 +1592,11 @@ layer("GiteaPullRequestApi", (it) => {
         if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
         if (input.path === "/repos/acme/web/issues/7/reactions?page=1&limit=50")
           return Effect.succeed(
-            response([{ reaction: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
+            response([{ content: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
           );
         if (input.path === "/repos/acme/web/issues/7/reactions?page=2&limit=50")
           return Effect.succeed(
-            response([{ reaction: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
+            response([{ content: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
           );
         return Effect.die(`unexpected request: ${input.path}`);
       });
