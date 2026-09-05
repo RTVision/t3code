@@ -129,12 +129,15 @@ it.effect("does not follow a redirect or replay a write", () => {
       })
       .pipe(Effect.flip);
     assert.strictEqual(error.status, 307);
+    assert.include(error.detail, "T3CODE_GITEA_BASE_URL");
     assert.strictEqual(execute.mock.calls.length, 1);
   }).pipe(Effect.provide(layer));
 });
 
 it.effect("disables automatic redirects in the production Fetch transport", () => {
-  const fetch = vi.fn<(...args: Parameters<typeof globalThis.fetch>) => ReturnType<typeof globalThis.fetch>>(async (_url, init) => {
+  const fetch = vi.fn<
+    (...args: Parameters<typeof globalThis.fetch>) => ReturnType<typeof globalThis.fetch>
+  >(async (_url, init) => {
     assert.strictEqual(init?.redirect, "manual");
     return new Response(null, {
       status: 307,
@@ -166,7 +169,10 @@ it.effect("disables automatic redirects in the production Fetch transport", () =
       .pipe(Effect.flip);
     assert.strictEqual(error.status, 307);
     assert.strictEqual(fetch.mock.calls.length, 1);
-  }).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, Object.assign(fetch, { preconnect: vi.fn() })));
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(FetchHttpClient.Fetch, Object.assign(fetch, { preconnect: vi.fn() })),
+  );
 });
 
 it.effect("distinguishes rejected credentials from permission failures", () =>
@@ -247,4 +253,20 @@ it("normalizes web roots without accepting credentials or query parameters", () 
   ]) {
     assert.isNull(GiteaApi.normalizeGiteaBaseUrl(url));
   }
+});
+
+it.effect("explains invalid base URL configuration without making a request", () => {
+  const { layer, execute } = makeLayer({
+    env: { T3CODE_GITEA_BASE_URL: "not-a-url", T3CODE_GITEA_TOKEN: "test-token" },
+  });
+  return Effect.gen(function* () {
+    const api = yield* GiteaApi.GiteaApi;
+    const auth = yield* api.probeAuth;
+    assert.strictEqual(auth.status, "unauthenticated");
+    assert.include(
+      Option.getOrElse(auth.detail, () => ""),
+      "must be a valid HTTP or HTTPS web root",
+    );
+    assert.strictEqual(execute.mock.calls.length, 0);
+  }).pipe(Effect.provide(layer));
 });

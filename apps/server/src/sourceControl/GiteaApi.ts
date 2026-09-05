@@ -113,7 +113,10 @@ export const make = Effect.gen(function* () {
         return yield* new GiteaApiError({
           operation: input.operation,
           reason: "unconfigured",
-          detail: GITEA_SETUP_HINT,
+          detail:
+            Option.isSome(config.baseUrl) && Option.isNone(baseUrl)
+              ? "T3CODE_GITEA_BASE_URL must be a valid HTTP or HTTPS web root without credentials, query, or fragment."
+              : GITEA_SETUP_HINT,
         });
       }
       const token = Redacted.value(config.token.value).trim();
@@ -183,7 +186,10 @@ export const make = Effect.gen(function* () {
           ...(response.status === 429
             ? { retryAt: retryAtFromHeader(response.headers["retry-after"], now) }
             : {}),
-          detail: `Gitea returned HTTP ${response.status}.`,
+          detail:
+            response.status >= 300 && response.status < 400
+              ? `Gitea returned HTTP ${response.status}. Check T3CODE_GITEA_BASE_URL, including its scheme and any proxy subpath.`
+              : `Gitea returned HTTP ${response.status}.`,
         });
       }
       const body = yield* collectUint8StreamText({
@@ -201,16 +207,19 @@ export const make = Effect.gen(function* () {
       );
       return { body: body.text, truncated: body.truncated, headers: response.headers };
     },
-    Effect.timeout("30 seconds"),
-    Effect.catchTag("TimeoutError", () =>
-      Effect.fail(
-        new GiteaApiError({
-          operation: "request",
-          reason: "failed",
-          detail: "Gitea request timed out.",
-        }),
+    (effect, input) =>
+      effect.pipe(
+        Effect.timeout("30 seconds"),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.fail(
+            new GiteaApiError({
+              operation: input.operation,
+              reason: "failed",
+              detail: "Gitea request timed out.",
+            }),
+          ),
+        ),
       ),
-    ),
   );
 
   return GiteaApi.of({
