@@ -21,6 +21,19 @@ const base: PullRequestCapabilities = {
 };
 
 describe("GiteaForkCapabilities", () => {
+  it("offers fork-only actions only when the server advertises them", () => {
+    const available: PullRequestCapabilities = {
+      ...base,
+      actions: ["merge", "approve-workflows", "revert"],
+    };
+    expect(giteaForkCapabilities(available, []).actions).toEqual(["merge"]);
+    expect(giteaForkCapabilities(available, ["actions-run-approve"]).actions).toEqual([
+      "merge",
+      "approve-workflows",
+    ]);
+    expect(giteaForkCapabilities(available, ["pull-revert"]).actions).toEqual(["merge", "revert"]);
+    expect(available.actions).toEqual(["merge", "approve-workflows", "revert"]);
+  });
   it("enables review-summary reactions only for an advertising server", () => {
     expect(giteaForkCapabilities(base, []).reactionSubjects?.review).toBe(false);
     expect(giteaForkCapabilities(base, ["pull-review-reactions"]).reactionSubjects?.review).toBe(

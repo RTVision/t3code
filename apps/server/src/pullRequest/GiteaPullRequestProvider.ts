@@ -24,6 +24,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "approve-workflows",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
@@ -64,11 +65,14 @@ export function giteaProviderFailure(
 
 export function giteaViewerPermissions(input: {
   readonly canWrite: boolean;
+  readonly workflowApprovalSupported?: boolean;
   readonly ownsPullRequest: boolean;
   readonly updateMethods: ReadonlyArray<"merge" | "rebase">;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter((action) => {
+      if (action === "approve-workflows")
+        return input.canWrite && input.workflowApprovalSupported === true;
       if (action === "ready" || action === "draft" || action === "close" || action === "reopen")
         return input.canWrite || input.ownsPullRequest;
       return input.canWrite;
@@ -126,9 +130,11 @@ export const make = Effect.gen(function* () {
     readonly access: GiteaPullRequestApi.GiteaRepositoryAccess;
     readonly viewer: string;
     readonly author: string | undefined;
+    readonly workflowApprovalSupported?: boolean;
   }) =>
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
+      workflowApprovalSupported: input.workflowApprovalSupported,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -174,10 +180,13 @@ export const make = Effect.gen(function* () {
           api.getRepositoryAccess(input),
           api.getViewer(),
           api.getAutoMergeEnabled(input),
+          api
+            .getWorkflowApprovals(input)
+            .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
         ],
         { concurrency: 4 },
       ).pipe(
-        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled]) =>
+        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows]) =>
           api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
             Effect.orElseSucceed(() => []),
             Effect.map((checks): ProviderChangeRequestDetail => ({
@@ -187,7 +196,16 @@ export const make = Effect.gen(function* () {
               mergedAt: pullRequest.mergedAt,
               closedAt: pullRequest.closedAt,
               reviewers: pullRequest.reviewers,
-              checks,
+              checks: [
+                ...checks,
+                ...workflows.runs.map((run) => ({
+                  name: run.display_title?.trim() || `Workflow ${run.id}`,
+                  status: "action-required" as const,
+                  description: "Awaiting approval",
+                  url: run.html_url,
+                })),
+              ],
+              ...(workflows.supported ? { workflowApprovalsRequired: workflows.runs.length } : {}),
               mergeCapabilities: access.mergeCapabilities,
               baseComparison: giteaBaseComparison(pullRequest),
               ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
@@ -198,6 +216,7 @@ export const make = Effect.gen(function* () {
                 access,
                 viewer,
                 author: pullRequest.author?.login,
+                workflowApprovalSupported: workflows.supported,
               }),
             })),
           ),
@@ -288,12 +307,25 @@ export const make = Effect.gen(function* () {
       ),
 
     getViewerPermissions: (input) =>
-      Effect.all([api.getPullRequest(input), api.getRepositoryAccess(input), api.getViewer()], {
-        concurrency: 3,
-      }).pipe(
+      Effect.all(
+        [
+          api.getPullRequest(input),
+          api.getRepositoryAccess(input),
+          api.getViewer(),
+          api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
+        ],
+        {
+          concurrency: 3,
+        },
+      ).pipe(
         Effect.mapError(fail("getViewerPermissions")),
-        Effect.map(([pullRequest, access, viewer]) =>
-          permissions({ access, viewer, author: pullRequest.author?.login }),
+        Effect.map(([pullRequest, access, viewer, features]) =>
+          permissions({
+            access,
+            viewer,
+            author: pullRequest.author?.login,
+            workflowApprovalSupported: features.includes("actions-run-approve"),
+          }),
         ),
       ),
 

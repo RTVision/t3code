@@ -8,6 +8,24 @@ import {
 import { GiteaPullRequestApiError } from "./GiteaPullRequestApi.ts";
 
 describe("giteaViewerPermissions", () => {
+  it("offers workflow approval only when the server supports it and the viewer can write", () => {
+    expect(
+      giteaViewerPermissions({
+        canWrite: true,
+        ownsPullRequest: false,
+        updateMethods: [],
+        workflowApprovalSupported: true,
+      }).actions,
+    ).toContain("approve-workflows");
+    expect(
+      giteaViewerPermissions({
+        canWrite: false,
+        ownsPullRequest: true,
+        updateMethods: [],
+        workflowApprovalSupported: true,
+      }).actions,
+    ).not.toContain("approve-workflows");
+  });
   it("offers repository writes and only the configured branch update strategies", () => {
     expect(
       giteaViewerPermissions({

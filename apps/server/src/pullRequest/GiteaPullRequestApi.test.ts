@@ -11,12 +11,15 @@ const mockedRequest = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
-  Layer.succeed(GiteaApi.GiteaApi, GiteaApi.GiteaApi.of({
-    baseUrl: Option.some("https://forge.example.test/gitea"),
-    sshHosts: ["work-forge"],
-    request: mockedRequest,
-    probeAuth: Effect.die("not used"),
-  })),
+  Layer.succeed(
+    GiteaApi.GiteaApi,
+    GiteaApi.GiteaApi.of({
+      baseUrl: Option.some("https://forge.example.test/gitea"),
+      sshHosts: ["work-forge"],
+      request: mockedRequest,
+      probeAuth: Effect.die("not used"),
+    }),
+  ),
 );
 
 function response(value: unknown, headers: Readonly<Record<string, string>> = {}) {
@@ -147,6 +150,110 @@ layer("GiteaPullRequestApi", (it) => {
     expect(yield* api.getAutoMergeEnabled({host: "forge.example.test", repository: "acme/web", number: 7})).toBe(true);
     expect(callAt(1).path).toContain("/timeline?");
   }));
+  it.effect("approves only the current pull request's waiting workflow runs", () =>
+    Effect.gen(function* () {
+      const pull = rawPullRequest(7);
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response(pull)))
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["actions-run-approve"] })))
+        .mockReturnValueOnce(Effect.succeed(response(pull)))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response({
+              total_count: 1,
+              workflow_runs: [
+                {
+                  id: 42,
+                  needs_approval: true,
+                  pull_request_head_sha: "head-sha",
+                  head_sha: "merge-sha",
+                  event: "pull_request",
+                  html_url: "https://forge.example.test/run/42",
+                  pull_requests: [{ number: 7 }],
+                },
+              ],
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response(pull)))
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const api = yield* GiteaPullRequestApi.make;
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "approve-workflows",
+      });
+      expect(
+        mockedRequest.mock.calls
+          .filter(([call]) => call.method === "POST")
+          .map(([call]) => call.path),
+      ).toEqual(["/repos/acme/web/actions/runs/42/approve"]);
+    }),
+  );
+
+  it.effect("rejects workflow approval on servers without native approval metadata", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .runAction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          action: "approve-workflows",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("does not expose workflow approval metadata");
+      expect(mockedRequest.mock.calls.every(([call]) => call.method === "GET")).toBe(true);
+    }),
+  );
+
+  it.effect("never approves a workflow after the pull request head changes", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))));
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response({ features: ["actions-run-approve"] })),
+      );
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))));
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response({
+            total_count: 1,
+            workflow_runs: [
+              {
+                id: 42,
+                needs_approval: true,
+                pull_request_head_sha: "head-sha",
+                head_sha: "merge-sha",
+                event: "pull_request",
+                html_url: "https://forge.example.test/run/42",
+                pull_requests: [{ number: 7 }],
+              },
+            ],
+          }),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(rawPullRequest(7, { head: { ref: "feature", sha: "changed-head" } })),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .runAction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          action: "approve-workflows",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("head changed");
+      expect(mockedRequest.mock.calls.every(([call]) => call.method === "GET")).toBe(true);
+    }),
+  );
 
   it.effect("validates the requested host before making an HTTP request", () =>
     Effect.gen(function* () {
@@ -1211,7 +1318,7 @@ layer("GiteaPullRequestApi", (it) => {
 
   it.effect("reports Gitea's missing review-summary reaction route", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response({features: []})));
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
       const api = yield* GiteaPullRequestApi.make;
       const error = yield* api
         .setReaction({
@@ -1304,7 +1411,7 @@ layer("GiteaPullRequestApi", (it) => {
     Effect.gen(function* () {
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response({})))
-        .mockReturnValueOnce(Effect.succeed(response({features: []})))
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
         .mockReturnValueOnce(Effect.succeed(response({})))
         .mockReturnValueOnce(
@@ -1364,7 +1471,7 @@ layer("GiteaPullRequestApi", (it) => {
   it.effect("restores the title when Gitea does not recognize the configured draft prefix", () =>
     Effect.gen(function* () {
       mockedRequest
-        .mockReturnValueOnce(Effect.succeed(response({features: []})))
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
         .mockReturnValueOnce(Effect.succeed(response({})))
         .mockReturnValueOnce(
@@ -1452,7 +1559,7 @@ layer("GiteaPullRequestApi", (it) => {
 
   it.effect("honors a server timeline page-size cap before reading the final merge state", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response({features: []})));
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response([{ id: 1, type: "pull_scheduled_merge" }], { "x-total-count": "2" }),
