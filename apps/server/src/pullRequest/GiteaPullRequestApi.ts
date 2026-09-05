@@ -2010,7 +2010,7 @@ export const make = Effect.gen(function* () {
             ...input,
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
-            Effect.catchTag("GiteaPullRequestApiError", (error: GiteaPullRequestApiError) =>
+            Effect.catch((error) =>
               isGiteaApiError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
                 : Effect.fail(error),
