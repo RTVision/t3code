@@ -107,6 +107,18 @@ export const make = Effect.gen(function* () {
     Option.fromNullishOr(normalizeGiteaBaseUrl(value)),
   );
 
+  if (Option.isSome(baseUrl)) {
+    const configuredUrl = new URL(baseUrl.value);
+    if (
+      configuredUrl.protocol === "http:" &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(configuredUrl.hostname)
+    ) {
+      yield* Effect.logWarning(
+        "Gitea uses HTTP: access tokens are sent without transport encryption. Configure an HTTPS web address.",
+      );
+    }
+  }
+
   const request: GiteaApi["Service"]["request"] = Effect.fn("GiteaApi.request")(
     function* (input) {
       if (Option.isNone(baseUrl) || Option.isNone(config.token)) {
@@ -154,7 +166,7 @@ export const make = Effect.gen(function* () {
         HttpClientRequest.setHeader("Authorization", `token ${token}`),
         HttpClientRequest.setHeader("Accept", "application/json, text/plain"),
       );
-      const response = yield* client
+      const response = yield* HttpClient.withScope(client)
         .execute(
           input.body === undefined
             ? outgoing
@@ -212,6 +224,7 @@ export const make = Effect.gen(function* () {
     },
     (effect, input) =>
       effect.pipe(
+        Effect.scoped,
         Effect.timeout("30 seconds"),
         Effect.catchTag("TimeoutError", () =>
           Effect.fail(

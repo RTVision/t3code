@@ -169,6 +169,7 @@ it.effect("disables automatic redirects in the production Fetch transport", () =
       .pipe(Effect.flip);
     assert.strictEqual(error.status, 307);
     assert.strictEqual(fetch.mock.calls.length, 1);
+    assert.isTrue(fetch.mock.calls[0]?.[1]?.signal?.aborted);
   }).pipe(
     Effect.provide(layer),
     Effect.provideService(FetchHttpClient.Fetch, Object.assign(fetch, { preconnect: vi.fn() })),
