@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -44,6 +44,25 @@ export T3CODE_BITBUCKET_API_TOKEN="your-token"
 The access token takes precedence if both are configured. Restart the server after changing these
 variables.
 
+### Gitea
+
+Set your Gitea web address and an access token in the environment of the machine running the
+T3 Code server:
+
+```bash
+export T3CODE_GITEA_BASE_URL="https://gitea.example.com"
+export T3CODE_GITEA_TOKEN="your-access-token"
+```
+
+Use the web root, including a proxy subpath if your server uses one. The token needs user read
+access for account discovery and repository access for the repositories you want to review.
+Grant write access for actions such as comments, reviews, creating repositories, and merging.
+Restart the server after setting these variables, then choose **Settings → Source Control → Rescan**.
+
+One Gitea server can be configured per T3 environment. HTTPS remotes must use that web root;
+SSH remotes must use the same hostname. SSH aliases and a separate SSH hostname are not currently
+recognized. Configure Git authentication separately for cloning, fetching, and pushing.
+
 ### Azure DevOps
 
 Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:
@@ -84,7 +103,7 @@ reopening a declined pull request.
 
 ## Troubleshooting
 
-- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
+- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket or Gitea,
   confirm the running server received the environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS

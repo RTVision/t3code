@@ -11,6 +11,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as GiteaApi from "./GiteaApi.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
@@ -28,6 +30,17 @@ const sourceControlProviderRegistryTestLayer = (input: {
         }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
+        NodeServices.layer,
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(GiteaApi.GiteaApi)({
+          baseUrl: Option.some("https://forge.example.test"),
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("forge.example.test"),
+            detail: Option.none(),
+          }),
+        }),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
@@ -161,6 +174,7 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unauthenticated",
           account: Option.none(),
         },
+        { kind: "gitea", status: "available", auth: "unauthenticated", account: Option.none() },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -277,6 +291,7 @@ Logged in to gitlab.com as gitlab-user
           account: Option.some("bitbucket-user"),
           detail: Option.none(),
         },
+        { kind: "gitea", auth: "unauthenticated", account: Option.none(), detail: Option.none() },
       ],
     );
   }).pipe(Effect.provide(testLayer));

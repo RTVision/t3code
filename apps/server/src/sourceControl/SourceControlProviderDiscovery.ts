@@ -43,6 +43,10 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "api";
   readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
+  readonly refineUnknownRemote?: (input: {
+    readonly cwd: string;
+    readonly context: SourceControlProvider.SourceControlProviderContext;
+  }) => SourceControlProviderInfo | null;
 };
 
 export type SourceControlProviderDiscoverySpec =
@@ -287,6 +291,11 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
       return input.context;
     }
     const context = input.context;
+    for (const spec of input.specs) {
+      if (spec.type !== "api" || spec.refineUnknownRemote === undefined) continue;
+      const provider = spec.refineUnknownRemote({ cwd: input.cwd, context });
+      if (provider !== null) return { ...context, provider };
+    }
 
     const providers = yield* Effect.forEach(input.specs.filter(isCliRemoteRefinementSpec), (spec) =>
       input.process
