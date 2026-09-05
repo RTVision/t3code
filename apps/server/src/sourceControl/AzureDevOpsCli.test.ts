@@ -48,6 +48,9 @@ describe("AzureDevOpsCli.layer", () => {
               status: "active",
               creationDate: "2026-01-02T00:00:00.000Z",
               closedDate: null,
+              repository: { name: "repo", project: { name: "project" } },
+              // Azure uses a JSON null fork marker for a same-repository pull request.
+              forkSource: null,
               _links: {
                 web: {
                   href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
@@ -70,6 +73,8 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result.baseRefName, "main");
       assert.strictEqual(result.headRefName, "feature/source-control");
       assert.strictEqual(result.state, "open");
+      assert.strictEqual(result.headRepositoryNameWithOwner, "project/repo");
+      assert.isFalse(result.isCrossRepository);
       assert.deepStrictEqual(result.updatedAt._tag, Option.some(1)._tag);
       assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0], {
         operation: "AzureDevOpsCli.execute",
@@ -143,6 +148,10 @@ describe("AzureDevOpsCli.layer", () => {
                 targetRefName: "refs/heads/main",
                 status: "completed",
                 closedDate: "2026-01-03T00:00:00.000Z",
+                repository: { name: "repo", project: { name: "project" } },
+                forkSource: {
+                  repository: { name: "repo", project: { name: "fork-project" } },
+                },
                 _links: {
                   web: {
                     href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/7",
@@ -163,6 +172,8 @@ describe("AzureDevOpsCli.layer", () => {
       });
 
       assert.strictEqual(result[0]?.state, "merged");
+      assert.strictEqual(result[0]?.headRepositoryNameWithOwner, "fork-project/repo");
+      assert.isTrue(result[0]?.isCrossRepository);
       expect(mockRun).toHaveBeenCalledWith({
         operation: "AzureDevOpsCli.execute",
         command: "az",
@@ -185,6 +196,37 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps an unresolved fork source unknown instead of using the target repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 43,
+              title: "Deleted fork source",
+              sourceRefName: "refs/heads/feature/deleted",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              creationDate: "2026-01-02T00:00:00.000Z",
+              repository: { name: "repo", project: { name: "project" } },
+              forkSource: { repository: null },
+              _links: {
+                web: { href: "https://dev.azure.com/acme/project/_git/repo/pullrequest/43" },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({ cwd: "/repo", reference: "43" });
+
+      assert.isNull(result.headRepositoryNameWithOwner);
+      assert.isUndefined(result.isCrossRepository);
     }).pipe(Effect.provide(layer)),
   );
 
