@@ -210,6 +210,8 @@ export const make = Effect.gen(function* () {
     kind: "github",
     capabilities: CAPABILITIES,
 
+    getNativeDependencyMembership: (input) => cli.getNativeDependencyMembership(input),
+
     getViewer: (input) =>
       cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
 
