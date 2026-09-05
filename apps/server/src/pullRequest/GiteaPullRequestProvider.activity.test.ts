@@ -15,7 +15,9 @@ const response = (value: unknown) => ({
   headers: {},
 });
 const failure = () =>
-  Effect.fail(new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }));
+  Effect.fail(
+    new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }),
+  );
 
 const pull = {
   number: 7,
@@ -58,7 +60,7 @@ function route(viewerFails: boolean, reactionsFail: boolean) {
       return Effect.succeed(
         response([{ id: 2, body: "summary", submitted_at: "2026-01-01T00:00:00Z" }]),
       );
-    if (input.path === "/repos/acme/web/pulls/7/reviews/2/comments")
+    if (input.path === "/repos/acme/web/pulls/7/reviews/2/comments?page=1&limit=50")
       return Effect.succeed(
         response([
           { id: 3, body: "inline", created_at: "2026-01-01T00:00:00Z", path: "a.ts", position: 1 },

@@ -942,7 +942,147 @@ layer("GiteaPullRequestApi", (it) => {
           ],
         }),
       ]);
-      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7/reviews/21/comments");
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7/reviews/21/comments?page=1&limit=50");
+    }),
+  );
+
+  it.effect(
+    "marks review activity truncated when nested review comments exceed the conversation bound",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest
+          .mockReturnValueOnce(
+            Effect.succeed(
+              response([
+                {
+                  id: 21,
+                  body: "Review",
+                  state: "COMMENT",
+                  submitted_at: "2026-09-03T11:00:00Z",
+                },
+              ]),
+            ),
+          )
+          .mockReturnValueOnce(
+            Effect.succeed(
+              response(
+                [
+                  {
+                    id: 31,
+                    body: "First",
+                    path: "src/a.ts",
+                    position: 1,
+                    created_at: "2026-09-03T11:01:00Z",
+                  },
+                ],
+                { "x-total-count": "501" },
+              ),
+            ),
+          )
+          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
+          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
+          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })))
+          .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "501" })));
+        const api = yield* GiteaPullRequestApi.make;
+        const result = yield* api.listReviews({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        assert.isTrue(result.truncated);
+        expect(result.comments).toContainEqual(
+          expect.objectContaining({ id: "review-comment:31" }),
+        );
+        expect(callAt(5).path).toContain("page=5");
+      }),
+  );
+
+  it.effect("does not repeat an unpaginated native review-comment response at the page size", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              {
+                id: 21,
+                body: "Review",
+                state: "COMMENT",
+                submitted_at: "2026-09-03T11:00:00Z",
+              },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length: 51 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      assert.isFalse(result.truncated);
+      assert.strictEqual(
+        result.comments.filter((comment) => comment.kind === "review-comment").length,
+        51,
+      );
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("does not mark an exact unpaginated review-comment safety bound as truncated", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              {
+                id: 21,
+                body: "Review",
+                state: "COMMENT",
+                submitted_at: "2026-09-03T11:00:00Z",
+              },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length: 200 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      assert.isFalse(result.truncated);
+      assert.strictEqual(
+        result.comments.filter((comment) => comment.kind === "review-comment").length,
+        200,
+      );
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
     }),
   );
 
