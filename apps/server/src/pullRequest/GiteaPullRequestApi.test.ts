@@ -11,12 +11,15 @@ const mockedRequest = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
-  Layer.succeed(GiteaApi.GiteaApi, GiteaApi.GiteaApi.of({
-    baseUrl: Option.some("https://forge.example.test/gitea"),
-    sshHosts: ["work-forge"],
-    request: mockedRequest,
-    probeAuth: Effect.die("not used"),
-  })),
+  Layer.succeed(
+    GiteaApi.GiteaApi,
+    GiteaApi.GiteaApi.of({
+      baseUrl: Option.some("https://forge.example.test/gitea"),
+      sshHosts: ["work-forge"],
+      request: mockedRequest,
+      probeAuth: Effect.die("not used"),
+    }),
+  ),
 );
 
 function response(value: unknown, headers: Readonly<Record<string, string>> = {}) {
@@ -174,17 +177,7 @@ layer("GiteaPullRequestApi", (it) => {
         )
         .mockReturnValueOnce(Effect.succeed(response(pull)))
         .mockReturnValueOnce(Effect.succeed(response({})));
-      const api = yield* GiteaPullRequestApi.make.pipe(
-        Effect.provideService(
-          GiteaApi.GiteaApi,
-          GiteaApi.GiteaApi.of({
-            baseUrl: Option.some("https://forge.example.test/gitea"),
-            sshHosts: ["work-forge"],
-            request: mockedRequest,
-            probeAuth: Effect.die("not used"),
-          }),
-        ),
-      );
+      const api = yield* GiteaPullRequestApi.make;
       yield* api.runAction({
         host: "forge.example.test",
         repository: "acme/web",
@@ -204,17 +197,7 @@ layer("GiteaPullRequestApi", (it) => {
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
         .mockReturnValueOnce(Effect.succeed(response({})));
-      const api = yield* GiteaPullRequestApi.make.pipe(
-        Effect.provideService(
-          GiteaApi.GiteaApi,
-          GiteaApi.GiteaApi.of({
-            baseUrl: Option.some("https://forge.example.test/gitea"),
-            sshHosts: ["work-forge"],
-            request: mockedRequest,
-            probeAuth: Effect.die("not used"),
-          }),
-        ),
-      );
+      const api = yield* GiteaPullRequestApi.make;
       const error = yield* api
         .runAction({
           host: "forge.example.test",
@@ -258,17 +241,7 @@ layer("GiteaPullRequestApi", (it) => {
           response(rawPullRequest(7, { head: { ref: "feature", sha: "changed-head" } })),
         ),
       );
-      const api = yield* GiteaPullRequestApi.make.pipe(
-        Effect.provideService(
-          GiteaApi.GiteaApi,
-          GiteaApi.GiteaApi.of({
-            baseUrl: Option.some("https://forge.example.test/gitea"),
-            sshHosts: ["work-forge"],
-            request: mockedRequest,
-            probeAuth: Effect.die("not used"),
-          }),
-        ),
-      );
+      const api = yield* GiteaPullRequestApi.make;
       const error = yield* api
         .runAction({
           host: "forge.example.test",
@@ -1345,7 +1318,7 @@ layer("GiteaPullRequestApi", (it) => {
 
   it.effect("reports Gitea's missing review-summary reaction route", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response({features: []})));
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
       const api = yield* GiteaPullRequestApi.make;
       const error = yield* api
         .setReaction({
@@ -1438,7 +1411,7 @@ layer("GiteaPullRequestApi", (it) => {
     Effect.gen(function* () {
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response({})))
-        .mockReturnValueOnce(Effect.succeed(response({features: []})))
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
         .mockReturnValueOnce(Effect.succeed(response({})))
         .mockReturnValueOnce(
@@ -1498,7 +1471,7 @@ layer("GiteaPullRequestApi", (it) => {
   it.effect("restores the title when Gitea does not recognize the configured draft prefix", () =>
     Effect.gen(function* () {
       mockedRequest
-        .mockReturnValueOnce(Effect.succeed(response({features: []})))
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
         .mockReturnValueOnce(Effect.succeed(response({})))
         .mockReturnValueOnce(
@@ -1586,7 +1559,7 @@ layer("GiteaPullRequestApi", (it) => {
 
   it.effect("honors a server timeline page-size cap before reading the final merge state", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response({features: []})));
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response([{ id: 1, type: "pull_scheduled_merge" }], { "x-total-count": "2" }),
