@@ -221,6 +221,7 @@ const decodeReviewComment = Schema.decodeUnknownOption(RawReviewComment);
 const decodeCommit = Schema.decodeUnknownOption(RawCommit);
 const decodeLabel = Schema.decodeUnknownOption(RawLabel);
 const decodeReaction = Schema.decodeUnknownOption(RawGiteaReaction);
+const isGiteaApiError = Schema.is(GiteaApi.GiteaApiError);
 const encodeObject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -2007,8 +2008,8 @@ export const make = Effect.gen(function* () {
             ...input,
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
-            Effect.catchTag("GiteaPullRequestApiError", (error) =>
-              error.cause instanceof GiteaApi.GiteaApiError && error.cause.status === 405
+            Effect.catchTag("GiteaPullRequestApiError", (error: GiteaPullRequestApiError) =>
+              isGiteaApiError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
                 : Effect.fail(error),
             ),
