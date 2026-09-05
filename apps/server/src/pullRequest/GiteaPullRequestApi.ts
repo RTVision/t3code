@@ -1082,20 +1082,15 @@ export const make = Effect.gen(function* () {
       });
       const repo = yield* decode(operation, RawRepository, response);
       return {
-        // An omitted permission block is unknown rather than a denial. Gitea will still enforce
-        // the write, while hiding it here would leave an entitled viewer with no route to try.
-        canWrite:
-          repo.permissions == null ||
-          repo.permissions.push === true ||
-          repo.permissions.admin === true,
+        canWrite: repo.permissions?.push === true || repo.permissions?.admin === true,
         mergeCapabilities: {
-          merge: repo.allow_merge_commits ?? true,
-          squash: repo.allow_squash_merge ?? true,
-          rebase: repo.allow_rebase ?? true,
+          merge: repo.allow_merge_commits === true,
+          squash: repo.allow_squash_merge === true,
+          rebase: repo.allow_rebase === true,
         },
         updateMethods: [
-          ...(repo.allow_merge_update !== false ? (["merge"] as const) : []),
-          ...(repo.allow_rebase_update !== false ? (["rebase"] as const) : []),
+          ...(repo.allow_merge_update === true ? (["merge"] as const) : []),
+          ...(repo.allow_rebase_update === true ? (["rebase"] as const) : []),
         ],
       };
     },
@@ -1337,6 +1332,7 @@ export const make = Effect.gen(function* () {
     sha: string;
   }) {
     const operation = "listChecks";
+    if (input.sha.trim() === "") return [];
     const statuses: Array<RawCommitStatus> = [];
     let path = query(
       `${basePath(input.repository)}/commits/${encodeURIComponent(input.sha)}/status`,

@@ -144,12 +144,30 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
-  it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () => Effect.gen(function* () {
-    mockedRequest.mockReturnValueOnce(Effect.fail(new GiteaApi.GiteaApiError({operation: "getFeatures", reason: "failed", detail: "temporarily unavailable"}))).mockReturnValueOnce(Effect.succeed(response([{id: 1, type: "pull_scheduled_merge"}])));
-    const api = yield* GiteaPullRequestApi.make;
-    expect(yield* api.getAutoMergeEnabled({host: "forge.example.test", repository: "acme/web", number: 7})).toBe(true);
-    expect(callAt(1).path).toContain("/timeline?");
-  }));
+  it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GiteaApi.GiteaApiError({
+              operation: "getFeatures",
+              reason: "failed",
+              detail: "temporarily unavailable",
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response([{ id: 1, type: "pull_scheduled_merge" }])));
+      const api = yield* GiteaPullRequestApi.make;
+      expect(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      ).toBe(true);
+      expect(callAt(1).path).toContain("/timeline?");
+    }),
+  );
   it.effect("opens a native revert PR only on an advertising Gitea server", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -821,7 +839,7 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("does not turn omitted repository permissions into a denial", () =>
+  it.effect("does not advertise writes or merge methods from incomplete repository settings", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response({})));
       const api = yield* GiteaPullRequestApi.make;
@@ -831,13 +849,13 @@ layer("GiteaPullRequestApi", (it) => {
       });
 
       expect(access).toEqual({
-        canWrite: true,
+        canWrite: false,
         mergeCapabilities: {
-          merge: true,
-          squash: true,
-          rebase: true,
+          merge: false,
+          squash: false,
+          rebase: false,
         },
-        updateMethods: ["merge", "rebase"],
+        updateMethods: [],
       });
     }),
   );
@@ -1039,6 +1057,16 @@ layer("GiteaPullRequestApi", (it) => {
           { body: "New line", path: "src/b.ts", new_position: 9 },
         ],
       });
+    }),
+  );
+
+  it.effect("does not request commit statuses without a head revision", () =>
+    Effect.gen(function* () {
+      const api = yield* GiteaPullRequestApi.make;
+      expect(
+        yield* api.listChecks({ host: "forge.example.test", repository: "acme/web", sha: "" }),
+      ).toEqual([]);
+      expect(mockedRequest).not.toHaveBeenCalled();
     }),
   );
 
