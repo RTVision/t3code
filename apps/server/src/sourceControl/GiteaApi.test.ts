@@ -134,7 +134,7 @@ it.effect("does not follow a redirect or replay a write", () => {
 });
 
 it.effect("disables automatic redirects in the production Fetch transport", () => {
-  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+  const fetch = vi.fn<(...args: Parameters<typeof globalThis.fetch>) => ReturnType<typeof globalThis.fetch>>(async (_url, init) => {
     assert.strictEqual(init?.redirect, "manual");
     return new Response(null, {
       status: 307,
@@ -166,7 +166,7 @@ it.effect("disables automatic redirects in the production Fetch transport", () =
       .pipe(Effect.flip);
     assert.strictEqual(error.status, 307);
     assert.strictEqual(fetch.mock.calls.length, 1);
-  }).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, fetch));
+  }).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, Object.assign(fetch, { preconnect: vi.fn() })));
 });
 
 it.effect("distinguishes rejected credentials from permission failures", () =>
