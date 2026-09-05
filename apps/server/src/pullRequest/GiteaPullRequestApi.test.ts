@@ -896,13 +896,13 @@ layer("GiteaPullRequestApi", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(
             response([
-              { reaction: "+1", user: { login: "reader" } },
-              { reaction: "+1", user: { login: "teammate" } },
+              { content: "+1", user: { login: "reader" } },
+              { content: "+1", user: { login: "teammate" } },
             ]),
           ),
         )
         .mockReturnValueOnce(
-          Effect.succeed(response([{ reaction: "heart", user: { login: "friend" } }])),
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
         )
         .mockReturnValueOnce(Effect.succeed(response([])));
       const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
