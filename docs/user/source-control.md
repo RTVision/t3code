@@ -107,6 +107,11 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+When the host can confirm that one pull request targets another pull request's branch, its review
+panel shows the dependency chain. Select a related pull request there to open its usual review
+panel. T3 marks incomplete discovery instead of guessing whether a release branch or another
+unrelated non-default branch is part of a stack.
+
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
