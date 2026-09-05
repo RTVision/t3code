@@ -148,6 +148,7 @@ export class BitbucketPullRequestApi extends Context.Service<
     readonly getViewer: () => Effect.Effect<string, BitbucketPullRequestApiError>;
 
     readonly listPullRequests: (input: {
+      readonly relationshipOnly?: boolean | undefined;
       readonly repository: string;
       readonly state: PullRequestListState;
       readonly limit: number;
@@ -405,6 +406,8 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly page: number;
     readonly collected: ReadonlyArray<BitbucketPullRequest>;
+    readonly relationshipOnly?: boolean | undefined;
+    readonly incomplete: boolean;
   }): Effect.Effect<BitbucketPullRequestBatch, BitbucketPullRequestApiError> =>
     bitbucket.request({ method: "GET", url: input.url }).pipe(
       Effect.flatMap((response) => {
@@ -419,16 +422,25 @@ export const make = Effect.gen(function* () {
         }
         const collected = [...input.collected, ...decoded.success.items];
         const next = decoded.success.next;
-        if (next === null || collected.length >= input.limit || input.page >= MAX_LIST_PAGES) {
+        const incomplete =
+          input.incomplete || decoded.success.rawCount !== decoded.success.items.length;
+        if (
+          next === null ||
+          collected.length >= input.limit ||
+          input.page >= (input.relationshipOnly === true ? 4 : MAX_LIST_PAGES)
+        ) {
           return Effect.succeed({
             items: collected.slice(0, input.limit),
             // Bitbucket pages in fifties whatever was asked for, so a walk that stopped on the
             // count rather than on the last page is holding rows it is about to drop. Those are
             // more results just as surely as another page would be.
-            truncated: next !== null || collected.length > input.limit,
+            truncated:
+              next !== null ||
+              collected.length > input.limit ||
+              (input.relationshipOnly === true && incomplete),
           });
         }
-        return listPage({ ...input, url: next, page: input.page + 1, collected });
+        return listPage({ ...input, url: next, page: input.page + 1, collected, incomplete });
       }),
     );
 
@@ -562,6 +574,8 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           page: 1,
           collected: [],
+          incomplete: false,
+          relationshipOnly: input.relationshipOnly,
         });
       }),
 

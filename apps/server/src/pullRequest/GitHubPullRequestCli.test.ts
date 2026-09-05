@@ -183,6 +183,74 @@ afterEach(() => {
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect(
+    "relationship discovery uses one bounded repository listing without search fallback",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const batch = yield* cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: "all",
+          viewer: "reader",
+          limit: 200,
+          relationshipOnly: true,
+        });
+        expect(batch).toEqual({ items: [], truncated: false, continues: false });
+        expect(mockedExecute).toHaveBeenCalledTimes(1);
+        expect(callAt(0).args).not.toContain("--search");
+        expect(callAt(0).args).toContain("201");
+      }),
+  );
+
+  it.effect("a skipped relationship row keeps coverage partial without fetching replacements", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(pullRequests(201, 1, () => ({ number: "invalid" })))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "reader",
+        limit: 200,
+        relationshipOnly: true,
+      });
+      expect(batch.items).toHaveLength(0);
+      expect(batch.truncated).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("caps a larger relationship request and reports the unread remainder", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(201, 1))));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "reader",
+        limit: 1_000,
+        relationshipOnly: true,
+      });
+
+      expect(batch.items).toHaveLength(201);
+      expect(batch.truncated).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      const args = callAt(0).args;
+      expect(args[args.indexOf("--limit") + 1]).toBe("201");
+    }),
+  );
+
   it.effect("reads linked pull request status through one narrow request", () =>
     Effect.gen(function* () {
       mockedGetPullRequest.mockReturnValueOnce(

@@ -145,6 +145,7 @@ export const make = Effect.gen(function* () {
           viewer: input.viewer,
           limit: input.limit,
           cursor: input.cursor,
+          relationshipOnly: input.relationshipOnly,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
