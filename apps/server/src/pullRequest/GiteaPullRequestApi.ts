@@ -1458,7 +1458,7 @@ export const make = Effect.gen(function* () {
                   ? "success"
                   : state === "pending"
                     ? "pending"
-                    : state === "failure" || state === "error"
+                    : state === "failure" || state === "error" || state === "warning"
                       ? "failure"
                       : state === "skipped"
                         ? "skipped"
