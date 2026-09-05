@@ -77,7 +77,7 @@ afterEach(() => mockedRequest.mockReset());
 it.effect("skips an invalid hydrated search pull request without dropping later valid rows", () =>
   Effect.gen(function* () {
     mockedRequest.mockImplementation((input) => {
-      if (input.path.startsWith("/repos/acme/web/issues/search?"))
+      if (input.path.startsWith("/repos/acme/web/issues?"))
         return Effect.succeed(response([{ number: 1 }, { number: 2 }]));
       if (input.path === "/repos/acme/web/pulls/1") return Effect.succeed(response({ number: 1 }));
       if (input.path === "/repos/acme/web/pulls/2")
@@ -111,7 +111,7 @@ it.effect("skips an invalid hydrated search pull request without dropping later 
 it.effect("keeps a search hydration transport failure fatal", () =>
   Effect.gen(function* () {
     mockedRequest.mockImplementation((input) => {
-      if (input.path.startsWith("/repos/acme/web/issues/search?"))
+      if (input.path.startsWith("/repos/acme/web/issues?"))
         return Effect.succeed(response([{ number: 1 }]));
       return Effect.fail(
         new GiteaApi.GiteaApiError({
