@@ -114,9 +114,9 @@ For Azure DevOps, use the host website to view diffs or change comments. Bitbuck
 reopening a declined pull request.
 
 Gitea supports PR tracking, comments, reviews, diffs, reviewer and label updates, merge methods,
-branch updates, and close/reopen. Draft status is shown when Gitea reports it, but draft/ready
-changes, auto-merge controls, reactions, comment editing, workflow approval, and revert PRs are
-not currently available in T3. Use your Gitea website for those tasks.
+branch updates, close/reopen, draft/ready changes, and auto-merge controls. Reactions, comment
+editing, workflow approval, and revert PRs are not currently available in T3. Use your Gitea
+website for those tasks.
 
 ## Troubleshooting
 
