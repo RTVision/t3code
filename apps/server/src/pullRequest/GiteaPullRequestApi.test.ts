@@ -923,9 +923,61 @@ layer("GiteaPullRequestApi", (it) => {
       expect(reactions.bySubjectId.get("review-comment:34")).toEqual([]);
       expect(reactions.bySubjectId.has("review:21")).toBe(false);
       expect(mockedRequest.mock.calls.map((call) => call[0].path)).toEqual([
-        "/repos/acme/web/issues/7/reactions",
-        "/repos/acme/web/issues/comments/12/reactions",
-        "/repos/acme/web/issues/comments/34/reactions",
+        "/repos/acme/web/issues/7/reactions?page=1&limit=50",
+        "/repos/acme/web/issues/comments/12/reactions?page=1&limit=50",
+        "/repos/acme/web/issues/comments/34/reactions?page=1&limit=50",
+      ]);
+    }),
+  );
+
+  it.effect("treats a native null reaction list as empty without dropping other subjects", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response(null)))
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "Reader",
+        subjectIds: ["issue:12"],
+      });
+
+      expect(reactions.pullRequest).toEqual([]);
+      expect(reactions.bySubjectId.get("issue:12")).toEqual([
+        { content: "heart", count: 1, actors: ["friend"], viewerHasReacted: false },
+      ]);
+    }),
+  );
+
+  it.effect("follows a reaction list when Gitea caps a requested page below its limit", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
+        if (input.path === "/repos/acme/web/issues/7/reactions?page=1&limit=50")
+          return Effect.succeed(
+            response([{ content: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
+          );
+        if (input.path === "/repos/acme/web/issues/7/reactions?page=2&limit=50")
+          return Effect.succeed(
+            response([{ content: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "reader",
+        subjectIds: [],
+      });
+      expect(reactions.pullRequest).toEqual([
+        { content: "heart", count: 1, actors: ["one"], viewerHasReacted: false },
+        { content: "eyes", count: 1, actors: ["two"], viewerHasReacted: false },
       ]);
     }),
   );

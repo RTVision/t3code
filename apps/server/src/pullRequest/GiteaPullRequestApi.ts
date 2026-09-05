@@ -689,9 +689,23 @@ export const make = Effect.gen(function* () {
     host: string;
     repository: string;
     path: string;
+    nullAsEmpty?: boolean;
   }) {
-    const response = yield* request({ ...input, method: "GET" });
-    const rows = yield* decode(input.operation, Schema.Array(Schema.Unknown), response);
+    const response = yield* request({
+      operation: input.operation,
+      host: input.host,
+      repository: input.repository,
+      path: input.path,
+      method: "GET",
+    });
+    const decoded = yield* decode(
+      input.operation,
+      input.nullAsEmpty
+        ? Schema.NullOr(Schema.Array(Schema.Unknown))
+        : Schema.Array(Schema.Unknown),
+      response,
+    );
+    const rows = decoded ?? [];
     return { rows, headers: response.headers } satisfies UnknownPage;
   });
 
@@ -706,6 +720,7 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     limit: number;
+    nullAsEmpty?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -716,6 +731,7 @@ export const make = Effect.gen(function* () {
         host: input.host,
         repository: input.repository,
         path,
+        ...(input.nullAsEmpty === undefined ? {} : { nullAsEmpty: input.nullAsEmpty }),
       });
       rowsSeen += result.rows.length;
       const remaining = Math.max(0, input.limit - rows.length);
@@ -1319,24 +1335,37 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownArray({
+          readUnknownSlice({
             operation: "listConversationReactions",
             host: input.host,
             repository: input.repository,
             path:
               entry.target.kind === "pull-request"
-                ? `${basePath(input.repository)}/issues/${input.number}/reactions`
-                : `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
+                    page: 1,
+                    limit: PAGE_SIZE,
+                  })
+                : query(
+                    `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                    {
+                      page: 1,
+                      limit: PAGE_SIZE,
+                    },
+                  ),
+            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
+            nullAsEmpty: true,
           }).pipe(
-            Effect.map((rows) => ({
+            Effect.map((result) => ({
               subjectId: entry.subjectId,
-              reactions: reactionsForViewer(
-                rows.flatMap((row) => {
-                  const decoded = decodeReaction(row);
-                  return Option.isSome(decoded) ? [decoded.value] : [];
-                }),
-                input.viewer,
-              ),
+              reactions: result.truncated
+                ? []
+                : reactionsForViewer(
+                    result.rows.flatMap((row) => {
+                      const decoded = decodeReaction(row);
+                      return Option.isSome(decoded) ? [decoded.value] : [];
+                    }),
+                    input.viewer,
+                  ),
             })),
           ),
         ),
