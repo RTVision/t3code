@@ -28,6 +28,7 @@ import type {
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
+import * as GiteaWorkflows from "./GiteaWorkflows.ts";
 import {
   editableCommentId,
   type GiteaConversationReactionTarget,
@@ -445,6 +446,14 @@ function nextPagePath(input: {
 export class GiteaPullRequestApi extends Context.Service<
   GiteaPullRequestApi,
   {
+    readonly getWorkflowApprovals: (input: {
+      host: string;
+      repository: string;
+      number: number;
+    }) => Effect.Effect<
+      { supported: boolean; runs: ReadonlyArray<GiteaWorkflows.GiteaWorkflowRun> },
+      GiteaPullRequestApiError
+    >;
     readonly getViewer: () => Effect.Effect<string, GiteaPullRequestApiError>;
     readonly getFeatures: () => Effect.Effect<ReadonlyArray<string>, GiteaPullRequestApiError>;
     readonly listPullRequests: (input: {
@@ -740,6 +749,58 @@ export const make = Effect.gen(function* () {
       });
     },
   );
+
+  const getWorkflowApprovals = Effect.fn("GiteaPullRequestApi.getWorkflowApprovals")(
+    function* (input: { host: string; repository: string; number: number }) {
+      yield* validateHost(input.host);
+      if (!(yield* getFeatures).includes("actions-run-approve"))
+        return { supported: false, runs: [] };
+      const pull = yield* getPullRequest(input);
+      if (pull.state !== "open") return { supported: true, runs: [] };
+      const runs = yield* GiteaWorkflows.list(gitea, { ...input, headSha: pull.headSha }).pipe(
+        Effect.mapError((error) => failure("getWorkflowApprovals", error)),
+      );
+      return { supported: true, runs };
+    },
+  );
+
+  const approveWorkflows = Effect.fn("GiteaPullRequestApi.approveWorkflows")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+  }) {
+    const before = yield* getPullRequest(input);
+    const approvals = yield* getWorkflowApprovals(input);
+    if (!approvals.supported)
+      return yield* new GiteaPullRequestApiError({
+        operation: "approveWorkflows",
+        reason: "failed",
+        detail: "This Gitea server does not expose workflow approval metadata.",
+      });
+    for (const run of approvals.runs) {
+      const current = yield* getPullRequest(input);
+      if (
+        current.state !== "open" ||
+        current.headSha !== before.headSha ||
+        !GiteaWorkflows.isCurrentPullWorkflow(run, {
+          number: input.number,
+          headSha: current.headSha,
+        })
+      ) {
+        return yield* new GiteaPullRequestApiError({
+          operation: "approveWorkflows",
+          reason: "failed",
+          detail: "The pull request head changed; refresh before approving workflows.",
+        });
+      }
+      yield* request({
+        operation: "approveWorkflows",
+        ...input,
+        method: "POST",
+        path: `${basePath(input.repository)}/actions/runs/${run.id}/approve`,
+      });
+    }
+  });
 
   const readUnknownPage = Effect.fn("GiteaPullRequestApi.readUnknownPage")(function* (input: {
     operation: string;
@@ -1558,6 +1619,7 @@ export const make = Effect.gen(function* () {
 
   return GiteaPullRequestApi.of({
     getFeatures: () => getFeatures,
+    getWorkflowApprovals,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {
       const response = yield* gitea
         .request({
@@ -1747,8 +1809,9 @@ export const make = Effect.gen(function* () {
             number: input.number,
             action: input.action,
           });
-        case "revert":
         case "approve-workflows":
+          return approveWorkflows(input);
+        case "revert":
           return Effect.fail(unsupportedAction(input.action));
       }
     },
