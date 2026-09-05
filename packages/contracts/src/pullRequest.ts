@@ -408,6 +408,15 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 });
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
+/** Read-only dependency information a provider can contribute to the pull request panel. */
+export const PullRequestDependencyCapabilities = Schema.Struct({
+  /** Ordinary pull requests can be related by their repository-qualified head and base refs. */
+  branchRelationships: Schema.Boolean,
+  /** The host can additionally report an explicit, ordered native stack membership. */
+  nativeMembership: Schema.Boolean,
+});
+export type PullRequestDependencyCapabilities = typeof PullRequestDependencyCapabilities.Type;
+
 /**
  * What a provider can actually do, so a surface can hide what is missing rather than offer an
  * action that would fail. Every provider fills this in for itself; nothing is assumed.
@@ -463,6 +472,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * to change them, which is what every server before this field was.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * Dependency reads are optional so clients remain compatible with servers that predate them.
+   * An absent value means the client must leave dependency navigation unavailable.
+   */
+  dependencies: Schema.optional(PullRequestDependencyCapabilities),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -666,6 +680,81 @@ export const PullRequestRef = Schema.Struct({
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+export const PullRequestDependencyCoverage = Schema.Literals([
+  "complete",
+  "partial",
+  "unavailable",
+]);
+export type PullRequestDependencyCoverage = typeof PullRequestDependencyCoverage.Type;
+
+export const PullRequestDependencyNode = Schema.Struct({
+  ref: PullRequestRef,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  baseBranch: TrimmedNonEmptyString,
+  /** Null when the host did not qualify the source branch with its repository identity. */
+  head: Schema.NullOr(
+    Schema.Struct({
+      repository: TrimmedNonEmptyString,
+      branch: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type PullRequestDependencyNode = typeof PullRequestDependencyNode.Type;
+
+export const PullRequestDependencyEdge = Schema.Struct({
+  /** The pull request whose base targets the parent's head branch. */
+  child: PositiveInt,
+  parent: PositiveInt,
+  /** Only a unique, repository-qualified match from a complete read is confirmed. */
+  certainty: Schema.Literals(["confirmed", "candidate"]),
+});
+export type PullRequestDependencyEdge = typeof PullRequestDependencyEdge.Type;
+
+export const PullRequestDependencyIssue = Schema.Struct({
+  number: Schema.optional(PositiveInt),
+  reason: Schema.Literals([
+    "budget",
+    "identity-unknown",
+    "source-unavailable",
+    "ambiguous-parent",
+    "cycle",
+    "host-unavailable",
+  ]),
+});
+export type PullRequestDependencyIssue = typeof PullRequestDependencyIssue.Type;
+
+export const PullRequestNativeDependencyMembership = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("present"),
+    /** Opaque outside the provider and scoped to this context's host and repository. */
+    id: TrimmedNonEmptyString,
+    members: Schema.Array(PositiveInt).check(Schema.isMaxLength(100)),
+    coverage: Schema.Literals(["complete", "partial"]),
+  }),
+  Schema.Struct({ status: Schema.Literals(["none", "unavailable"]) }),
+]);
+export type PullRequestNativeDependencyMembership =
+  typeof PullRequestNativeDependencyMembership.Type;
+
+/** A bounded dependency read for one exact provider, host, and target repository. */
+export const PullRequestDependencyContext = Schema.Struct({
+  focus: PullRequestRef,
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+  /** Up to 200 relationship rows plus 100 additional native members. */
+  nodes: Schema.Array(PullRequestDependencyNode).check(Schema.isMaxLength(300)),
+  edges: Schema.Array(PullRequestDependencyEdge).check(Schema.isMaxLength(400)),
+  coverage: PullRequestDependencyCoverage,
+  issues: Schema.Array(PullRequestDependencyIssue).check(Schema.isMaxLength(400)),
+  /** Omitted until a provider attempts a native membership read. */
+  native: Schema.optional(PullRequestNativeDependencyMembership),
+});
+export type PullRequestDependencyContext = typeof PullRequestDependencyContext.Type;
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
