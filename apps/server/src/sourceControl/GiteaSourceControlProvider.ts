@@ -1,4 +1,3 @@
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -41,7 +40,7 @@ const PullRequest = Schema.Struct({
   state: Schema.Literals(["open", "closed"]),
   merged: Schema.Boolean,
   draft: Schema.optionalKey(Schema.Boolean),
-  updated_at: Schema.String,
+  updated_at: Schema.DateTimeUtcFromString,
   head: Branch,
   base: Branch,
 });
@@ -69,7 +68,7 @@ function toChangeRequest(pull: typeof PullRequest.Type): ChangeRequest {
     headRefName: pull.head.ref,
     state: pull.merged ? "merged" : pull.state,
     ...(pull.draft === undefined ? {} : { isDraft: pull.draft }),
-    updatedAt: DateTime.make(pull.updated_at),
+    updatedAt: Option.some(pull.updated_at),
     isCrossRepository:
       pull.head.repo === null ||
       pull.base.repo === null ||

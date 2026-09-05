@@ -475,3 +475,11 @@ it.effect("refuses checkout of a deleted source repository", () => {
     assert.strictEqual(fetchBranch.mock.calls.length, 0);
   });
 });
+
+it.effect("rejects invalid pull request timestamps at the API boundary", () => {
+  const { provider } = setup(() => ({ body: pull(42, { updated_at: "not-a-date" }) }));
+  return Effect.gen(function* () {
+    const error = yield* (yield* provider).getChangeRequest({cwd: "/repo", context, reference: "42"}).pipe(Effect.flip);
+    assert.strictEqual(error._tag, "SourceControlProviderError");
+  });
+});
