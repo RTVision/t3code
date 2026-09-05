@@ -55,8 +55,8 @@ export T3CODE_GITEA_TOKEN="your-access-token"
 ```
 
 Use the web root, including a proxy subpath if your server uses one. The token needs user read
-access for account discovery and repository access for the repositories you want to review.
-Grant write access for actions such as comments, reviews, creating repositories, and merging.
+access for account discovery, repository access for pull requests, and issue access for ordinary
+comments and labels. Grant write access to repositories and issues for review and lifecycle actions.
 Restart the server after setting these variables, then choose **Settings → Source Control → Rescan**.
 
 One Gitea server can be configured per T3 environment. HTTPS remotes must use that web root;
@@ -100,6 +100,11 @@ supports approving waiting fork workflows and opening a revert pull request for 
 
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.
+
+Gitea supports PR tracking, comments, reviews, diffs, reviewer and label updates, merge methods,
+branch updates, and close/reopen. Draft status is shown when Gitea reports it, but draft/ready
+changes, auto-merge controls, reactions, comment editing, workflow approval, and revert PRs are
+not currently available in T3. Use your Gitea website for those tasks.
 
 ## Troubleshooting
 
