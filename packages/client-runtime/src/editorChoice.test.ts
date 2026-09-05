@@ -57,6 +57,7 @@ describe("editor choice", () => {
     });
     expect(editorWorkspace(target, "/project/worktree")).toBe("/project/worktree");
     expect(editorWorkspace(target)).toBe("/outside");
+    expect(editorWorkspace({ kind: "file", path: "file.txt" })).toBe(".");
     expect(guiEditorTarget(target)).toBe("/outside/file.ts:12:5");
     expect(editorWorkspace({ kind: "file", path: "C:\\config.json" })).toBe("C:\\");
   });

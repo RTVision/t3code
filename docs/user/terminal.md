@@ -27,5 +27,7 @@ or WSL SSH credentials. If detection requires SSH sign-in, choose the labeled
 **Check on open** option and authenticate in the new terminal. Changing the SSH
 runner, WSL distro or account can require reconnecting the saved environment.
 
-External terminal launching requires the Windows desktop app. Browser and mobile
-clients retain their existing editor options.
+External terminal launching requires the Windows desktop app with terminal editor
+support. Browser, mobile and older desktop clients retain their existing GUI
+editor options; clients without terminal editor support explain that limit for a
+saved Neovim choice.

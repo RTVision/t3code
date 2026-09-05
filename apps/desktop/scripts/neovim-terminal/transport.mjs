@@ -229,6 +229,8 @@ export async function findNeovim(override, environment = process.env) {
     try {
       await NodeFSP.access(candidate, NodeFS.constants.X_OK);
     } catch {
+      if (override)
+        throw new Error(`The configured Neovim executable is not runnable: ${override}`);
       continue;
     }
     const version = await run(candidate, ["--version"], {

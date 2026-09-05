@@ -145,6 +145,10 @@ export function EditorsSettingsPanel() {
             disabled={!window.desktopBridge?.setTerminalEditorSettings}
           >
             <option value="automatic">Automatic</option>
+            {terminal !== "automatic" &&
+              !capability.terminals.some((item) => item.id === terminal) && (
+                <option value={terminal}>Windows Terminal (unavailable)</option>
+              )}
             {capability.terminals.map((terminal) => (
               <option key={terminal.id} value={terminal.id}>
                 {terminal.label}

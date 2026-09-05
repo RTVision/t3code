@@ -91,10 +91,17 @@ export class TerminalEditorRuntime {
       NodePath.join(this.options.stateDir, "terminal-editors.json"),
       "utf8",
     ).then(
-      (text) => readPreferences(JSON.parse(text)),
+      (text) => {
+        try {
+          return readPreferences(JSON.parse(text));
+        } catch {
+          return { terminal: "automatic" as const, overrides: {} };
+        }
+      },
       (error: NodeJS.ErrnoException) => {
+        this.preferences = undefined;
         if (error.code !== "ENOENT") throw error;
-        return { terminal: "automatic", overrides: {} };
+        return { terminal: "automatic" as const, overrides: {} };
       },
     );
     return this.preferences;

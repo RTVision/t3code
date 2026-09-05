@@ -132,14 +132,80 @@ it("scopes executable overrides by route and invalidates old launch generations"
   });
   expect(await runtime.probe(descriptor, "1")).toMatchObject({ executableOverride: null });
 });
-it("reads framed discovery despite banners and distinguishes a missing binary", async () => {
-  const result = await run("/bin/bash", ["-l", "-s"], {
-    input: neovimProbeScript("/t3-neovim-does-not-exist"),
-    timeout: 15_000,
-    capture: true,
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Real Bash subprocess fixtures require a POSIX host.
+it.skipIf(NodeOS.platform() === "win32")(
+  "reads framed discovery despite banners and distinguishes a missing binary",
+  async () => {
+    const result = await run("/bin/bash", ["-l", "-s"], {
+      input: neovimProbeScript("/t3-neovim-does-not-exist"),
+      timeout: 15_000,
+      capture: true,
+    });
+    expect(parseNeovimProbe(`login banner\n${result}\nlogout banner`)).toMatchObject({
+      missing: true,
+    });
+    expect(() => parseNeovimProbe("only a startup banner")).toThrow(/login script/u);
+  },
+);
+
+it.each(["{invalid", JSON.stringify({ terminal: "unknown", overrides: {} })])(
+  "recovers from invalid preferences and persists replacement settings: %s",
+  async (content) => {
+    const { runtime, stateDir } = await harness();
+    const file = NodePath.join(stateDir, "terminal-editors.json");
+    await NodeFSP.writeFile(file, content);
+    expect(await runtime.probe(descriptor, "1")).toMatchObject({
+      state: "available",
+      terminalPreference: "automatic",
+      executableOverride: null,
+    });
+    await runtime.save(descriptor, {
+      connection: { kind: "primary" },
+      terminal: "windows-terminal",
+      executableOverride: "/opt/nvim",
+    });
+    expect(JSON.parse(await NodeFSP.readFile(file, "utf8"))).toEqual({
+      terminal: "windows-terminal",
+      overrides: { [descriptor.identity]: "/opt/nvim" },
+    });
+  },
+);
+
+it("reports filesystem read failures and retries after the file is repaired", async () => {
+  const { runtime, stateDir } = await harness();
+  const file = NodePath.join(stateDir, "terminal-editors.json");
+  await NodeFSP.mkdir(file);
+  await expect(runtime.probe(descriptor, "1")).rejects.toThrow();
+  await NodeFSP.rmdir(file);
+  await NodeFSP.writeFile(file, JSON.stringify({ terminal: "windows-terminal", overrides: {} }));
+  expect(await runtime.probe(descriptor, "1", true)).toMatchObject({
+    state: "available",
+    terminalPreference: "windows-terminal",
   });
-  expect(parseNeovimProbe(`login banner\n${result}\nlogout banner`)).toMatchObject({
-    missing: true,
-  });
-  expect(() => parseNeovimProbe("only a startup banner")).toThrow(/login script/u);
 });
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Real Bash subprocess fixtures require a POSIX host.
+it.skipIf(NodeOS.platform() === "win32")(
+  "probes with the selected Node executable outside PATH",
+  async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-node-probe-"));
+    directories.push(directory);
+    const node = NodePath.join(directory, "node with ' quote");
+    await NodeFSP.symlink(process.execPath, node);
+    const result = await run("/bin/bash", ["-s"], {
+      input: neovimProbeScript("/t3-neovim-does-not-exist", node),
+      env: { PATH: directory },
+      capture: true,
+      timeout: 15_000,
+    });
+    expect(parseNeovimProbe(result)).toMatchObject({ node: process.execPath, missing: true });
+    await expect(
+      run("/bin/bash", ["-s"], {
+        input: neovimProbeScript(null),
+        env: { PATH: directory },
+        capture: true,
+        timeout: 15_000,
+      }),
+    ).rejects.toThrow(/T3NEOVIM_RUNTIME_MISSING/u);
+  },
+);

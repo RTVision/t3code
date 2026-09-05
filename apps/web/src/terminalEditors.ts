@@ -18,6 +18,12 @@ const CHECKING: TerminalEditorCapability = {
   selectedTerminal: null,
   executableOverride: null,
 };
+const DISCONNECTED: TerminalEditorCapability = {
+  ...CHECKING,
+  state: "unavailable",
+  reason: "disconnected",
+  message: "Connect the environment to check Neovim.",
+};
 const cache = new Map<string, { expires: number; result: Promise<TerminalEditorCapability> }>();
 let revision = 0;
 const listeners = new Set<() => void>();
@@ -83,13 +89,7 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
   );
   const refresh = useCallback(
     async (rescan = false) => {
-      if (!connected || !input)
-        return {
-          ...CHECKING,
-          state: "unavailable" as const,
-          reason: "disconnected" as const,
-          message: "Connect the environment to check Neovim.",
-        };
+      if (!connected || !input) return DISCONNECTED;
       return probe({ ...input, ...(rescan ? { rescan: true } : {}) });
     },
     [connected, input],
@@ -103,25 +103,13 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
       stale = true;
     };
   }, [refresh, key]);
-  const capability = !connected
-    ? {
-        ...CHECKING,
-        state: "unavailable" as const,
-        reason: "disconnected" as const,
-        message: "Connect the environment to check Neovim.",
-      }
-    : response?.key === key
-      ? response.value
-      : CHECKING;
-  return {
-    capability,
-    connection,
-    generation,
-    connected,
-    refresh,
-    rescan: async () => {
-      await refresh(true);
-      invalidateTerminalEditors();
-    },
-  };
+  const capability = !connected ? DISCONNECTED : response?.key === key ? response.value : CHECKING;
+  const rescan = useCallback(async () => {
+    await refresh(true);
+    invalidateTerminalEditors();
+  }, [refresh]);
+  return useMemo(
+    () => ({ capability, connection, generation, connected, refresh, rescan }),
+    [capability, connection, generation, connected, refresh, rescan],
+  );
 }

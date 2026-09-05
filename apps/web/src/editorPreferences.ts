@@ -106,9 +106,7 @@ export function usePreferredEditor(
     (editor: EditorId) => state.select({ kind: "gui", editor }),
   ] as const;
 }
-export function resolveAndPersistPreferredEditor(
-  availableEditors: readonly EditorId[],
-): EditorId | null {
+export function resolvePreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   return stored && availableEditors.includes(stored)
     ? stored

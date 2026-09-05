@@ -47,6 +47,7 @@ export function editorWorkspace(target: EditorOpenTarget, workspace?: string | n
   const separator = target.path.startsWith("/") ? "/" : "\\";
   const normalized = separator === "\\" ? target.path.replaceAll("/", "\\") : target.path;
   const index = normalized.lastIndexOf(separator);
+  if (index < 0) return ".";
   if (index === 0) return "/";
   if (index === 2 && /^[A-Za-z]:/u.test(normalized)) return normalized.slice(0, 3);
   return normalized.slice(0, index);

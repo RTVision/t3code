@@ -9,6 +9,7 @@ import { stagingProgram } from "./session.mjs";
 import {
   decodeRequest,
   encodeRequest,
+  findNeovim,
   neovimArgs,
   quotePosix,
   run,
@@ -243,3 +244,9 @@ test.skipIf(!process.env.T3CODE_TEST_NVIM)(
     }
   },
 );
+
+test("distinguishes a missing configured executable from empty PATH discovery", async () => {
+  const missing = NodePath.join(NodeOS.tmpdir(), NodeCrypto.randomUUID(), "nvim");
+  await NodeAssert.rejects(findNeovim(missing), /configured Neovim executable is not runnable/u);
+  await NodeAssert.rejects(findNeovim(undefined, { PATH: "" }), /login PATH/u);
+});
