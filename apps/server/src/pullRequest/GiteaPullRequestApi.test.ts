@@ -322,7 +322,7 @@ layer("GiteaPullRequestApi", (it) => {
           ),
         ),
       );
-      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const api = yield* GiteaPullRequestApi.make;
       const pullRequest = yield* api.getPullRequest({
         host: "forge.example.test",
         repository: "acme/web",
@@ -496,7 +496,7 @@ layer("GiteaPullRequestApi", (it) => {
             ),
           ),
         );
-      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const api = yield* GiteaPullRequestApi.make;
       const page = yield* api.listPullRequests({
         host: "forge.example.test",
         repository: "acme/web",

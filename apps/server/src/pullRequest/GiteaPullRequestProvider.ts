@@ -232,7 +232,7 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequestSummary: (input) =>
-      api.getPullRequest({ ...input, includeTracking: true }).pipe(
+      api.getPullRequest(input).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
         Effect.map((pullRequest) => ({
           number: pullRequest.number,
@@ -249,7 +249,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestActivity: (input) =>
       Effect.all(
         [
-          api.getPullRequest({ ...input, includeTracking: true }),
+          api.getPullRequest(input),
           api
             .listComments(input)
             .pipe(Effect.orElseSucceed(() => ({ comments: [], truncated: true }))),
@@ -316,7 +316,7 @@ export const make = Effect.gen(function* () {
     getViewerPermissions: (input) =>
       Effect.all(
         [
-          api.getPullRequest({ ...input, includeTracking: true }),
+          api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
           api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
