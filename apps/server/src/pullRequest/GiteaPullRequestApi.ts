@@ -1185,16 +1185,17 @@ export const make = Effect.gen(function* () {
     function* (input: { host: string; repository: string; number: number }) {
       const operation = "getAutoMergeEnabled";
       const events: Array<GiteaLifecycle.RawGiteaLifecycleEvent> = [];
+      let path = query(`${basePath(input.repository)}/issues/${input.number}/timeline`, {
+        page: 1,
+        limit: PAGE_SIZE,
+      });
       for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
         const response = yield* request({
           operation,
           host: input.host,
           repository: input.repository,
           method: "GET",
-          path: query(`${basePath(input.repository)}/issues/${input.number}/timeline`, {
-            page,
-            limit: PAGE_SIZE,
-          }),
+          path,
         });
         const pageEvents = yield* decode(
           operation,
@@ -1202,7 +1203,15 @@ export const make = Effect.gen(function* () {
           response,
         );
         events.push(...pageEvents);
-        if (pageEvents.length < PAGE_SIZE) return GiteaLifecycle.autoMergeEnabled(events);
+        const next = nextPagePath({
+          path,
+          page,
+          pageRows: pageEvents.length,
+          rowsSeen: events.length,
+          headers: response.headers,
+        });
+        if (next === null) return GiteaLifecycle.autoMergeEnabled(events);
+        path = next;
       }
       return yield* new GiteaPullRequestApiError({
         operation,

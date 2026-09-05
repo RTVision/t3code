@@ -1015,6 +1015,30 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("honors a server timeline page-size cap before reading the final merge state", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([{ id: 1, type: "pull_scheduled_merge" }], { "x-total-count": "2" }),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([{ id: 2, type: "pull_cancel_scheduled_merge" }], { "x-total-count": "2" }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      assert.isFalse(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      );
+      expect(callAt(1).path).toContain("page=2");
+    }),
+  );
+
   it.effect("arms and cancels Gitea auto-merge through the native merge route", () =>
     Effect.gen(function* () {
       mockedRequest
