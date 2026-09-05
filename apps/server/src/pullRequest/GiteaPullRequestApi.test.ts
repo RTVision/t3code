@@ -1586,6 +1586,30 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("treats a native null reaction list as empty without dropping other subjects", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
+        .mockReturnValueOnce(Effect.succeed(response(null)))
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "Reader",
+        subjectIds: ["issue:12"],
+      });
+
+      expect(reactions.pullRequest).toEqual([]);
+      expect(reactions.bySubjectId.get("issue:12")).toEqual([
+        { content: "heart", count: 1, actors: ["friend"], viewerHasReacted: false },
+      ]);
+    }),
+  );
+
   it.effect("follows a reaction list when Gitea caps a requested page below its limit", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation((input) => {
