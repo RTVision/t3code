@@ -587,7 +587,7 @@ export const make = Effect.gen(function* () {
           detail: "The pull request host is invalid.",
         }),
     });
-    if (actual !== expected) {
+    if (actual !== expected && !gitea.sshHosts?.includes(actual)) {
       return yield* new GiteaPullRequestApiError({
         operation: "validateHost",
         reason: "failed",
