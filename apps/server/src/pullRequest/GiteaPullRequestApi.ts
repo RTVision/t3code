@@ -90,6 +90,8 @@ const RawPullRequest = Schema.Struct({
   merged: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.Boolean)),
   draft: Schema.optional(Schema.Boolean),
+  auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  auto_merge_method: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.String,
   created_at: Schema.String,
   updated_at: Schema.String,
@@ -231,6 +233,8 @@ export interface GiteaPullRequest {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly commentCount: number;
+  readonly autoMergeEnabled?: boolean;
+  readonly autoMergeMethod?: PullRequestMergeMethod;
 }
 
 export interface GiteaRepositoryAccess {
@@ -318,6 +322,12 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
       return name ? [{ name, color: label.color?.trim() || null }] : [];
     }),
     commentCount: Math.max(0, value.comments ?? 0) + Math.max(0, value.review_comments ?? 0),
+    ...(value.auto_merge_enabled === null || value.auto_merge_enabled === undefined
+      ? {}
+      : { autoMergeEnabled: value.auto_merge_enabled }),
+    ...(["merge", "squash", "rebase"].includes(value.auto_merge_method ?? "")
+      ? { autoMergeMethod: value.auto_merge_method as PullRequestMergeMethod }
+      : {}),
   };
 }
 
@@ -436,6 +446,7 @@ export class GiteaPullRequestApi extends Context.Service<
   GiteaPullRequestApi,
   {
     readonly getViewer: () => Effect.Effect<string, GiteaPullRequestApiError>;
+    readonly getFeatures: () => Effect.Effect<ReadonlyArray<string>, GiteaPullRequestApiError>;
     readonly listPullRequests: (input: {
       readonly host: string;
       readonly repository: string;
@@ -466,7 +477,7 @@ export class GiteaPullRequestApi extends Context.Service<
       host: string;
       repository: string;
       number: number;
-    }) => Effect.Effect<boolean, GiteaPullRequestApiError>;
+    }) => Effect.Effect<boolean | undefined, GiteaPullRequestApiError>;
     readonly listComments: (input: {
       host: string;
       repository: string;
@@ -840,6 +851,21 @@ export const make = Effect.gen(function* () {
   const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
     (input: { operation: string; host: string; repository: string; path: string }) =>
       readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
+  );
+
+  const getFeatures = yield* Effect.cachedWithTTL(
+    gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }).pipe(
+      Effect.mapError((error) => failure("getFeatures", error)),
+      Effect.flatMap((response) =>
+        decode(
+          "getFeatures",
+          Schema.Struct({ features: Schema.optional(Schema.Array(Schema.String)) }),
+          response,
+        ),
+      ),
+      Effect.map((settings) => settings.features ?? []),
+    ),
+    "1 minute",
   );
 
   const readUnknownSlice = Effect.fn("GiteaPullRequestApi.readUnknownSlice")(function* (input: {
@@ -1341,6 +1367,11 @@ export const make = Effect.gen(function* () {
 
   const getAutoMergeEnabled = Effect.fn("GiteaPullRequestApi.getAutoMergeEnabled")(
     function* (input: { host: string; repository: string; number: number }) {
+      const features = yield* getFeatures.pipe(Effect.option);
+      if (Option.isNone(features)) return undefined;
+      if (features.value.includes("pull-auto-merge-state")) {
+        return (yield* getPullRequest(input)).autoMergeEnabled;
+      }
       const operation = "getAutoMergeEnabled";
       const events: Array<GiteaLifecycle.RawGiteaLifecycleEvent> = [];
       let path = query(`${basePath(input.repository)}/issues/${input.number}/timeline`, {
@@ -1385,6 +1416,17 @@ export const make = Effect.gen(function* () {
     number: number;
     action: Extract<PullRequestAction, "draft" | "ready">;
   }) {
+    const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+    if (features.includes("pull-draft")) {
+      return yield* write({
+        operation: "runAction",
+        host: input.host,
+        repository: input.repository,
+        method: "PATCH",
+        path: `${basePath(input.repository)}/pulls/${input.number}`,
+        body: { draft: input.action === "draft" },
+      });
+    }
     const before = yield* getPullRequest(input);
     const title = GiteaLifecycle.titleForDraftAction({
       action: input.action,
@@ -1443,38 +1485,59 @@ export const make = Effect.gen(function* () {
       viewer: string;
       subjectIds: ReadonlyArray<string>;
     }) {
+      const supportsReviewReactions = (yield* getFeatures.pipe(
+        Effect.orElseSucceed(() => []),
+      )).includes("pull-review-reactions");
       const targets: Array<{
         readonly subjectId: string | undefined;
         readonly target: GiteaConversationReactionTarget;
       }> = [{ subjectId: undefined, target: { kind: "pull-request" } }];
       for (const subjectId of new Set(input.subjectIds)) {
         const target = reactionTarget(subjectId);
-        if (target !== null) targets.push({ subjectId, target });
+        if (target !== null && (target.kind !== "review" || supportsReviewReactions))
+          targets.push({ subjectId, target });
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownArray({
+          readUnknownSlice({
             operation: "listConversationReactions",
             host: input.host,
             repository: input.repository,
             path:
               entry.target.kind === "pull-request"
-                ? `${basePath(input.repository)}/issues/${input.number}/reactions`
-                : `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
+                    page: 1,
+                    limit: PAGE_SIZE,
+                  })
+                : entry.target.kind === "review"
+                  ? query(
+                      `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`,
+                      { page: 1, limit: PAGE_SIZE },
+                    )
+                  : query(
+                      `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                      {
+                        page: 1,
+                        limit: PAGE_SIZE,
+                      },
+                    ),
+            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
           }).pipe(
-            Effect.map((rows) => ({
+            Effect.map((result) => ({
               subjectId: entry.subjectId,
-              reactions: reactionsForViewer(
-                rows.flatMap((row) => {
-                  const decoded = decodeReaction(row);
-                  return Option.isSome(decoded) ? [decoded.value] : [];
-                }),
-                input.viewer,
-              ),
+              reactions: result.truncated
+                ? []
+                : reactionsForViewer(
+                    result.rows.flatMap((row) => {
+                      const decoded = decodeReaction(row);
+                      return Option.isSome(decoded) ? [decoded.value] : [];
+                    }),
+                    input.viewer,
+                  ),
             })),
           ),
         ),
-        { concurrency: 10 },
+        { concurrency: 4 },
       );
       return {
         pullRequest: reactions.find((entry) => entry.subjectId === undefined)?.reactions ?? [],
@@ -1495,6 +1558,7 @@ export const make = Effect.gen(function* () {
     });
 
   return GiteaPullRequestApi.of({
+    getFeatures: () => getFeatures,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {
       const response = yield* gitea
         .request({
@@ -1890,17 +1954,29 @@ export const make = Effect.gen(function* () {
           }),
         );
       }
-      const path =
-        target.kind === "pull-request"
-          ? `${basePath(input.repository)}/issues/${input.number}/reactions`
-          : `${basePath(input.repository)}/issues/comments/${target.id}/reactions`;
-      return write({
-        operation: "setReaction",
-        host: input.host,
-        repository: input.repository,
-        method: input.reacted ? "POST" : "DELETE",
-        path,
-        body: { content: nativeReactionContent(input.content) },
+      return Effect.gen(function* () {
+        const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+        if (target.kind === "review" && !features.includes("pull-review-reactions")) {
+          return yield* new GiteaPullRequestApiError({
+            operation: "setReaction",
+            reason: "failed",
+            detail: "Gitea cannot react to pull request review summaries through this API.",
+          });
+        }
+        const path =
+          target.kind === "pull-request"
+            ? `${basePath(input.repository)}/issues/${input.number}/reactions`
+            : target.kind === "review"
+              ? `${basePath(input.repository)}/pulls/${input.number}/reviews/${target.id}/reactions`
+              : `${basePath(input.repository)}/issues/comments/${target.id}/reactions`;
+        return yield* write({
+          operation: "setReaction",
+          host: input.host,
+          repository: input.repository,
+          method: input.reacted ? "POST" : "DELETE",
+          path,
+          body: { content: nativeReactionContent(input.content) },
+        });
       });
     },
   });

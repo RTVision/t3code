@@ -12,7 +12,7 @@ describe("GiteaConversation", () => {
   it("addresses ordinary and inline review remarks through the same issue-comment record", () => {
     expect(editableCommentId("issue:12")).toBe("12");
     expect(editableCommentId("review-comment:34")).toBe("34");
-    expect(reactionTarget("review:56")).toBeNull();
+    expect(reactionTarget("review:56")).toEqual({ kind: "review", id: "56" });
   });
 
   it("distinguishes a pull request description from a comment and rejects malformed ids", () => {

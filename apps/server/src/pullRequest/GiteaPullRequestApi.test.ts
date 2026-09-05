@@ -1141,6 +1141,7 @@ layer("GiteaPullRequestApi", (it) => {
   it.effect("loads reactions for the pull request and every issue-backed remark", () =>
     Effect.gen(function* () {
       mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(
           Effect.succeed(
             response([
@@ -1171,14 +1172,44 @@ layer("GiteaPullRequestApi", (it) => {
       expect(reactions.bySubjectId.get("review-comment:34")).toEqual([]);
       expect(reactions.bySubjectId.has("review:21")).toBe(false);
       expect(mockedRequest.mock.calls.map((call) => call[0].path)).toEqual([
-        "/repos/acme/web/issues/7/reactions",
-        "/repos/acme/web/issues/comments/12/reactions",
-        "/repos/acme/web/issues/comments/34/reactions",
+        "/settings/api",
+        "/repos/acme/web/issues/7/reactions?page=1&limit=100",
+        "/repos/acme/web/issues/comments/12/reactions?page=1&limit=100",
+        "/repos/acme/web/issues/comments/34/reactions?page=1&limit=100",
       ]);
     }),
   );
 
-  it.effect("reports Gitea's missing review-summary reaction route without issuing a request", () =>
+  it.effect("follows a reaction list when Gitea caps a requested page below its limit", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
+        if (input.path === "/repos/acme/web/issues/7/reactions?page=1&limit=100")
+          return Effect.succeed(
+            response([{ reaction: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
+          );
+        if (input.path === "/repos/acme/web/issues/7/reactions?page=2&limit=100")
+          return Effect.succeed(
+            response([{ reaction: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "reader",
+        subjectIds: [],
+      });
+      expect(reactions.pullRequest).toEqual([
+        { content: "heart", count: 1, actors: ["one"], viewerHasReacted: false },
+        { content: "eyes", count: 1, actors: ["two"], viewerHasReacted: false },
+      ]);
+    }),
+  );
+
+  it.effect("reports Gitea's missing review-summary reaction route", () =>
     Effect.gen(function* () {
       const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
       const error = yield* api
@@ -1193,7 +1224,29 @@ layer("GiteaPullRequestApi", (it) => {
         .pipe(Effect.flip);
 
       expect(error.detail).toContain("review summaries");
-      assert.strictEqual(mockedRequest.mock.calls.length, 0);
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+      assert.strictEqual(callAt(0).path, "/settings/api");
+    }),
+  );
+
+  it.effect("uses the review-summary reaction route when the server advertises it", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-review-reactions"] })))
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      yield* api.setReaction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        subjectId: "review:21",
+        content: "eyes",
+        reacted: true,
+      });
+      expect(callAt(1)).toMatchObject({
+        method: "POST",
+        path: "/repos/acme/web/pulls/7/reviews/21/reactions",
+      });
     }),
   );
 
@@ -1341,16 +1394,18 @@ layer("GiteaPullRequestApi", (it) => {
 
   it.effect("reads armed auto-merge state from Gitea's durable timeline events", () =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(
-        Effect.succeed(
-          response([
-            { id: 10, type: "pull_scheduled_merge" },
-            { id: 11, type: "comment" },
-            { id: 12, type: "pull_cancel_scheduled_merge" },
-            { id: 13, type: "pull_scheduled_merge" },
-          ]),
-        ),
-      );
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 10, type: "pull_scheduled_merge" },
+              { id: 11, type: "comment" },
+              { id: 12, type: "pull_cancel_scheduled_merge" },
+              { id: 13, type: "pull_scheduled_merge" },
+            ]),
+          ),
+        );
       const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
 
       assert.isTrue(
@@ -1360,13 +1415,14 @@ layer("GiteaPullRequestApi", (it) => {
           number: 7,
         }),
       );
-      expect(callAt(0).path).toBe("/repos/acme/web/issues/7/timeline?page=1&limit=50");
+      expect(callAt(1).path).toBe("/repos/acme/web/issues/7/timeline?page=1&limit=50");
     }),
   );
 
   it.effect("paginates the timeline before deciding that auto-merge is armed", () =>
     Effect.gen(function* () {
       mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
         .mockReturnValueOnce(
           Effect.succeed(
             response(
@@ -1387,7 +1443,7 @@ layer("GiteaPullRequestApi", (it) => {
           number: 7,
         }),
       );
-      expect(callAt(1).path).toContain("page=2");
+      expect(callAt(2).path).toContain("page=2");
     }),
   );
 
