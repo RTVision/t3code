@@ -166,3 +166,19 @@ describe("giteaProviderFailure", () => {
     ).toEqual({ reason: "rate-limited", retryAt: 1234 });
   });
 });
+
+describe("native revert permission", () => {
+  it("requires write access and the advertised native endpoint", () => {
+    const input = { canWrite: true, ownsPullRequest: false, updateMethods: [] as const };
+    expect(giteaViewerPermissions(input).actions).not.toContain("revert");
+    expect(giteaViewerPermissions({ ...input, revertSupported: true }).actions).toContain("revert");
+    expect(
+      giteaViewerPermissions({
+        ...input,
+        canWrite: false,
+        ownsPullRequest: true,
+        revertSupported: true,
+      }).actions,
+    ).not.toContain("revert");
+  });
+});
