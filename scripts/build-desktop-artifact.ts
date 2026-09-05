@@ -969,6 +969,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  "!apps/desktop/scripts/neovim-terminal",
+  "!apps/desktop/scripts/neovim-terminal/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1090,6 +1092,13 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+] as const;
+export const WINDOWS_NEOVIM_HELPER_RESOURCES = [
+  {
+    from: "apps/desktop/scripts/neovim-terminal",
+    to: "neovim-terminal",
+    filter: ["launch.ps1", "session.mjs", "transport.mjs", "spike.mjs"],
   },
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
@@ -2601,6 +2610,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
+      ...(platform === "win" ? WINDOWS_NEOVIM_HELPER_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
   };
@@ -3553,6 +3563,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
+  if (options.platform === "win") {
+    for (const resource of WINDOWS_NEOVIM_HELPER_RESOURCES) {
+      const destination = path.join(stageAppDir, resource.from);
+      yield* fs.makeDirectory(destination, { recursive: true });
+      for (const filename of resource.filter) {
+        yield* fs.copyFile(
+          path.join(repoRoot, resource.from, filename),
+          path.join(destination, filename),
+        );
+      }
+    }
+  }
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   if (options.platform === "mac" && options.target === "dmg") {
     yield* stageDesktopDmgBackground(
