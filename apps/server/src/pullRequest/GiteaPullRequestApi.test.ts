@@ -114,7 +114,11 @@ it.effect("keeps a search hydration transport failure fatal", () =>
       if (input.path.startsWith("/repos/acme/web/issues/search?"))
         return Effect.succeed(response([{ number: 1 }]));
       return Effect.fail(
-        new GiteaApi.GiteaApiError({ reason: "unauthenticated", detail: "expired" }),
+        new GiteaApi.GiteaApiError({
+          operation: "getPullRequest",
+          reason: "unauthenticated",
+          detail: "expired",
+        }),
       );
     });
     const api = yield* GiteaPullRequestApi.make.pipe(
