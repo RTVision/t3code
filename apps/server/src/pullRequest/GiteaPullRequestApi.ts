@@ -845,9 +845,23 @@ export const make = Effect.gen(function* () {
     host: string;
     repository: string;
     path: string;
+    nullAsEmpty?: boolean;
   }) {
-    const response = yield* request({ ...input, method: "GET" });
-    const rows = yield* decode(input.operation, Schema.Array(Schema.Unknown), response);
+    const response = yield* request({
+      operation: input.operation,
+      host: input.host,
+      repository: input.repository,
+      path: input.path,
+      method: "GET",
+    });
+    const decoded = yield* decode(
+      input.operation,
+      input.nullAsEmpty
+        ? Schema.NullOr(Schema.Array(Schema.Unknown))
+        : Schema.Array(Schema.Unknown),
+      response,
+    );
+    const rows = decoded ?? [];
     return { rows, headers: response.headers } satisfies UnknownPage;
   });
 
@@ -1022,6 +1036,7 @@ export const make = Effect.gen(function* () {
     path: string;
     limit: number;
     requirePaginationEvidence?: boolean;
+    nullAsEmpty?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -1032,6 +1047,7 @@ export const make = Effect.gen(function* () {
         host: input.host,
         repository: input.repository,
         path,
+        ...(input.nullAsEmpty === undefined ? {} : { nullAsEmpty: input.nullAsEmpty }),
       });
       rowsSeen += result.rows.length;
       const remaining = Math.max(0, input.limit - rows.length);
@@ -1681,6 +1697,7 @@ export const make = Effect.gen(function* () {
                       },
                     ),
             limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
+            nullAsEmpty: true,
           }).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,

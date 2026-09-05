@@ -7,7 +7,7 @@ const RawReactionUser = Schema.Struct({
 
 /** The shape returned by Gitea's issue and issue-comment reaction endpoints. */
 export const RawGiteaReaction = Schema.Struct({
-  reaction: Schema.optional(Schema.String),
+  content: Schema.String,
   user: Schema.optional(Schema.NullOr(RawReactionUser)),
 });
 
@@ -71,7 +71,7 @@ export function reactionsForViewer(
     { count: number; actors: Array<string>; viewerHasReacted: boolean }
   >();
   for (const row of rows) {
-    const content = row.reaction === undefined ? undefined : reactionContent.get(row.reaction);
+    const content = reactionContent.get(row.content);
     if (content === undefined) continue;
     const group = groups.get(content) ?? { count: 0, actors: [], viewerHasReacted: false };
     group.count += 1;
