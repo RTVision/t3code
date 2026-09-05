@@ -14,6 +14,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   PullRequestOperationError,
   PullRequestUnavailableError,
+  pullRequestCanReact,
   pullRequestHostOf,
   pullRequestProviderRequirement,
   resolvePullRequestAuthorFilter,
@@ -1771,11 +1772,19 @@ export const make = Effect.gen(function* () {
   const setReaction: PullRequestService["Service"]["setReaction"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
-        if (project.api.capabilities.reactions !== true) {
+        const subject =
+          input.subjectId === undefined
+            ? "change-request"
+            : input.subjectId.startsWith("issue:")
+              ? "issue-comment"
+              : input.subjectId.startsWith("review-comment:")
+                ? "review-comment"
+                : "review";
+        if (!pullRequestCanReact(project.api.capabilities, subject)) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "setReaction",
-              detail: "This host has no reactions.",
+              detail: "This host cannot react to this part of the conversation.",
             }),
           );
         }

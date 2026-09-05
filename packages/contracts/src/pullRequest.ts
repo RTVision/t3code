@@ -352,6 +352,46 @@ export const PullRequestEditCapabilities = Schema.Struct({
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
+/** A reaction target as the pull request conversation presents it. */
+export const PullRequestReactionSubject = Schema.Literals([
+  "change-request",
+  "issue-comment",
+  "review-comment",
+  "review",
+]);
+export type PullRequestReactionSubject = typeof PullRequestReactionSubject.Type;
+
+/**
+ * Hosts sometimes expose reactions for issue-backed records but not review summaries. This keeps
+ * that boundary visible without weakening the original all-subject `reactions` capability.
+ */
+export const PullRequestReactionCapabilities = Schema.Struct({
+  changeRequest: Schema.Boolean,
+  issueComment: Schema.Boolean,
+  reviewComment: Schema.Boolean,
+  review: Schema.Boolean,
+});
+export type PullRequestReactionCapabilities = typeof PullRequestReactionCapabilities.Type;
+
+export function pullRequestCanReact(
+  capabilities: PullRequestCapabilities,
+  subject: PullRequestReactionSubject,
+): boolean {
+  if (capabilities.reactions === true) return true;
+  const granular = capabilities.reactionSubjects;
+  if (granular === undefined) return false;
+  switch (subject) {
+    case "change-request":
+      return granular.changeRequest;
+    case "issue-comment":
+      return granular.issueComment;
+    case "review-comment":
+      return granular.reviewComment;
+    case "review":
+      return granular.review;
+  }
+}
+
 /**
  * What a host can do about who reviews. The two are independent: a host can take a request without
  * publishing who may receive one, which is Azure DevOps.
@@ -404,6 +444,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * Per-subject reaction routes, for hosts that cannot support every conversation record. This
+   * augments the legacy all-subject flag; when that flag is true every subject remains enabled.
+   */
+  reactionSubjects: Schema.optional(PullRequestReactionCapabilities),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**

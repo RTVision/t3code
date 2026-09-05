@@ -17,6 +17,8 @@ import type {
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
   PullRequestMergeability,
+  PullRequestReaction,
+  PullRequestReactionContent,
   PullRequestReviewCommentDraft,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
@@ -26,6 +28,14 @@ import type {
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
+import {
+  editableCommentId,
+  type GiteaConversationReactionTarget,
+  nativeReactionContent,
+  RawGiteaReaction,
+  reactionsForViewer,
+  reactionTarget,
+} from "./GiteaConversation.ts";
 import type { ProviderListCursor } from "./PullRequestProvider.ts";
 import { dedupeChecks } from "./pullRequestChecks.ts";
 
@@ -186,6 +196,7 @@ const decodeReview = Schema.decodeUnknownOption(RawReview);
 const decodeReviewComment = Schema.decodeUnknownOption(RawReviewComment);
 const decodeCommit = Schema.decodeUnknownOption(RawCommit);
 const decodeLabel = Schema.decodeUnknownOption(RawLabel);
+const decodeReaction = Schema.decodeUnknownOption(RawGiteaReaction);
 const encodeObject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -454,6 +465,19 @@ export class GiteaPullRequestApi extends Context.Service<
       },
       GiteaPullRequestApiError
     >;
+    readonly listConversationReactions: (input: {
+      host: string;
+      repository: string;
+      number: number;
+      viewer: string;
+      subjectIds: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      {
+        pullRequest: ReadonlyArray<PullRequestReaction>;
+        bySubjectId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+      },
+      GiteaPullRequestApiError
+    >;
     readonly listCommits: (input: {
       host: string;
       repository: string;
@@ -556,7 +580,7 @@ export class GiteaPullRequestApi extends Context.Service<
       repository: string;
       number: number;
       subjectId?: string;
-      content: string;
+      content: PullRequestReactionContent;
       reacted: boolean;
     }) => Effect.Effect<void, GiteaPullRequestApiError>;
   }
@@ -1277,6 +1301,58 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const listConversationReactions = Effect.fn("GiteaPullRequestApi.listConversationReactions")(
+    function* (input: {
+      host: string;
+      repository: string;
+      number: number;
+      viewer: string;
+      subjectIds: ReadonlyArray<string>;
+    }) {
+      const targets: Array<{
+        readonly subjectId: string | undefined;
+        readonly target: GiteaConversationReactionTarget;
+      }> = [{ subjectId: undefined, target: { kind: "pull-request" } }];
+      for (const subjectId of new Set(input.subjectIds)) {
+        const target = reactionTarget(subjectId);
+        if (target !== null) targets.push({ subjectId, target });
+      }
+      const reactions = yield* Effect.all(
+        targets.map((entry) =>
+          readUnknownArray({
+            operation: "listConversationReactions",
+            host: input.host,
+            repository: input.repository,
+            path:
+              entry.target.kind === "pull-request"
+                ? `${basePath(input.repository)}/issues/${input.number}/reactions`
+                : `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+          }).pipe(
+            Effect.map((rows) => ({
+              subjectId: entry.subjectId,
+              reactions: reactionsForViewer(
+                rows.flatMap((row) => {
+                  const decoded = decodeReaction(row);
+                  return Option.isSome(decoded) ? [decoded.value] : [];
+                }),
+                input.viewer,
+              ),
+            })),
+          ),
+        ),
+        { concurrency: 10 },
+      );
+      return {
+        pullRequest: reactions.find((entry) => entry.subjectId === undefined)?.reactions ?? [],
+        bySubjectId: new Map(
+          reactions.flatMap((entry) =>
+            entry.subjectId === undefined ? [] : [[entry.subjectId, entry.reactions] as const],
+          ),
+        ),
+      };
+    },
+  );
+
   const unsupportedAction = (action: string) =>
     new GiteaPullRequestApiError({
       operation: "runAction",
@@ -1309,6 +1385,7 @@ export const make = Effect.gen(function* () {
     getAutoMergeEnabled,
     listComments,
     listReviews,
+    listConversationReactions,
     listCommits,
     listChecks,
     getDiff: (input) =>
@@ -1500,13 +1577,13 @@ export const make = Effect.gen(function* () {
         body: { body: input.body },
       }),
     updateComment: (input) => {
-      const [kind, id] = input.commentId.split(":", 2);
-      if (kind !== "issue" || !id) {
+      const id = editableCommentId(input.commentId);
+      if (id === null) {
         return Effect.fail(
           new GiteaPullRequestApiError({
             operation: "updateComment",
             reason: "failed",
-            detail: "Gitea cannot edit pull request review comments through this API.",
+            detail: "Gitea cannot edit pull request review summaries through this API.",
           }),
         );
       }
@@ -1668,14 +1745,30 @@ export const make = Effect.gen(function* () {
         method: "POST",
         path: `${basePath(input.repository)}/pulls/comments/${encodeURIComponent(input.threadId)}/${input.resolved ? "resolve" : "unresolve"}`,
       }),
-    setReaction: () =>
-      Effect.fail(
-        new GiteaPullRequestApiError({
-          operation: "setReaction",
-          reason: "failed",
-          detail: "Gitea cannot apply reactions consistently to pull request review comments.",
-        }),
-      ),
+    setReaction: (input) => {
+      const target = reactionTarget(input.subjectId);
+      if (target === null) {
+        return Effect.fail(
+          new GiteaPullRequestApiError({
+            operation: "setReaction",
+            reason: "failed",
+            detail: "Gitea cannot react to pull request review summaries through this API.",
+          }),
+        );
+      }
+      const path =
+        target.kind === "pull-request"
+          ? `${basePath(input.repository)}/issues/${input.number}/reactions`
+          : `${basePath(input.repository)}/issues/comments/${target.id}/reactions`;
+      return write({
+        operation: "setReaction",
+        host: input.host,
+        repository: input.repository,
+        method: input.reacted ? "POST" : "DELETE",
+        path,
+        body: { content: nativeReactionContent(input.content) },
+      });
+    },
   });
 });
 

@@ -10,6 +10,7 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -815,7 +816,7 @@ export function PullRequestCodeTab({
         workspaceRoot={detail.workspaceRoot}
         canReply={review.reply}
         canResolve={review.resolve}
-        canReact={detail.capabilities.reactions === true}
+        canReact={pullRequestCanReact(detail.capabilities, "review-comment")}
         environmentId={environmentId}
         reference={reference}
         pending={threadPending}
