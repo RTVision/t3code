@@ -43,6 +43,7 @@ import { dedupeChecks } from "./pullRequestChecks.ts";
 
 const PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 4;
+const DEPENDENCY_PAGINATION_PAGES = 4;
 const MAX_PAGINATION_PAGES = 100;
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 // Issue search rows do not carry branches or full state, so hydrate them without opening an
@@ -56,6 +57,7 @@ const RawUser = Schema.Struct({
   avatar_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const RawRepository = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
   full_name: Schema.optional(Schema.String),
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
@@ -74,7 +76,9 @@ const RawRepository = Schema.Struct({
 });
 const RawBranch = Schema.Struct({
   ref: Schema.optional(Schema.String),
+  label: Schema.optional(Schema.NullOr(Schema.String)),
   sha: Schema.optional(Schema.String),
+  repo_id: Schema.optional(Schema.Int),
   repo: Schema.optional(Schema.NullOr(RawRepository)),
 });
 const RawLabel = Schema.Struct({
@@ -215,9 +219,14 @@ export interface GiteaPullRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly relationshipHeadBranch: string;
+  readonly headBranchAvailable: boolean;
   readonly headSha: string;
   readonly headRepositoryNameWithOwner: string | null;
+  readonly headRepositoryId: number | null;
   readonly baseBranch: string;
+  readonly baseRepositoryNameWithOwner: string | null;
+  readonly baseRepositoryId: number | null;
   readonly baseSha: string;
   readonly mergeBaseSha: string;
   readonly state: "open" | "closed" | "merged";
@@ -280,6 +289,7 @@ function actor(value: typeof RawUser.Type | null | undefined): PullRequestActor 
 function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
   const title = value.title.trim();
   const headBranch = value.head.ref?.trim();
+  const headLabel = value.head.label?.trim();
   const baseBranch = value.base.ref?.trim();
   const createdAt = iso(value.created_at);
   const updatedAt = iso(value.updated_at);
@@ -296,9 +306,14 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     url: value.html_url,
     author: actor(value.user),
     headBranch,
+    relationshipHeadBranch: headLabel || headBranch,
+    headBranchAvailable: !headBranch.startsWith("refs/pull/"),
     headSha: value.head.sha?.trim() ?? "",
     headRepositoryNameWithOwner: value.head.repo?.full_name?.trim() || null,
+    headRepositoryId: value.head.repo?.id ?? value.head.repo_id ?? null,
     baseBranch,
+    baseRepositoryNameWithOwner: value.base.repo?.full_name?.trim() || null,
+    baseRepositoryId: value.base.repo?.id ?? value.base.repo_id ?? null,
     baseSha: value.base.sha?.trim() ?? "",
     mergeBaseSha: value.merge_base?.trim() ?? "",
     state: value.merged === true ? "merged" : value.state === "closed" ? "closed" : "open",
@@ -465,6 +480,7 @@ export class GiteaPullRequestApi extends Context.Service<
       readonly limit: number;
       readonly query?: string;
       readonly cursor?: ProviderListCursor;
+      readonly relationshipOnly?: boolean;
     }) => Effect.Effect<
       {
         items: ReadonlyArray<GiteaPullRequest>;
@@ -973,8 +989,9 @@ export const make = Effect.gen(function* () {
   const listPullRequests: GiteaPullRequestApi["Service"]["listPullRequests"] = Effect.fn(
     "GiteaPullRequestApi.listPullRequests",
   )(function* (input) {
+    const relationshipOnly = input.relationshipOnly === true;
     const search = input.query?.trim();
-    if (search !== undefined && search !== "") {
+    if (!relationshipOnly && search !== undefined && search !== "") {
       return yield* listSearchPullRequests({ ...input, query: search });
     }
     const wanted = Math.max(1, input.limit);
@@ -984,7 +1001,7 @@ export const make = Effect.gen(function* () {
     let page = 1;
     let path = query(`${basePath(input.repository)}/pulls`, {
       state: endpointState,
-      sort: "recentupdate",
+      sort: relationshipOnly ? "oldest" : "recentupdate",
       page,
       limit: PAGE_SIZE,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
@@ -992,35 +1009,114 @@ export const make = Effect.gen(function* () {
     let rowsSeen = 0;
     let rowsSkipped = 0;
     let consumed = 0;
+    let relationshipEvidenceIncomplete = false;
+    let reportedRelationshipTotal: number | null = null;
+    const relationshipNumbers = new Set<number>();
+    const repositoryIdsByName = new Map<string, number>();
+    const expectedRepository = input.repository.trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
-    while (page <= MAX_PAGINATION_PAGES) {
-      const result = yield* readUnknownPage({
+    const maxPages = relationshipOnly ? DEPENDENCY_PAGINATION_PAGES : MAX_PAGINATION_PAGES;
+    let pagesRead = 0;
+    let prefetchedPage: UnknownPage | null = null;
+    let next: string | null = null;
+    if (relationshipOnly && delivered > 0) {
+      prefetchedPage = yield* readUnknownPage({
         operation: "listPullRequests",
         host: input.host,
         repository: input.repository,
         path,
       });
+      pagesRead = 1;
+      const pageSize = prefetchedPage.rows.length;
+      if (pageSize > 0 && delivered >= pageSize) {
+        page = Math.floor(delivered / pageSize) + 1;
+        rowsSeen = (page - 1) * pageSize;
+        rowsSkipped = rowsSeen;
+        path = pathAtPage(path, page);
+        const pageTotal = totalCount(prefetchedPage.headers);
+        if (pageTotal === null) relationshipEvidenceIncomplete = true;
+        else reportedRelationshipTotal = pageTotal;
+        prefetchedPage = null;
+      }
+    }
+    while (pagesRead < maxPages || prefetchedPage !== null) {
+      const prefetched = prefetchedPage;
+      const result =
+        prefetched ??
+        (yield* readUnknownPage({
+          operation: "listPullRequests",
+          host: input.host,
+          repository: input.repository,
+          path,
+        }));
+      prefetchedPage = null;
+      if (prefetched === null) pagesRead += 1;
       rowsSeen += result.rows.length;
+      if (relationshipOnly) {
+        const pageTotal = totalCount(result.headers);
+        if (pageTotal === null) relationshipEvidenceIncomplete = true;
+        else if (reportedRelationshipTotal === null) reportedRelationshipTotal = pageTotal;
+        else if (pageTotal !== reportedRelationshipTotal) relationshipEvidenceIncomplete = true;
+      }
       const toSkip = Math.min(Math.max(0, delivered - rowsSkipped), result.rows.length);
       rowsSkipped += toSkip;
       const pageRows = result.rows.slice(toSkip);
-      const next = nextPagePath({
+      next = nextPagePath({
         path,
         page,
         pageRows: result.rows.length,
         rowsSeen,
         headers: result.headers,
       });
+      if (
+        relationshipOnly &&
+        reportedRelationshipTotal !== null &&
+        (rowsSeen > reportedRelationshipTotal ||
+          (next === null && rowsSeen !== reportedRelationshipTotal))
+      ) {
+        relationshipEvidenceIncomplete = true;
+      }
       for (const [index, row] of pageRows.entries()) {
         consumed += 1;
         const decoded = decodeRow(row);
-        if (Option.isNone(decoded)) continue;
+        if (Option.isNone(decoded)) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
         const pr = pullRequest(decoded.value);
-        if (pr === null) continue;
-        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer)) continue;
+        if (pr === null) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
+        if (relationshipOnly) {
+          const targetRepository = pr.baseRepositoryNameWithOwner?.toLowerCase();
+          if (targetRepository === undefined || targetRepository !== expectedRepository) {
+            relationshipEvidenceIncomplete = true;
+            continue;
+          }
+          if (relationshipNumbers.has(pr.number)) {
+            relationshipEvidenceIncomplete = true;
+            continue;
+          }
+          relationshipNumbers.add(pr.number);
+          for (const [name, id] of [
+            [pr.baseRepositoryNameWithOwner, pr.baseRepositoryId],
+            [pr.headRepositoryNameWithOwner, pr.headRepositoryId],
+          ] as const) {
+            if (name === null || id === null || id < 0) continue;
+            const key = name.toLowerCase();
+            const observed = repositoryIdsByName.get(key);
+            if (observed === undefined) repositoryIdsByName.set(key, id);
+            else if (observed !== id) relationshipEvidenceIncomplete = true;
+          }
+        }
+        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer)) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
         collected.push(pr);
         if (collected.length === wanted) {
-          if (page === MAX_PAGINATION_PAGES && next !== null) {
+          if (pagesRead === maxPages && next !== null && !relationshipOnly) {
             return yield* new GiteaPullRequestApiError({
               operation: "listPullRequests",
               reason: "failed",
@@ -1029,7 +1125,8 @@ export const make = Effect.gen(function* () {
           }
           return {
             items: collected,
-            truncated: index < pageRows.length - 1 || next !== null,
+            truncated:
+              relationshipEvidenceIncomplete || index < pageRows.length - 1 || next !== null,
             consumed,
           };
         }
@@ -1038,7 +1135,7 @@ export const make = Effect.gen(function* () {
       path = next;
       page += 1;
     }
-    if (page > MAX_PAGINATION_PAGES) {
+    if (next !== null && !relationshipOnly) {
       return yield* new GiteaPullRequestApiError({
         operation: "listPullRequests",
         reason: "failed",
@@ -1047,7 +1144,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       items: collected,
-      truncated: false,
+      truncated: relationshipOnly && (relationshipEvidenceIncomplete || next !== null),
       consumed,
     };
   });

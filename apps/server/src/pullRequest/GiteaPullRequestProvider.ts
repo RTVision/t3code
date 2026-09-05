@@ -93,13 +93,17 @@ export function giteaBaseComparison(
   return pullRequest.baseSha === pullRequest.mergeBaseSha ? "up-to-date" : "behind";
 }
 
-function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): ProviderChangeRequest {
+function toChangeRequest(
+  pullRequest: GiteaPullRequestApi.GiteaPullRequest,
+  relationshipOnly = false,
+): ProviderChangeRequest {
   return {
     number: pullRequest.number,
     title: pullRequest.title,
     url: pullRequest.url,
     author: pullRequest.author,
-    headBranch: pullRequest.headBranch,
+    headBranch: relationshipOnly ? pullRequest.relationshipHeadBranch : pullRequest.headBranch,
+    ...(relationshipOnly ? { headBranchAvailable: pullRequest.headBranchAvailable } : {}),
     headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner,
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
@@ -162,11 +166,16 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          ...(input.relationshipOnly === undefined
+            ? {}
+            : { relationshipOnly: input.relationshipOnly }),
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((page) => ({
-            items: page.items.map(toChangeRequest),
+            items: page.items.map((pullRequest) =>
+              toChangeRequest(pullRequest, input.relationshipOnly === true),
+            ),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,
