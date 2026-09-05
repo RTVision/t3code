@@ -394,9 +394,7 @@ function nextPagePath(input: {
   if (linked !== null) return linked;
   const total = input.bodyTotalCount ?? totalCount(input.headers);
   if (total !== null && total !== undefined) {
-    return input.pageRows > 0 && input.rowsSeen < total
-      ? pathAtPage(input.path, input.page + 1)
-      : null;
+    return input.rowsSeen < total ? pathAtPage(input.path, input.page + 1) : null;
   }
   return input.pageRows >= PAGE_SIZE ? pathAtPage(input.path, input.page + 1) : null;
 }
@@ -768,6 +766,13 @@ export const make = Effect.gen(function* () {
           continue;
         collected.push(pr);
         if (collected.length === wanted) {
+          if (page === MAX_PAGINATION_PAGES && next !== null) {
+            return yield* new GiteaPullRequestApiError({
+              operation: "listPullRequests",
+              reason: "failed",
+              detail: "Gitea pull request pagination exceeded the safe page limit.",
+            });
+          }
           return {
             items: collected,
             truncated: index < pageRows.length - 1 || next !== null,
@@ -779,9 +784,16 @@ export const make = Effect.gen(function* () {
       path = next;
       page += 1;
     }
+    if (page > MAX_PAGINATION_PAGES) {
+      return yield* new GiteaPullRequestApiError({
+        operation: "listPullRequests",
+        reason: "failed",
+        detail: "Gitea pull request pagination exceeded the safe page limit.",
+      });
+    }
     return {
       items: collected,
-      truncated: page > MAX_PAGINATION_PAGES,
+      truncated: false,
       consumed,
     };
   });

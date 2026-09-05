@@ -251,6 +251,32 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("fails instead of returning an unadvanceable cursor at the page bound", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation(() =>
+        Effect.succeed(response([rawPullRequest(1)], { "x-total-count": "101" })),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const error = yield* api
+        .listPullRequests({
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "reviewer",
+          limit: 1,
+          cursor: {
+            updatedBefore: "2026-09-02T10:10:00.000Z",
+            delivered: 100,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toContain("safe page limit");
+      assert.strictEqual(mockedRequest.mock.calls.length, 100);
+    }),
+  );
+
   it.effect("accepts nullable reviewer and label arrays from Gitea", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -458,6 +484,42 @@ layer("GiteaPullRequestApi", (it) => {
       expect(result.comments.map((comment) => comment.id)).toEqual(["issue:1", "issue:2"]);
       assert.isFalse(result.truncated);
       assert.strictEqual(mockedRequest.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("continues past an empty filtered review page when total rows remain", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([], { "x-total-count": "2" })))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              [
+                {
+                  id: 22,
+                  body: "Visible review",
+                  state: "COMMENT",
+                  submitted_at: "2026-09-03T12:00:00Z",
+                  user: { login: "reviewer" },
+                },
+              ],
+              { "x-total-count": "1" },
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response([])));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(result.comments).toEqual([
+        expect.objectContaining({ id: "review:22", body: "Visible review" }),
+      ]);
+      expect(callAt(1).path).toContain("page=2");
+      assert.isFalse(result.truncated);
     }),
   );
 
