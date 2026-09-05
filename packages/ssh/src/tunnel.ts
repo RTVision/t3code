@@ -9,12 +9,14 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -77,8 +79,9 @@ interface SshTunnelEntry {
   readonly localPort: number;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
-  readonly process: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Scope;
+  readonly awaitReady: Effect.Effect<void, SshEnvironmentEffectError>;
+  readonly isReconnecting: Effect.Effect<boolean>;
 }
 
 type SshEnvironmentEffectContext =
@@ -950,7 +953,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly authOptions: SshAuthOptions;
   readonly remoteServerKind: "external" | "managed" | null;
 }): Effect.fn.Return<
-  SshTunnelEntry,
+  { readonly exited: Effect.Effect<never, SshCommandError> },
   SshCommandError | SshInvalidTargetError | SshReadinessError,
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
@@ -1047,17 +1050,13 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     remotePort: input.remotePort,
     httpBaseUrl: input.httpBaseUrl,
   });
-  const tunnelEntry: SshTunnelEntry = {
-    key: input.key,
-    target: input.resolvedTarget,
-    remotePort: input.remotePort,
-    remoteServerKind: input.remoteServerKind,
-    localPort: input.localPort,
-    httpBaseUrl: input.httpBaseUrl,
-    wsBaseUrl: input.wsBaseUrl,
-    process: child,
+  yield* Scope.addFinalizer(
     scope,
-  };
+    child
+      .kill({ killSignal: "SIGTERM", forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS })
+      .pipe(Effect.ignore),
+  );
+  const exited = yield* Deferred.make<never, SshCommandError>();
   const exitFailure = Effect.all(
     [collectProcessOutput(child.stderr), child.exitCode.pipe(Effect.map(Number))],
     { concurrency: "unbounded" },
@@ -1097,12 +1096,17 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
+  // Keep draining stderr after readiness, and share one exit observation with the supervisor.
+  yield* Effect.forkIn(
+    Effect.exit(exitFailure).pipe(Effect.flatMap((exit) => Deferred.done(exited, exit))),
+    scope,
+  );
   yield* Effect.raceFirst(
     waitForHttpReady({
       baseUrl: input.httpBaseUrl,
       timeoutMs: SSH_READY_TIMEOUT_MS,
     }),
-    exitFailure,
+    Deferred.await(exited),
   ).pipe(
     Effect.tap(() =>
       Effect.logInfo("ssh.tunnel.ready", {
@@ -1154,18 +1158,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         });
       }),
     ),
-    Effect.onExit((exit) =>
-      Exit.isSuccess(exit)
-        ? Effect.void
-        : child
-            .kill({
-              killSignal: "SIGTERM",
-              forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-            })
-            .pipe(Effect.ignore),
-    ),
   );
-  return tunnelEntry;
+  return { exited: Deferred.await(exited) };
 });
 
 const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.make")(function* (
@@ -1177,11 +1171,25 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     string,
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
+  const closingTunnelEntries = new Map<
+    string,
+    { readonly entry: SshTunnelEntry; readonly done: Deferred.Deferred<void> }
+  >();
   const authSecrets = new Map<string, string>();
 
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
+    const activeClose = closingTunnelEntries.get(entry.key);
+    if (activeClose) {
+      yield* Deferred.await(activeClose.done);
+      return;
+    }
+    if (tunnels.get(entry.key) !== entry) {
+      yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+      return;
+    }
+    closingTunnelEntries.set(entry.key, { entry, done: Deferred.makeUnsafe<void>() });
     yield* Effect.logDebug("ssh.tunnel.close.start", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1340,13 +1348,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(input.runner),
       key: input.key,
     });
-    const remoteLaunch = yield* runWithSshAuth({
+    let remoteLaunch = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
         launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
     });
-    const remotePort = remoteLaunch.remotePort;
+    let remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
       ...sshTargetLogFields(input.resolvedTarget),
       key: input.key,
@@ -1362,77 +1370,184 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       localPort,
       remotePort,
     });
-    const entryScope = yield* Scope.make("sequential");
-    const tunnelEntry = yield* runWithSshAuth({
+    const entryScope = yield* Scope.fork(managerScope, "sequential");
+    const connect = Effect.fn("ssh/tunnel.connect")(function* (authOptions: SshAuthOptions) {
+      const attemptScope = yield* Scope.fork(entryScope, "sequential");
+      return yield* startSshTunnel({
+        key: input.key,
+        resolvedTarget: input.resolvedTarget,
+        remotePort,
+        localPort,
+        httpBaseUrl,
+        wsBaseUrl,
+        authOptions,
+        remoteServerKind: remoteLaunch.remoteServerKind,
+      }).pipe(
+        Effect.provideService(Scope.Scope, attemptScope),
+        Effect.map((connection) => ({ ...connection, scope: attemptScope })),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, Exit.void),
+        ),
+      );
+    });
+    let connection = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
-      operation: (authOptions) =>
-        startSshTunnel({
-          key: input.key,
-          resolvedTarget: input.resolvedTarget,
-          remotePort,
-          localPort,
-          httpBaseUrl,
-          wsBaseUrl,
-          authOptions,
-          remoteServerKind: remoteLaunch.remoteServerKind,
-        }).pipe(Effect.provideService(Scope.Scope, entryScope)),
+      operation: connect,
     }).pipe(
       Effect.onExit((exit) =>
-        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void),
       ),
     );
+    let ready = yield* Deferred.make<void, SshEnvironmentEffectError>();
+    yield* Deferred.succeed(ready, undefined);
+    const tunnelEntry: SshTunnelEntry = {
+      key: input.key,
+      target: input.resolvedTarget,
+      get remotePort() {
+        return remotePort;
+      },
+      get remoteServerKind() {
+        return remoteLaunch.remoteServerKind;
+      },
+      localPort,
+      httpBaseUrl,
+      wsBaseUrl,
+      scope: entryScope,
+      awaitReady: Effect.suspend(() => Deferred.await(ready)),
+      isReconnecting: Effect.suspend(() =>
+        Deferred.isDone(ready).pipe(Effect.map((done) => !done)),
+      ),
+    };
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
       entryScope,
-      Effect.gen(function* () {
+      Effect.suspend(() => {
         if (tunnels.get(tunnelEntry.key) !== tunnelEntry) {
-          return;
+          return Effect.void;
         }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        tunnels.delete(tunnelEntry.key);
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* Effect.all(
-          [
-            tunnelEntry.process.kill({
-              killSignal: "SIGTERM",
-              forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-            }),
-            stopRemoteServer(
-              tunnelEntry.target,
-              authSecret === null
-                ? {
-                    batchMode: "yes",
-                    interactiveAuth: false,
+        const activeClose = closingTunnelEntries.get(tunnelEntry.key);
+        if (activeClose && activeClose.entry !== tunnelEntry) {
+          return Effect.void;
+        }
+        const closing = activeClose ?? { entry: tunnelEntry, done: Deferred.makeUnsafe<void>() };
+        closingTunnelEntries.set(tunnelEntry.key, closing);
+        return Effect.gen(function* () {
+          yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
+            ...sshTargetLogFields(tunnelEntry.target),
+            key: tunnelEntry.key,
+            localPort: tunnelEntry.localPort,
+            remotePort: tunnelEntry.remotePort,
+          });
+          tunnels.delete(tunnelEntry.key);
+          const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
+          yield* stopRemoteServer(
+            tunnelEntry.target,
+            authSecret === null
+              ? {
+                  batchMode: "yes",
+                  interactiveAuth: false,
+                }
+              : {
+                  authSecret,
+                  batchMode: "no",
+                  interactiveAuth: true,
+                },
+          ).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
+            Effect.provideService(FileSystem.FileSystem, fileSystemService),
+            Effect.provideService(Path.Path, pathService),
+            Effect.ignore,
+          );
+          yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
+            ...sshTargetLogFields(tunnelEntry.target),
+            key: tunnelEntry.key,
+            localPort: tunnelEntry.localPort,
+            remotePort: tunnelEntry.remotePort,
+          });
+        }).pipe(
+          Effect.ensuring(
+            Deferred.succeed(closing.done, undefined).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (closingTunnelEntries.get(tunnelEntry.key) === closing) {
+                    closingTunnelEntries.delete(tunnelEntry.key);
                   }
-                : {
-                    authSecret,
-                    batchMode: "no",
-                    interactiveAuth: true,
-                  },
-            ).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-              Effect.provideService(FileSystem.FileSystem, fileSystemService),
-              Effect.provideService(Path.Path, pathService),
+                }),
+              ),
             ),
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.ignore);
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-      }).pipe(Effect.ignore),
+          ),
+          Effect.ignore,
+        );
+      }),
+    );
+    yield* Effect.forkIn(
+      Effect.gen(function* () {
+        let delayMs = 2_000;
+        let connectedAt = yield* Clock.currentTimeMillis;
+        while (true) {
+          yield* Effect.exit(connection.exited);
+          ready = yield* Deferred.make<void, SshEnvironmentEffectError>();
+          yield* Scope.close(connection.scope, Exit.void);
+          if ((yield* Clock.currentTimeMillis) - connectedAt > 60_000) {
+            delayMs = 2_000;
+          }
+          while (true) {
+            yield* Effect.logInfo("ssh.tunnel.reconnecting", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              localPort,
+              remotePort,
+              delayMs,
+            });
+            yield* Effect.sleep(delayMs);
+            delayMs = Math.min(delayMs * 2, 30_000);
+            const authSecret = authSecrets.get(input.key);
+            const authOptions: SshAuthOptions =
+              authSecret === undefined
+                ? { batchMode: "yes", interactiveAuth: false }
+                : { authSecret, batchMode: "no", interactiveAuth: true };
+            const result = yield* Effect.exit(
+              Effect.gen(function* () {
+                remoteLaunch = yield* launchOrReuseRemoteServer(
+                  input.resolvedTarget,
+                  authOptions,
+                  input.runner,
+                );
+                remotePort = remoteLaunch.remotePort;
+                return yield* connect(authOptions);
+              }),
+            );
+            if (Exit.isSuccess(result)) {
+              connection = result.value;
+              connectedAt = yield* Clock.currentTimeMillis;
+              yield* Deferred.succeed(ready, undefined);
+              break;
+            }
+            const failure = Exit.findErrorOption(result);
+            if (Option.isSome(failure) && isSshAuthFailure(failure.value)) {
+              // Let the next foreground ensure use the normal authentication flow.
+              // Removing the entry leaves the remote server running on scope cleanup.
+              tunnels.delete(input.key);
+              yield* Deferred.fail(ready, failure.value);
+              // Close from a sibling fiber so the supervisor never waits on itself.
+              yield* Effect.forkIn(Scope.close(entryScope, Exit.void), managerScope);
+              return;
+            }
+            yield* Effect.logWarning("ssh.tunnel.reconnect.failed", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              cause: result.cause,
+            });
+          }
+        }
+      }),
+      entryScope,
+    );
+    yield* Scope.addFinalizer(
+      entryScope,
+      Effect.suspend(() => Deferred.fail(ready, makeSshTunnelCancelledError(input.resolvedTarget))),
     );
     yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1448,37 +1563,37 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     resolvedTarget: DesktopSshEnvironmentTarget,
     runner?: RemoteT3RunnerOptions,
   ): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-    let entry = tunnels.get(key) ?? null;
-
-    if (entry !== null) {
-      yield* Effect.logDebug("ssh.environment.tunnel.existing.check", {
-        ...sshTargetLogFields(resolvedTarget),
-        key,
-        localPort: entry.localPort,
-        remotePort: entry.remotePort,
+    const closing = closingTunnelEntries.get(key);
+    if (closing) {
+      yield* Deferred.await(closing.done);
+      return yield* ensureTunnelEntry(key, resolvedTarget, runner);
+    }
+    const entry = tunnels.get(key);
+    if (entry !== undefined) {
+      // The tunnel supervisor owns reconnects and keeps the forwarded port stable.
+      // Client connection preparation remains pending (shown as reconnecting) until HTTP is ready.
+      const awaitReady = Effect.gen(function* () {
+        const ready = yield* entry.awaitReady.pipe(Effect.timeoutOption(SSH_READY_TIMEOUT_MS));
+        if (Option.isSome(ready)) return;
+        yield* closeTunnelEntry(entry);
+        yield* cancelPendingTunnelEntry(key, resolvedTarget);
+        return yield* new SshReadinessError({
+          message: `SSH tunnel did not reconnect within ${SSH_READY_TIMEOUT_MS / 1_000} seconds for ${resolvedTarget.alias || resolvedTarget.hostname}.`,
+        });
       });
-      const readinessExit = yield* Effect.exit(
+      yield* awaitReady;
+      const readiness = yield* Effect.exit(
         waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
       );
-      if (Exit.isSuccess(readinessExit)) {
-        yield* Effect.logDebug("ssh.environment.tunnel.reused", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-          localPort: entry.localPort,
-          remotePort: entry.remotePort,
-        });
+      if (Exit.isSuccess(readiness)) return entry;
+      if (yield* entry.isReconnecting) {
+        yield* awaitReady;
         return entry;
       }
-      yield* Effect.logWarning("ssh.environment.tunnel.existing.stale", {
-        ...sshTargetLogFields(resolvedTarget),
-        key,
-        localPort: entry.localPort,
-        remotePort: entry.remotePort,
-        cause: readinessExit.cause,
-      });
+      // The SSH process can outlive its remote server. Preserve the existing
+      // foreground recovery path when HTTP fails without a tunnel exit.
       yield* closeTunnelEntry(entry);
       yield* cancelPendingTunnelEntry(key, resolvedTarget);
-      entry = null;
     }
 
     const pending = pendingTunnelEntries.get(key);
