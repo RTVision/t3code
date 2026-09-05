@@ -25,6 +25,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     "enable-auto-merge",
     "disable-auto-merge",
     "approve-workflows",
+    "revert",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
@@ -66,11 +67,13 @@ export function giteaProviderFailure(
 export function giteaViewerPermissions(input: {
   readonly canWrite: boolean;
   readonly workflowApprovalSupported?: boolean;
+  readonly revertSupported?: boolean;
   readonly ownsPullRequest: boolean;
   readonly updateMethods: ReadonlyArray<"merge" | "rebase">;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter((action) => {
+      if (action === "revert") return input.canWrite && input.revertSupported === true;
       if (action === "approve-workflows")
         return input.canWrite && input.workflowApprovalSupported === true;
       if (action === "ready" || action === "draft" || action === "close" || action === "reopen")
@@ -93,7 +96,7 @@ export function giteaBaseComparison(
   return pullRequest.baseSha === pullRequest.mergeBaseSha ? "up-to-date" : "behind";
 }
 
-function toChangeRequest(
+export function giteaToChangeRequest(
   pullRequest: GiteaPullRequestApi.GiteaPullRequest,
   relationshipOnly = false,
 ): ProviderChangeRequest {
@@ -115,6 +118,10 @@ function toChangeRequest(
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     labels: pullRequest.labels,
+    ...(pullRequest.reviewDecision === undefined
+      ? {}
+      : { reviewDecision: pullRequest.reviewDecision }),
+    ...(pullRequest.checksState === undefined ? {} : { checksState: pullRequest.checksState }),
   };
 }
 
@@ -135,10 +142,12 @@ export const make = Effect.gen(function* () {
     readonly viewer: string;
     readonly author: string | undefined;
     readonly workflowApprovalSupported?: boolean;
+    readonly revertSupported?: boolean;
   }) =>
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
-      workflowApprovalSupported: input.workflowApprovalSupported,
+      workflowApprovalSupported: input.workflowApprovalSupported === true,
+      revertSupported: input.revertSupported === true,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -164,6 +173,7 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
+          includeTracking: input.relationshipOnly !== true,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           ...(input.relationshipOnly === undefined
@@ -174,7 +184,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((page) => ({
             items: page.items.map((pullRequest) =>
-              toChangeRequest(pullRequest, input.relationshipOnly === true),
+              giteaToChangeRequest(pullRequest, input.relationshipOnly === true),
             ),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
@@ -185,21 +195,22 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.all(
         [
-          api.getPullRequest(input),
+          api.getPullRequest({ ...input, includeTracking: true }),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         { concurrency: 4 },
       ).pipe(
-        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows]) =>
+        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows, features]) =>
           api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
             Effect.orElseSucceed(() => []),
             Effect.map((checks): ProviderChangeRequestDetail => ({
-              ...toChangeRequest(pullRequest),
+              ...giteaToChangeRequest(pullRequest),
               body: pullRequest.body,
               changedFiles: pullRequest.changedFiles,
               mergedAt: pullRequest.mergedAt,
@@ -226,6 +237,7 @@ export const make = Effect.gen(function* () {
                 viewer,
                 author: pullRequest.author?.login,
                 workflowApprovalSupported: workflows.supported,
+                revertSupported: features.includes("pull-revert"),
               }),
             })),
           ),
@@ -321,7 +333,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         {
           concurrency: 3,
@@ -334,6 +346,7 @@ export const make = Effect.gen(function* () {
             viewer,
             author: pullRequest.author?.login,
             workflowApprovalSupported: features.includes("actions-run-approve"),
+            revertSupported: features.includes("pull-revert"),
           }),
         ),
       ),
