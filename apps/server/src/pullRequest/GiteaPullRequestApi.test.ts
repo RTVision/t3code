@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
+import * as GiteaPullRequestProvider from "./GiteaPullRequestProvider.ts";
 
 const mockedRequest = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -144,6 +145,57 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
+  it.effect("preserves tracking rows while keeping dependency reads lightweight", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation(() =>
+        Effect.succeed(
+          response(
+            [
+              rawPullRequest(1, {
+                head: {
+                  ref: "feature",
+                  label: "feature",
+                  sha: "head-sha",
+                  repo: { full_name: "acme/web", id: 1 },
+                },
+                review_decision: "approved",
+                checks_state: "failing",
+              }),
+            ],
+            { "x-total-count": "1" },
+          ),
+        ),
+      );
+      const provider = yield* GiteaPullRequestProvider.make.pipe(
+        Effect.provide(GiteaPullRequestApi.layer),
+      );
+      const input = {
+        cwd: "/workspace",
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open" as const,
+        involvement: "all" as const,
+        viewer: "",
+        limit: 200,
+      };
+      const dependencies = yield* provider.listChangeRequests({ ...input, relationshipOnly: true });
+      expect(dependencies.items).toHaveLength(1);
+      expect(dependencies.items[0]).toMatchObject({
+        headBranch: "feature",
+        headRepositoryNameWithOwner: "acme/web",
+        headBranchAvailable: true,
+      });
+      expect(dependencies.truncated).toBe(false);
+      expect(callAt(0).path).not.toContain("include_tracking");
+      const listing = yield* provider.listChangeRequests(input);
+      expect(listing.items[0]).toMatchObject({
+        reviewDecision: "approved",
+        checksState: "failing",
+      });
+      expect(callAt(1).path).toContain("include_tracking=true");
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+    }),
+  );
   it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -168,6 +220,39 @@ layer("GiteaPullRequestApi", (it) => {
       expect(callAt(1).path).toContain("/timeline?");
     }),
   );
+  it.effect("opens a native revert PR only on an advertising Gitea server", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-revert"] })))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(8))));
+      const api = yield* GiteaPullRequestApi.make;
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "revert",
+      });
+      expect(callAt(1)).toMatchObject({ method: "POST", path: "/repos/acme/web/pulls/7/revert" });
+      expect(mockedRequest.mock.calls).toHaveLength(2);
+    }),
+  );
+  it.effect("does not attempt a revert on stock Gitea", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .runAction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("does not expose native pull request reverts");
+      expect(mockedRequest.mock.calls.every(([call]) => call.method === "GET")).toBe(true);
+    }),
+  );
+
   it.effect("approves only the current pull request's waiting workflow runs", () =>
     Effect.gen(function* () {
       const pull = rawPullRequest(7);
@@ -318,6 +403,51 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("decodes nullable tracking summaries when explicitly requested", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            rawPullRequest(7, {
+              review_decision: "approved",
+              checks_state: "passing",
+            }),
+          ),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            rawPullRequest(8, {
+              review_decision: null,
+              checks_state: null,
+            }),
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const pullRequest = yield* api.getPullRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        includeTracking: true,
+      });
+
+      expect(pullRequest.reviewDecision).toBe("approved");
+      expect(pullRequest.checksState).toBe("passing");
+      expect(callAt(0).path).toBe("/repos/acme/web/pulls/7?include_tracking=true");
+
+      const nullablePullRequest = yield* api.getPullRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 8,
+        includeTracking: true,
+      });
+      expect(nullablePullRequest.reviewDecision).toBeNull();
+      expect(nullablePullRequest.checksState).toBeNull();
+    }),
+  );
+
   it.effect("keeps merged and closed pull requests distinct and counts malformed rows", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -347,6 +477,7 @@ layer("GiteaPullRequestApi", (it) => {
         involvement: "all",
         viewer: "reviewer",
         limit: 2,
+        includeTracking: true,
       });
 
       expect(page.items.map((item) => [item.number, item.state])).toEqual([
@@ -357,6 +488,7 @@ layer("GiteaPullRequestApi", (it) => {
       assert.isFalse(page.truncated);
       expect(callAt(0).path).toContain("state=closed");
       expect(callAt(0).path).toContain("sort=recentupdate");
+      expect(callAt(0).path).toContain("include_tracking=true");
     }),
   );
 
@@ -584,6 +716,7 @@ layer("GiteaPullRequestApi", (it) => {
   it.effect("walks later pages until involvement filtering fills the requested slice", () =>
     Effect.gen(function* () {
       mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([])))
         .mockReturnValueOnce(
           Effect.succeed(
             response(
@@ -609,7 +742,7 @@ layer("GiteaPullRequestApi", (it) => {
       expect(page.items.map((item) => item.number)).toEqual([51]);
       assert.strictEqual(page.consumed, 51);
       assert.isFalse(page.truncated);
-      expect(callAt(1).path).toContain("page=2");
+      expect(callAt(2).path).toContain("page=2");
     }),
   );
 
@@ -742,6 +875,41 @@ layer("GiteaPullRequestApi", (it) => {
           .map(([request]) => request.path)
           .toSorted(),
       ).toEqual(["/repos/acme/web/pulls/7", "/repos/acme/web/pulls/8"]);
+    }),
+  );
+
+  it.effect("passes tracking opt-in through native search and pull hydration", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([{ number: 7 }])))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                review_decision: "review-required",
+                checks_state: "failing",
+              }),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 1,
+        query: "needs review",
+        includeTracking: true,
+      });
+
+      expect(page.items[0]).toMatchObject({
+        reviewDecision: "review-required",
+        checksState: "failing",
+      });
+      expect(callAt(0).path).toContain("include_tracking=true");
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7?include_tracking=true");
     }),
   );
 
@@ -1016,7 +1184,7 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("does not turn omitted repository permissions into a denial", () =>
+  it.effect("does not advertise writes or merge methods from incomplete repository settings", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response({})));
       const api = yield* GiteaPullRequestApi.make;
@@ -1026,13 +1194,13 @@ layer("GiteaPullRequestApi", (it) => {
       });
 
       expect(access).toEqual({
-        canWrite: true,
+        canWrite: false,
         mergeCapabilities: {
-          merge: true,
-          squash: true,
-          rebase: true,
+          merge: false,
+          squash: false,
+          rebase: false,
         },
-        updateMethods: ["merge", "rebase"],
+        updateMethods: [],
       });
     }),
   );
@@ -1119,7 +1287,138 @@ layer("GiteaPullRequestApi", (it) => {
           ],
         }),
       ]);
-      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7/reviews/21/comments");
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7/reviews/21/comments?page=1&limit=50");
+    }),
+  );
+
+  it.effect(
+    "marks review activity truncated when nested review comments exceed the conversation bound",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "Review", state: "COMMENT", submitted_at: "2026-09-03T11:00:00Z" },
+            ]),
+          ),
+        );
+        for (let page = 0; page < 4; page += 1) {
+          mockedRequest.mockReturnValueOnce(
+            Effect.succeed(
+              response(
+                Array.from({ length: 50 }, (_, index) => ({
+                  id: 31 + page * 50 + index,
+                  body: "Comment",
+                  path: "src/a.ts",
+                  position: 1,
+                  created_at: "2026-09-03T11:01:00Z",
+                })),
+                { "x-total-count": "501" },
+              ),
+            ),
+          );
+        }
+        const api = yield* GiteaPullRequestApi.make;
+        const result = yield* api.listReviews({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        });
+        assert.isTrue(result.truncated);
+        expect(result.comments).toContainEqual(
+          expect.objectContaining({ id: "review-comment:31" }),
+        );
+        expect(result.comments).toHaveLength(201);
+        expect(callAt(4).path).toContain("page=4");
+        expect(mockedRequest).toHaveBeenCalledTimes(5);
+      }),
+  );
+
+  it.effect("does not repeat an unpaginated native review-comment response at the page size", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              {
+                id: 21,
+                body: "Review",
+                state: "COMMENT",
+                submitted_at: "2026-09-03T11:00:00Z",
+              },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length: 51 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      assert.isFalse(result.truncated);
+      assert.strictEqual(
+        result.comments.filter((comment) => comment.kind === "review-comment").length,
+        51,
+      );
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("does not mark an exact unpaginated review-comment safety bound as truncated", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              {
+                id: 21,
+                body: "Review",
+                state: "COMMENT",
+                submitted_at: "2026-09-03T11:00:00Z",
+              },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length: 200 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      assert.isFalse(result.truncated);
+      assert.strictEqual(
+        result.comments.filter((comment) => comment.kind === "review-comment").length,
+        200,
+      );
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
     }),
   );
 
@@ -1234,6 +1533,36 @@ layer("GiteaPullRequestApi", (it) => {
           { body: "New line", path: "src/b.ts", new_position: 9 },
         ],
       });
+    }),
+  );
+
+  it.effect("maps native warning statuses to failing checks", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response({
+            total_count: 1,
+            statuses: [{ context: "scan", status: "warning", updated_at: "2026-09-03T11:00:00Z" }],
+          }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const checks = yield* api.listChecks({
+        host: "forge.example.test",
+        repository: "acme/web",
+        sha: "head-sha",
+      });
+      expect(checks).toEqual([expect.objectContaining({ name: "scan", status: "failure" })]);
+    }),
+  );
+
+  it.effect("does not request commit statuses without a head revision", () =>
+    Effect.gen(function* () {
+      const api = yield* GiteaPullRequestApi.make;
+      expect(
+        yield* api.listChecks({ host: "forge.example.test", repository: "acme/web", sha: "" }),
+      ).toEqual([]);
+      expect(mockedRequest).not.toHaveBeenCalled();
     }),
   );
 
@@ -1562,13 +1891,17 @@ layer("GiteaPullRequestApi", (it) => {
         .mockReturnValueOnce(
           Effect.succeed(
             response([
-              { reaction: "+1", user: { login: "reader" } },
-              { reaction: "+1", user: { login: "teammate" } },
+              {
+                content: "+1",
+                created_at: "2026-09-05T00:00:00Z",
+                user: { login: "reader" },
+              },
+              { content: "+1", user: { login: "teammate" } },
             ]),
           ),
         )
         .mockReturnValueOnce(
-          Effect.succeed(response([{ reaction: "heart", user: { login: "friend" } }])),
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
         )
         .mockReturnValueOnce(Effect.succeed(response([])));
       const api = yield* GiteaPullRequestApi.make;
@@ -1597,17 +1930,41 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("treats a native null reaction list as empty without dropping other subjects", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: [] })))
+        .mockReturnValueOnce(Effect.succeed(response(null)))
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ content: "heart", user: { login: "friend" } }])),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "Reader",
+        subjectIds: ["issue:12"],
+      });
+
+      expect(reactions.pullRequest).toEqual([]);
+      expect(reactions.bySubjectId.get("issue:12")).toEqual([
+        { content: "heart", count: 1, actors: ["friend"], viewerHasReacted: false },
+      ]);
+    }),
+  );
+
   it.effect("follows a reaction list when Gitea caps a requested page below its limit", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation((input) => {
         if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
         if (input.path === "/repos/acme/web/issues/7/reactions?page=1&limit=50")
           return Effect.succeed(
-            response([{ reaction: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
+            response([{ content: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
           );
         if (input.path === "/repos/acme/web/issues/7/reactions?page=2&limit=50")
           return Effect.succeed(
-            response([{ reaction: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
+            response([{ content: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
           );
         return Effect.die(`unexpected request: ${input.path}`);
       });
@@ -1889,6 +2246,133 @@ layer("GiteaPullRequestApi", (it) => {
         }),
       );
       expect(callAt(2).path).toContain("page=2");
+    }),
+  );
+
+  it.effect("includes requested native teams in reviewer candidates and sends their names", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/repos/acme/web/pulls/7")
+          return Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                requested_reviewers_teams: [
+                  { id: 41, name: "maintainers", organization: { username: "acme" } },
+                ],
+              }),
+            ),
+          );
+        if (input.path.startsWith("/repos/acme/web/reviewers?"))
+          return Effect.succeed(response([{ id: 2, login: "reviewer" }]));
+        if (input.path === "/repos/acme/web/teams")
+          return Effect.succeed(
+            response([{ id: 41, name: "maintainers", organization: { username: "acme" } }]),
+          );
+        if (input.path === "/repos/acme/web/pulls/7/requested_reviewers")
+          return Effect.succeed(response({}));
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const candidates = yield* api.listReviewerCandidates({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(candidates).toEqual({
+        candidates: [
+          expect.objectContaining({ id: "reviewer", kind: "user", isRequested: true }),
+          expect.objectContaining({
+            id: "maintainers",
+            kind: "team",
+            login: "maintainers",
+            name: "acme",
+            isRequested: true,
+          }),
+        ],
+        truncated: false,
+      });
+      yield* api.setReviewerRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        requested: true,
+        reviewers: [candidates.candidates[1]!],
+      });
+      const request = callAt(3);
+      expect(decodeJson(request.body ?? "{}")).toEqual({
+        reviewers: [],
+        team_reviewers: ["maintainers"],
+      });
+    }),
+  );
+
+  it.effect("treats a native repository team 405 as a personal repository", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/repos/acme/web/pulls/7")
+          return Effect.succeed(response(rawPullRequest(7)));
+        if (input.path.startsWith("/repos/acme/web/reviewers?"))
+          return Effect.succeed(response([{ id: 2, login: "reviewer" }]));
+        if (input.path === "/repos/acme/web/teams")
+          return Effect.fail(
+            new GiteaApi.GiteaApiError({
+              operation: "listTeamReviewerCandidates",
+              reason: "failed",
+              detail: "Gitea returned HTTP 405.",
+              status: 405,
+            }),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const candidates = yield* api.listReviewerCandidates({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(candidates.candidates).toEqual([
+        expect.objectContaining({ id: "reviewer", kind: "user" }),
+      ]);
+    }),
+  );
+
+  it.effect("includes pull requests requested from a viewer team in reviewing listings", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/user/teams?page=1&limit=50")
+          return Effect.succeed(response([{ id: 4, name: "first" }], { "x-total-count": "2" }));
+        if (input.path === "/user/teams?page=2&limit=50")
+          return Effect.succeed(
+            response([{ id: 9, name: "maintainers" }], { "x-total-count": "2" }),
+          );
+        if (input.path.startsWith("/repos/acme/web/pulls?"))
+          return Effect.succeed(
+            response(
+              [
+                rawPullRequest(7, {
+                  requested_reviewers: [],
+                  requested_reviewers_teams: [{ id: 9, name: "maintainers" }],
+                }),
+              ],
+              { "x-total-count": "1" },
+            ),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "viewer",
+        limit: 10,
+      });
+
+      expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([7]);
+      assert.strictEqual(mockedRequest.mock.calls.length, 3);
     }),
   );
 

@@ -2,10 +2,57 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   giteaBaseComparison,
+  giteaToChangeRequest,
   giteaProviderFailure,
   giteaViewerPermissions,
 } from "./GiteaPullRequestProvider.ts";
-import { GiteaPullRequestApiError } from "./GiteaPullRequestApi.ts";
+import { GiteaPullRequestApiError, type GiteaPullRequest } from "./GiteaPullRequestApi.ts";
+
+const trackedPullRequest: GiteaPullRequest = {
+  number: 7,
+  title: "Tracking summary",
+  body: "",
+  url: "https://forge.example.test/acme/web/pulls/7",
+  author: null,
+  headBranch: "feature",
+  headSha: "head-sha",
+  headRepositoryNameWithOwner: "acme/web",
+  baseBranch: "main",
+  baseSha: "base-sha",
+  mergeBaseSha: "base-sha",
+  state: "open",
+  isDraft: false,
+  mergeability: "mergeable",
+  additions: 1,
+  deletions: 1,
+  changedFiles: 1,
+  createdAt: "2026-09-04T00:00:00.000Z",
+  updatedAt: "2026-09-04T00:00:00.000Z",
+  mergedAt: null,
+  closedAt: null,
+  reviewRequestLogins: [],
+  reviewRequestTeamIDs: [],
+  reviewRequestTeamNames: [],
+  reviewers: [],
+  labels: [],
+  commentCount: 0,
+  reviewDecision: "approved",
+  checksState: "failing",
+};
+
+it("maps Gitea tracking summaries into the neutral change request", () => {
+  expect(giteaToChangeRequest(trackedPullRequest)).toMatchObject({
+    reviewDecision: "approved",
+    checksState: "failing",
+  });
+  expect(
+    giteaToChangeRequest({
+      ...trackedPullRequest,
+      reviewDecision: null,
+      checksState: null,
+    }),
+  ).toMatchObject({ reviewDecision: null, checksState: null });
+});
 
 describe("giteaViewerPermissions", () => {
   it("offers workflow approval only when the server supports it and the viewer can write", () => {
@@ -119,5 +166,21 @@ describe("giteaProviderFailure", () => {
         }),
       ),
     ).toEqual({ reason: "rate-limited", retryAt: 1234 });
+  });
+});
+
+describe("native revert permission", () => {
+  it("requires write access and the advertised native endpoint", () => {
+    const input = { canWrite: true, ownsPullRequest: false, updateMethods: [] as const };
+    expect(giteaViewerPermissions(input).actions).not.toContain("revert");
+    expect(giteaViewerPermissions({ ...input, revertSupported: true }).actions).toContain("revert");
+    expect(
+      giteaViewerPermissions({
+        ...input,
+        canWrite: false,
+        ownsPullRequest: true,
+        revertSupported: true,
+      }).actions,
+    ).not.toContain("revert");
   });
 });

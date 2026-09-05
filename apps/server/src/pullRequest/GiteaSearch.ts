@@ -32,6 +32,7 @@ export function giteaSearchPath(input: {
   readonly viewer: string;
   readonly page: number;
   readonly limit: number;
+  readonly includeTracking?: boolean;
 }): string {
   const search = new URLSearchParams({
     type: "pulls",
@@ -39,6 +40,7 @@ export function giteaSearchPath(input: {
     state: endpointState(input.state),
     page: String(input.page),
     limit: String(input.limit),
+    ...(input.includeTracking === true ? { include_tracking: "true" } : {}),
     ...(input.involvement === "authored" ? { created_by: input.viewer } : {}),
   });
   return `${input.repositoryPath}/issues?${search}`;
