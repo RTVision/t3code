@@ -1663,13 +1663,11 @@ export const make = Effect.gen(function* () {
           response,
         );
         events.push(...pageEvents);
-        const next = nextPagePath({
-          path,
-          page,
-          pageRows: pageEvents.length,
-          rowsSeen: events.length,
-          headers: response.headers,
-        });
+        // Gitea's timeline route reports the current page length in X-Total-Count rather than the
+        // total number of events, so that header cannot prove the timeline is complete.
+        const next =
+          nextLink(response.headers) ??
+          (pageEvents.length >= PAGE_SIZE ? pathAtPage(path, page + 1) : null);
         if (next === null) return GiteaLifecycle.autoMergeEnabled(events);
         path = next;
       }
