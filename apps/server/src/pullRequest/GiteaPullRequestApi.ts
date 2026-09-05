@@ -1079,13 +1079,20 @@ export const make = Effect.gen(function* () {
         nextLink(result.headers) !== null || totalCount(result.headers) !== null;
       const paginationNext =
         input.requirePaginationEvidence && !hasPaginationEvidence ? null : next;
+      // Native unpaginated endpoints can return more than the requested page size. Exactly
+      // one requested page is ambiguous when headers do not establish whether more rows exist.
+      const paginationUncertain =
+        input.requirePaginationEvidence === true &&
+        !hasPaginationEvidence &&
+        result.rows.length === PAGE_SIZE;
       if (result.rows.length > remaining || rows.length >= input.limit) {
         return {
           rows,
-          truncated: result.rows.length > remaining || paginationNext !== null,
+          truncated:
+            result.rows.length > remaining || paginationNext !== null || paginationUncertain,
         };
       }
-      if (paginationNext === null) return { rows, truncated: false };
+      if (paginationNext === null) return { rows, truncated: paginationUncertain };
       path = paginationNext;
     }
     return { rows, truncated: true };

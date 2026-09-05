@@ -1337,6 +1337,48 @@ layer("GiteaPullRequestApi", (it) => {
       }),
   );
 
+  it.effect.each([1, 4])(
+    "marks inline comments incomplete when page %i has no pagination evidence",
+    (pageCount) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "Review", state: "COMMENT", submitted_at: "2026-09-03T11:00:00Z" },
+            ]),
+          ),
+        );
+        for (let page = 1; page <= pageCount; page += 1) {
+          mockedRequest.mockReturnValueOnce(
+            Effect.succeed(
+              response(
+                Array.from({ length: 50 }, (_, index) => ({
+                  id: page * 50 + index,
+                  body: `Comment ${index + 1}`,
+                  path: "src/a.ts",
+                  position: index + 1,
+                  created_at: "2026-09-03T11:01:00Z",
+                })),
+                page === pageCount ? {} : { "x-total-count": "201" },
+              ),
+            ),
+          );
+        }
+        const api = yield* GiteaPullRequestApi.make;
+        const result = yield* api.listReviews({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        assert.isTrue(result.truncated);
+        expect(result.comments.filter((comment) => comment.kind === "review-comment")).toHaveLength(
+          50 * pageCount,
+        );
+        expect(mockedRequest).toHaveBeenCalledTimes(1 + pageCount);
+      }),
+  );
+
   it.effect("does not repeat an unpaginated native review-comment response at the page size", () =>
     Effect.gen(function* () {
       mockedRequest
