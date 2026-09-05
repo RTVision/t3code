@@ -1,8 +1,8 @@
 # Validate the external Neovim launcher
 
-The terminal-editor helper is an implementation spike. It is packaged on Windows
-but has no editor menu or desktop IPC entry point. Run it manually to validate the
-Windows transport before enabling the product integration.
+Validate the desktop integration through Settings → Editors and the Open menu.
+The standalone harness below can isolate transport failures. Keep the feature PR
+in draft until the packaged Windows and interactive SSH checks pass.
 
 Build the Windows desktop from this branch using the normal desktop artifact
 procedure. Use the resulting packaged executable: a development Node process
@@ -33,8 +33,8 @@ Create a private JSON request file on Windows. For direct WSL:
 ```
 
 Use the actual connected distro and account, and verify the absolute Node path
-under that account first. The spike deliberately requires an explicit runtime
-path; it does not assume that a connected T3 server implies `node` is in PATH.
+under that account first. The harness accepts an explicit runtime
+path. Without it, the helper requires Node.js in the selected account’s login PATH.
 An optional top-level `executable` specifies an absolute Neovim path. Otherwise
 Neovim is resolved in the target's Bash login environment and checked with
 `--version` before editing with its normal configuration.
@@ -86,12 +86,16 @@ Validate each route on the packaged Windows desktop:
 5. On a second line containing `a雪😀z`, UTF-16 column 5 must select `z`, Neovim
    byte column 9. Verify normal configuration and plugin subprocess PATH.
 
-The harness is not a completed feature: automatic detection, route generation and
-account binding to desktop records, launch deduplication, preference dispatch and
-UI remain outside this spike. Staging is private and cleaned after a completed
-session; interrupted preparation and abandoned sessions still need bounded stale
-cleanup before product use. Installation paths containing semicolons, quotes or
-newlines are rejected explicitly by this initial Windows Terminal adapter.
+In the integrated client, verify automatic discovery, explicit preference persistence,
+Rescan after installation, and the unavailable/SSH sign-in states. Test the header,
+Open keybinding, markdown file links, terminal links, diffs, changed files, file
+preview and Settings file actions. Switch environments during a probe and reconnect:
+neither stale results nor a previous launch should be replayed. A browser or older
+desktop should explain the desktop capability limit for a remembered Neovim choice.
+
+Staging uses private account-owned directories, removes consumed payloads before
+starting Neovim, and bounds stale cleanup. Installation paths containing semicolons,
+quotes or newlines are rejected by the Windows Terminal adapter.
 
 Run focused local checks with:
 

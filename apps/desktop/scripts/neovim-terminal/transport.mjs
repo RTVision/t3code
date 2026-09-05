@@ -27,7 +27,7 @@ function account(value, name) {
   return value;
 }
 
-/** This spike accepts operator-authored routes; it is deliberately not a renderer IPC API. */
+/** Validate desktop-resolved routes at the standalone helper boundary. */
 export function validateRequest(input) {
   if (!input || typeof input !== "object" || input.version !== 1) {
     throw new Error("Unsupported terminal-editor payload version.");
@@ -40,7 +40,7 @@ export function validateRequest(input) {
   if (route.kind === "wsl" || route.kind === "wsl-ssh") {
     account(route.distro, "WSL distro");
     account(route.user, "WSL user");
-    absolute(route.node, "WSL Node executable");
+    if (route.node !== undefined) absolute(route.node, "WSL Node executable");
   }
   if (route.kind === "ssh" || route.kind === "wsl-ssh") {
     account(route.host, "SSH host or alias");
@@ -51,7 +51,7 @@ export function validateRequest(input) {
     ) {
       throw new Error("Invalid SSH port.");
     }
-    absolute(route.remoteNode, "remote Node executable");
+    if (route.remoteNode !== undefined) absolute(route.remoteNode, "remote Node executable");
   }
   const windows = route.kind === "native" && input.platform === "win32";
   absolute(input.workspace, "workspace", windows);
@@ -78,6 +78,7 @@ export function validateRequest(input) {
     throw new Error("Unsupported column encoding.");
   }
   if (input.executable !== undefined) absolute(input.executable, "Neovim executable", windows);
+  if (input.expectedAccount !== undefined) account(input.expectedAccount, "expected account");
   return input;
 }
 
@@ -147,11 +148,12 @@ export function wslArgs(route) {
 }
 
 /** Staging owns a separate stdin pipe; the editor process always inherits the terminal. */
-export function run(command, args, { input, timeout, cwd, capture = false } = {}) {
+export function run(command, args, { input, timeout, cwd, capture = false, env } = {}) {
   return new Promise((resolve, reject) => {
     const child = NodeChildProcess.spawn(command, args, {
       shell: false,
       cwd,
+      env,
       stdio: [
         input === undefined ? "inherit" : "pipe",
         capture ? "pipe" : "inherit",
@@ -217,7 +219,12 @@ export async function findNeovim(override, environment = process.env) {
     } catch {
       continue;
     }
-    await run(candidate, ["--version"], { input: "", timeout: 10_000, capture: true });
+    const version = await run(candidate, ["--version"], {
+      input: "",
+      timeout: 10_000,
+      capture: true,
+    });
+    if (!version.startsWith("NVIM v")) throw new Error("The executable is not Neovim.");
     return candidate;
   }
   throw new Error("Neovim was not found in the selected account's login PATH.");

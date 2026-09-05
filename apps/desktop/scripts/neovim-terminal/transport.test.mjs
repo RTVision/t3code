@@ -147,7 +147,7 @@ test.skipIf(process.platform === "win32")(
       const result = NodePath.join(directory, "received.json");
       await NodeFSP.writeFile(
         recorder,
-        `#!${process.execPath}\nconst fs = require('node:fs');\nif (process.argv[2] === '--version') { console.log('NVIM spike recorder'); process.exit(0); }\nfs.writeFileSync(${JSON.stringify(result)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), path: process.env.PATH, stdin: fs.readFileSync(0, 'utf8') }));\n`,
+        `#!${process.execPath}\nconst fs = require('node:fs');\nif (process.argv[2] === '--version') { console.log('NVIM v0.11.0'); process.exit(0); }\nfs.writeFileSync(${JSON.stringify(result)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), path: process.env.PATH, stdin: fs.readFileSync(0, 'utf8') }));\n`,
         { mode: 0o700 },
       );
       const target = NodePath.join(directory, "-雪 '\";$(touch nope)`touch nope`\n:12:34");

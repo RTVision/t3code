@@ -210,6 +210,10 @@
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./editor-choice": {
+      "types": "./src/editorChoice.ts",
+      "default": "./src/editorChoice.ts"
     }
   },
   "scripts": {

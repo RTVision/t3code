@@ -67,7 +67,7 @@ function targetAddressKey(target: DesktopSshEnvironmentTarget): string {
 
 export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string {
   const runner = target.runner;
-  return `${targetAddressKey(target)}${runner ? `\u0000${runner.kind}${runner.kind === "wsl" ? `\u0000${runner.distro}` : ""}` : ""}`;
+  return `${targetAddressKey(target)}${runner ? `\u0000${runner.kind}${runner.kind === "wsl" ? `\u0000${runner.distro}\u0000${runner.user ?? ""}` : ""}` : ""}`;
 }
 
 export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {

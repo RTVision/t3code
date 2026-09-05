@@ -15,7 +15,11 @@ describe("desktop SSH runner selection", () => {
           Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(123),
-              stdout: Stream.make(new TextEncoder().encode("agent-unavailable")),
+              stdout: Stream.make(
+                new TextEncoder().encode(
+                  "T3SSH-USER:alice\nT3SSH-HOME:/home/alice\nagent-unavailable",
+                ),
+              ),
               stderr: Stream.make(
                 new TextEncoder().encode(
                   exitCode === 0 ? "OpenSSH_test" : "ssh: command not found",
@@ -64,8 +68,10 @@ describe("desktop SSH runner selection", () => {
     }
   });
   it("rejects saved environments when credentials would move to another runner or distro", () => {
-    const wsl = { kind: "wsl", distro: "Debian" } as const;
+    const wsl = { kind: "wsl", distro: "Debian", user: "alice" } as const;
     assert.isTrue(matchesSshRunner(wsl, { ...wsl }));
+    assert.isFalse(matchesSshRunner(wsl, { ...wsl, user: "bob" }));
+    assert.isFalse(matchesSshRunner({ kind: "wsl", distro: "Debian" }, wsl));
     assert.isFalse(matchesSshRunner(wsl, { kind: "windows" }));
     assert.isFalse(matchesSshRunner(wsl, { kind: "wsl", distro: "Ubuntu" }));
     assert.isTrue(matchesSshRunner(undefined, { kind: "windows" }));

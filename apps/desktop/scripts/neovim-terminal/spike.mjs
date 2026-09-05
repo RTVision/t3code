@@ -41,9 +41,7 @@ const child = NodeChildProcess.spawn(terminal, args, {
 });
 await new Promise((resolve, reject) => {
   child.once("error", reject);
-  child.once("exit", (code) =>
-    code === 0 ? resolve() : reject(new Error(`Windows Terminal rejected the launch (${code}).`)),
-  );
+  child.once("spawn", resolve);
 });
 child.unref();
 console.log("Windows Terminal accepted the launch. This does not confirm SSH or Neovim readiness.");

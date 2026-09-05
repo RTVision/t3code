@@ -91,3 +91,7 @@ export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_RECORDING_FRAME_CHANNEL = "desktop:preview-recording-frame";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
+
+export const PROBE_TERMINAL_EDITOR_CHANNEL = "desktop:probe-terminal-editor";
+export const OPEN_TERMINAL_EDITOR_CHANNEL = "desktop:open-terminal-editor";
+export const SET_TERMINAL_EDITOR_SETTINGS_CHANNEL = "desktop:set-terminal-editor-settings";
