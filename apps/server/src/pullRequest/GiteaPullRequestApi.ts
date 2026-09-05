@@ -1375,6 +1375,7 @@ export const make = Effect.gen(function* () {
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
     let commentsTruncated = reviewsTruncated;
+    let remainingReviewCommentRows = PAGE_SIZE * CONVERSATION_PAGES;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -1391,6 +1392,10 @@ export const make = Effect.gen(function* () {
           reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
         });
       }
+      if (remainingReviewCommentRows === 0) {
+        commentsTruncated = true;
+        continue;
+      }
       const codeRows = yield* readUnknownSlice({
         operation: "listReviewComments",
         ...input,
@@ -1398,9 +1403,10 @@ export const make = Effect.gen(function* () {
           `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
           { page: 1, limit: PAGE_SIZE },
         ),
-        limit: PAGE_SIZE * CONVERSATION_PAGES,
+        limit: remainingReviewCommentRows,
         requirePaginationEvidence: true,
       });
+      remainingReviewCommentRows -= codeRows.rows.length;
       commentsTruncated ||= codeRows.truncated;
       const grouped = new Map<
         string,

@@ -1467,6 +1467,51 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("shares the raw inline-comment budget across reviews", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
+              { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
+              { id: 23, body: "Third review", submitted_at: "2026-09-03T13:00:00Z" },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              ...Array.from({ length: 199 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+              { id: "malformed" },
+            ]),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(
+        result.comments.filter((comment) => comment.kind === "review").map((comment) => comment.id),
+      ).toEqual(["review:21", "review:22", "review:23"]);
+      expect(result.comments.filter((comment) => comment.kind === "review-comment")).toHaveLength(
+        199,
+      );
+      assert.isTrue(result.truncated);
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+      expect(callAt(1).path).toContain("/reviews/21/comments?");
+    }),
+  );
+
   it.effect("follows pagination links when Gitea caps comment pages below the limit", () =>
     Effect.gen(function* () {
       mockedRequest
