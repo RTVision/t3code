@@ -240,6 +240,11 @@ export interface ProviderRepositoryRef {
 export interface PullRequestProviderApi {
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
+  /** Host-discovered additions, read only when a caller needs to gate a capability. */
+  readonly getCapabilities?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<PullRequestCapabilities, PullRequestProviderError>;
 
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {

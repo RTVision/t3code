@@ -457,6 +457,9 @@ function withRateLimitBackoff(
   return {
     kind: api.kind,
     capabilities: api.capabilities,
+    ...(api.getCapabilities === undefined
+      ? {}
+      : { getCapabilities: wrap("getCapabilities", api.getCapabilities) }),
     getViewer: wrap("getViewer", api.getViewer),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
@@ -688,6 +691,15 @@ export const make = Effect.gen(function* () {
         return Effect.succeed(match);
       }),
     );
+
+  const capabilitiesOf = (project: SupportedProject) => {
+    const read = project.api.getCapabilities;
+    return read === undefined
+      ? Effect.succeed(project.api.capabilities)
+      : read({ cwd: project.project.workspaceRoot, host: project.host }).pipe(
+          Effect.orElseSucceed(() => project.api.capabilities),
+        );
+  };
 
   /**
    * What the signed-in account may do with this change request, asked of the host itself. Every
@@ -1278,12 +1290,13 @@ export const make = Effect.gen(function* () {
               })
               .pipe(Effect.mapError(toPullRequestError("detail"))),
             viewerOf(project),
+            capabilitiesOf(project),
           ],
-          { concurrency: 2 },
+          { concurrency: 3 },
         ).pipe(
-          Effect.map(([changeRequest, viewer]): PullRequestDetail => ({
+          Effect.map(([changeRequest, viewer, capabilities]): PullRequestDetail => ({
             provider: project.api.kind,
-            capabilities: project.api.capabilities,
+            capabilities,
             projectId: project.project.id,
             projectTitle: project.project.title,
             workspaceRoot: project.project.workspaceRoot,
@@ -1432,85 +1445,91 @@ export const make = Effect.gen(function* () {
 
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
-        // The surface hides what a host cannot do, and this refuses it as well: a request that
-        // reached here anyway must not be handed to a provider that never claimed the action.
-        if (!project.api.capabilities.actions.includes(input.action)) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot ${input.action} a change request.`,
-            }),
-          );
-        }
-        // A strategy the host does not offer must be refused rather than passed on: every
-        // provider maps an unrecognised method to its own default, so asking Azure DevOps to
-        // rebase would quietly merge instead of failing.
-        if (
-          input.mergeMethod !== undefined &&
-          !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
-        ) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot merge with the ${input.mergeMethod} strategy.`,
-            }),
-          );
-        }
-        // The same for the way a stale branch is brought up to date: a host that only merges
-        // must not be asked to rebase and left to pick something else.
-        if (
-          input.updateMethod !== undefined &&
-          !(project.api.capabilities.updateMethods ?? []).includes(input.updateMethod)
-        ) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot update a branch by ${input.updateMethod}.`,
-            }),
-          );
-        }
-        // What the host can do and what this account may ask of it are two questions, and both
-        // have to say yes. The second is asked last, because it costs a request and the checks
-        // above do not.
-        return viewerPermissionsOf(project, input, "runAction").pipe(
-          Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
-            if (!viewer.actions.includes(input.action)) {
+      Effect.flatMap((project): Effect.Effect<string, PullRequestError> =>
+        capabilitiesOf(project).pipe(
+          Effect.flatMap((capabilities): Effect.Effect<string, PullRequestError> => {
+            // The surface hides what a host cannot do, and this refuses it as well: a request that
+            // reached here anyway must not be handed to a provider that never claimed the action.
+            if (!capabilities.actions.includes(input.action)) {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
-                  detail: ACTION_ACCESS_REFUSALS[input.action],
+                  detail: `This host cannot ${input.action} a change request.`,
                 }),
               );
             }
+            // A strategy the host does not offer must be refused rather than passed on: every
+            // provider maps an unrecognised method to its own default, so asking Azure DevOps to
+            // rebase would quietly merge instead of failing.
             if (
-              input.updateMethod !== undefined &&
-              !(viewer.updateMethods ?? []).includes(input.updateMethod)
+              input.mergeMethod !== undefined &&
+              !capabilities.mergeMethods.includes(input.mergeMethod)
             ) {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
-                  detail: ACTION_ACCESS_REFUSALS["update-branch"],
+                  detail: `This host cannot merge with the ${input.mergeMethod} strategy.`,
                 }),
               );
             }
-            return project.api
-              .runAction({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
-                number: input.number,
-                action: input.action,
-                ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
-                ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
-              })
-              .pipe(
-                Effect.mapError(toPullRequestError("runAction")),
-                Effect.as(project.repository),
+            // The same for the way a stale branch is brought up to date: a host that only merges
+            // must not be asked to rebase and left to pick something else.
+            if (
+              input.updateMethod !== undefined &&
+              !(capabilities.updateMethods ?? []).includes(input.updateMethod)
+            ) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: `This host cannot update a branch by ${input.updateMethod}.`,
+                }),
               );
+            }
+            // What the host can do and what this account may ask of it are two questions, and both
+            // have to say yes. The second is asked last, because it costs a request and the checks
+            // above do not.
+            return viewerPermissionsOf(project, input, "runAction").pipe(
+              Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
+                if (!viewer.actions.includes(input.action)) {
+                  return Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "runAction",
+                      detail: ACTION_ACCESS_REFUSALS[input.action],
+                    }),
+                  );
+                }
+                if (
+                  input.updateMethod !== undefined &&
+                  !(viewer.updateMethods ?? []).includes(input.updateMethod)
+                ) {
+                  return Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "runAction",
+                      detail: ACTION_ACCESS_REFUSALS["update-branch"],
+                    }),
+                  );
+                }
+                return project.api
+                  .runAction({
+                    cwd: project.project.workspaceRoot,
+                    repository: project.repository,
+                    host: project.host,
+                    number: input.number,
+                    action: input.action,
+                    ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.updateMethod === undefined
+                      ? {}
+                      : { updateMethod: input.updateMethod }),
+                  })
+                  .pipe(
+                    Effect.mapError(toPullRequestError("runAction")),
+                    Effect.as(project.repository),
+                  );
+              }),
+            );
           }),
-        );
-      }),
+        ),
+      ),
     );
 
   const comment: PullRequestService["Service"]["comment"] = (input) =>
@@ -1771,35 +1790,39 @@ export const make = Effect.gen(function* () {
    */
   const setReaction: PullRequestService["Service"]["setReaction"] = (input) =>
     requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
-        const subject =
-          input.subjectId === undefined
-            ? "change-request"
-            : input.subjectId.startsWith("issue:")
-              ? "issue-comment"
-              : input.subjectId.startsWith("review-comment:")
-                ? "review-comment"
-                : "review";
-        if (!pullRequestCanReact(project.api.capabilities, subject)) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "setReaction",
-              detail: "This host cannot react to this part of the conversation.",
-            }),
-          );
-        }
-        return project.api
-          .setReaction({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
-            number: input.number,
-            ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
-            content: input.content,
-            reacted: input.reacted,
-          })
-          .pipe(Effect.mapError(toPullRequestError("setReaction")));
-      }),
+      Effect.flatMap((project): Effect.Effect<void, PullRequestError> =>
+        capabilitiesOf(project).pipe(
+          Effect.flatMap((capabilities): Effect.Effect<void, PullRequestError> => {
+            const subject =
+              input.subjectId === undefined
+                ? "change-request"
+                : input.subjectId.startsWith("issue:")
+                  ? "issue-comment"
+                  : input.subjectId.startsWith("review-comment:")
+                    ? "review-comment"
+                    : "review";
+            if (!pullRequestCanReact(capabilities, subject)) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "setReaction",
+                  detail: "This host cannot react to this part of the conversation.",
+                }),
+              );
+            }
+            return project.api
+              .setReaction({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                number: input.number,
+                ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
+                content: input.content,
+                reacted: input.reacted,
+              })
+              .pipe(Effect.mapError(toPullRequestError("setReaction")));
+          }),
+        ),
+      ),
     );
 
   /**

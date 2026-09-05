@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
+import { giteaForkCapabilities } from "./GiteaForkCapabilities.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderApi,
@@ -136,6 +137,11 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "gitea",
     capabilities: CAPABILITIES,
+    getCapabilities: () =>
+      api.getFeatures().pipe(
+        Effect.orElseSucceed(() => []),
+        Effect.map((features) => giteaForkCapabilities(CAPABILITIES, features)),
+      ),
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
@@ -184,7 +190,10 @@ export const make = Effect.gen(function* () {
               checks,
               mergeCapabilities: access.mergeCapabilities,
               baseComparison: giteaBaseComparison(pullRequest),
-              autoMergeEnabled,
+              ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
+              ...(pullRequest.autoMergeMethod === undefined
+                ? {}
+                : { autoMergeMethod: pullRequest.autoMergeMethod }),
               viewerPermissions: permissions({
                 access,
                 viewer,
