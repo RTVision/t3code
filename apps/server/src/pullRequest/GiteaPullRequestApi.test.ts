@@ -222,6 +222,181 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("uses native issue search and hydrates its pull request summaries", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([{ number: 7 }, { number: 8 }])))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(8))));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 1,
+        query: "needs review",
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([7]);
+      assert.strictEqual(page.consumed, 1);
+      assert.isTrue(page.truncated);
+      expect(callAt(0).path).toContain("/repos/acme/web/issues?");
+      expect(callAt(0).path).toContain("type=pulls");
+      expect(callAt(0).path).toContain("q=needs+review");
+      expect(callAt(0).path).not.toContain("/pulls?");
+      expect(
+        mockedRequest.mock.calls
+          .slice(1)
+          .map(([request]) => request.path)
+          .toSorted(),
+      ).toEqual(["/repos/acme/web/pulls/7", "/repos/acme/web/pulls/8"]);
+    }),
+  );
+
+  it.effect("returns a page-boundary search match without requesting the page after the cap", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((request) => {
+        if (request.path.includes("/pulls/100"))
+          return Effect.succeed(response(rawPullRequest(100)));
+        const url = new URL(request.path, "https://forge.example.test");
+        const page = Number(url.searchParams.get("page"));
+        return Effect.succeed(
+          response(page === 100 ? [{ number: 100 }] : [{ number: "malformed" }], {
+            "x-total-count": "5000",
+            link: `<https://forge.example.test/gitea/api/v1/repos/acme/web/issues?type=pulls&q=match&page=${page + 1}&limit=50>; rel="next"`,
+          }),
+        );
+      });
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 1,
+        query: "match",
+      });
+      const searchPages = mockedRequest.mock.calls
+        .map(([request]) => request.path)
+        .filter((path) => path.includes("/issues?"))
+        .map((path) =>
+          Number(new URL(path, "https://forge.example.test").searchParams.get("page")),
+        );
+
+      expect(page.items.map((item) => item.number)).toEqual([100]);
+      assert.strictEqual(page.consumed, 100);
+      assert.isTrue(page.truncated);
+      expect(searchPages).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
+      assert.strictEqual(mockedRequest.mock.calls.length, 101);
+    }),
+  );
+
+  it.effect("post-filters merged state and keeps authored search case-insensitive", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([{ number: 1 }, { number: 2 }])))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(1, {
+                state: "closed",
+                merged: true,
+                user: { login: "AUTHOR" },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(2, {
+                state: "closed",
+                merged: true,
+                user: { login: "other" },
+              }),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "merged",
+        involvement: "authored",
+        viewer: "author",
+        limit: 1,
+        query: "release",
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([1]);
+      assert.strictEqual(page.consumed, 1);
+      assert.isTrue(page.truncated);
+      expect(callAt(0).path).toContain("state=closed");
+      expect(callAt(0).path).toContain("created_by=author");
+    }),
+  );
+
+  it.effect("carries a search cursor as a raw-row offset without an updated-time filter", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ number: 1 }, { number: 2 }], { "x-total-count": "4" })),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ number: 3 }, { number: 4 }], { "x-total-count": "4" })),
+        )
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(3))))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(4))));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 1,
+        query: "cursor",
+        cursor: {
+          updatedBefore: "2026-09-02T10:10:00.000Z",
+          delivered: 2,
+        },
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([3]);
+      assert.strictEqual(page.consumed, 1);
+      assert.isTrue(page.truncated);
+      expect(callAt(0).path).toContain("page=1");
+      expect(callAt(0).path).not.toContain("updatedBefore");
+      expect(callAt(1).path).toContain("page=2");
+    }),
+  );
+
+  it.effect("fails at the pagination cap when native search has no matching pull request", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation(() =>
+        Effect.succeed(response([{ number: "malformed" }], { "x-total-count": "101" })),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const error = yield* api
+        .listPullRequests({
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "reviewer",
+          limit: 1,
+          query: "does-not-exist",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toContain("safe page limit");
+      assert.strictEqual(mockedRequest.mock.calls.length, 100);
+    }),
+  );
+
   it.effect("rescans capped Gitea pages to apply a raw-row cursor without gaps", () =>
     Effect.gen(function* () {
       mockedRequest

@@ -26,9 +26,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
-  // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
-  // narrowing correct at the service boundary without claiming host-side search.
-  search: false,
+  search: true,
   // Review summaries have no Gitea reaction route. Conversation rows carry reactions only for
   // target kinds the host supports; the provider must not claim the legacy all-remarks flag.
   reactions: false,
@@ -150,6 +148,7 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
+          ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         })
         .pipe(

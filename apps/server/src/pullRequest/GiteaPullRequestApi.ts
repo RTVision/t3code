@@ -37,12 +37,16 @@ import {
   reactionTarget,
 } from "./GiteaConversation.ts";
 import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import * as GiteaSearch from "./GiteaSearch.ts";
 import { dedupeChecks } from "./pullRequestChecks.ts";
 
 const PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 4;
 const MAX_PAGINATION_PAGES = 100;
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
+// Issue search rows do not carry branches or full state, so hydrate them without opening an
+// unbounded fan-out against the pull endpoint.
+const SEARCH_HYDRATION_CONCURRENCY = 8;
 
 const RawUser = Schema.Struct({
   id: Schema.optional(Schema.Int),
@@ -317,6 +321,23 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
   };
 }
 
+function matchesPullRequest(
+  value: GiteaPullRequest,
+  state: PullRequestListState,
+  involvement: PullRequestInvolvement,
+  viewer: string,
+): boolean {
+  if (state !== "all" && value.state !== state) return false;
+  if (involvement === "authored" && value.author?.login.toLowerCase() !== viewer.toLowerCase())
+    return false;
+  if (
+    involvement === "reviewing" &&
+    !value.reviewRequestLogins.some((login) => login.toLowerCase() === viewer.toLowerCase())
+  )
+    return false;
+  return true;
+}
+
 function query(
   path: string,
   params: Readonly<Record<string, string | number | undefined>>,
@@ -422,6 +443,7 @@ export class GiteaPullRequestApi extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly limit: number;
+      readonly query?: string;
       readonly cursor?: ProviderListCursor;
     }) => Effect.Effect<
       {
@@ -695,6 +717,102 @@ export const make = Effect.gen(function* () {
     return { rows, headers: response.headers } satisfies UnknownPage;
   });
 
+  const listSearchPullRequests = Effect.fn("GiteaPullRequestApi.listSearchPullRequests")(
+    function* (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly state: PullRequestListState;
+      readonly involvement: PullRequestInvolvement;
+      readonly viewer: string;
+      readonly limit: number;
+      readonly query: string;
+      readonly cursor?: ProviderListCursor;
+    }) {
+      const wanted = Math.max(1, input.limit);
+      const delivered = input.cursor?.delivered ?? 0;
+      let page = 1;
+      let path = GiteaSearch.giteaSearchPath({
+        repositoryPath: basePath(input.repository),
+        query: input.query,
+        state: input.state,
+        involvement: input.involvement,
+        viewer: input.viewer,
+        page,
+        limit: PAGE_SIZE,
+      });
+      let rowsSeen = 0;
+      let rowsSkipped = 0;
+      let consumed = 0;
+      const collected: Array<GiteaPullRequest> = [];
+
+      while (page <= MAX_PAGINATION_PAGES) {
+        const result = yield* readUnknownPage({
+          operation: "listPullRequests",
+          host: input.host,
+          repository: input.repository,
+          path,
+        });
+        rowsSeen += result.rows.length;
+        const toSkip = Math.min(Math.max(0, delivered - rowsSkipped), result.rows.length);
+        rowsSkipped += toSkip;
+        const pageRows = result.rows.slice(toSkip);
+        const next = nextPagePath({
+          path,
+          page,
+          pageRows: result.rows.length,
+          rowsSeen,
+          headers: result.headers,
+        });
+        const hydrated = yield* Effect.forEach(
+          pageRows,
+          (row) => {
+            const number = GiteaSearch.giteaSearchIssueNumber(row);
+            return number === null
+              ? Effect.succeed<GiteaPullRequest | null>(null)
+              : getPullRequest({
+                  host: input.host,
+                  repository: input.repository,
+                  number,
+                });
+          },
+          { concurrency: SEARCH_HYDRATION_CONCURRENCY },
+        );
+
+        for (const [index, pullRequest] of hydrated.entries()) {
+          consumed += 1;
+          if (pullRequest === null) continue;
+          if (!matchesPullRequest(pullRequest, input.state, input.involvement, input.viewer))
+            continue;
+          collected.push(pullRequest);
+          if (collected.length === wanted) {
+            // A raw-row offset can safely continue even when this is the last allowed page; a
+            // search that cannot fill its requested slice reaches the bounded failure below.
+            return {
+              items: collected,
+              truncated: index < pageRows.length - 1 || next !== null,
+              consumed,
+            };
+          }
+        }
+        if (next === null) break;
+        path = next;
+        page += 1;
+      }
+      if (page > MAX_PAGINATION_PAGES) {
+        return yield* new GiteaPullRequestApiError({
+          operation: "listPullRequests",
+          reason: "failed",
+          detail: "Gitea pull request pagination exceeded the safe page limit.",
+        });
+      }
+      return {
+        items: collected,
+        truncated: false,
+        consumed,
+      };
+    },
+  );
+
   const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
     (input: { operation: string; host: string; repository: string; path: string }) =>
       readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
@@ -742,6 +860,10 @@ export const make = Effect.gen(function* () {
   const listPullRequests: GiteaPullRequestApi["Service"]["listPullRequests"] = Effect.fn(
     "GiteaPullRequestApi.listPullRequests",
   )(function* (input) {
+    const search = input.query?.trim();
+    if (search !== undefined && search !== "") {
+      return yield* listSearchPullRequests({ ...input, query: search });
+    }
     const wanted = Math.max(1, input.limit);
     const delivered = input.cursor?.delivered ?? 0;
     const endpointState =
@@ -782,19 +904,7 @@ export const make = Effect.gen(function* () {
         if (Option.isNone(decoded)) continue;
         const pr = pullRequest(decoded.value);
         if (pr === null) continue;
-        if (input.state !== "all" && pr.state !== input.state) continue;
-        if (
-          input.involvement === "authored" &&
-          pr.author?.login.toLowerCase() !== input.viewer.toLowerCase()
-        )
-          continue;
-        if (
-          input.involvement === "reviewing" &&
-          !pr.reviewRequestLogins.some(
-            (login) => login.toLowerCase() === input.viewer.toLowerCase(),
-          )
-        )
-          continue;
+        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer)) continue;
         collected.push(pr);
         if (collected.length === wanted) {
           if (page === MAX_PAGINATION_PAGES && next !== null) {
