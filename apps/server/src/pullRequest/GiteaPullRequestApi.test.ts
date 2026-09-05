@@ -300,6 +300,51 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("decodes nullable tracking summaries when explicitly requested", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            rawPullRequest(7, {
+              review_decision: "approved",
+              checks_state: "passing",
+            }),
+          ),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            rawPullRequest(8, {
+              review_decision: null,
+              checks_state: null,
+            }),
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const pullRequest = yield* api.getPullRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        includeTracking: true,
+      });
+
+      expect(pullRequest.reviewDecision).toBe("approved");
+      expect(pullRequest.checksState).toBe("passing");
+      expect(callAt(0).path).toBe("/repos/acme/web/pulls/7?include_tracking=true");
+
+      const nullablePullRequest = yield* api.getPullRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 8,
+        includeTracking: true,
+      });
+      expect(nullablePullRequest.reviewDecision).toBeNull();
+      expect(nullablePullRequest.checksState).toBeNull();
+    }),
+  );
+
   it.effect("keeps merged and closed pull requests distinct and counts malformed rows", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -329,6 +374,7 @@ layer("GiteaPullRequestApi", (it) => {
         involvement: "all",
         viewer: "reviewer",
         limit: 2,
+        includeTracking: true,
       });
 
       expect(page.items.map((item) => [item.number, item.state])).toEqual([
@@ -339,6 +385,7 @@ layer("GiteaPullRequestApi", (it) => {
       assert.isFalse(page.truncated);
       expect(callAt(0).path).toContain("state=closed");
       expect(callAt(0).path).toContain("sort=recentupdate");
+      expect(callAt(0).path).toContain("include_tracking=true");
     }),
   );
 
@@ -432,6 +479,41 @@ layer("GiteaPullRequestApi", (it) => {
           .map(([request]) => request.path)
           .toSorted(),
       ).toEqual(["/repos/acme/web/pulls/7", "/repos/acme/web/pulls/8"]);
+    }),
+  );
+
+  it.effect("passes tracking opt-in through native search and pull hydration", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([{ number: 7 }])))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                review_decision: "review-required",
+                checks_state: "failing",
+              }),
+            ),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 1,
+        query: "needs review",
+        includeTracking: true,
+      });
+
+      expect(page.items[0]).toMatchObject({
+        reviewDecision: "review-required",
+        checksState: "failing",
+      });
+      expect(callAt(0).path).toContain("include_tracking=true");
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7?include_tracking=true");
     }),
   );
 

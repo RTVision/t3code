@@ -19,7 +19,9 @@ import type {
   PullRequestMergeability,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestChecksState,
   PullRequestReviewCommentDraft,
+  PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
@@ -91,6 +93,10 @@ const RawPullRequest = Schema.Struct({
   merged: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.Boolean)),
   draft: Schema.optional(Schema.Boolean),
+  review_decision: Schema.optional(
+    Schema.NullOr(Schema.Literals(["approved", "changes-requested", "review-required"])),
+  ),
+  checks_state: Schema.optional(Schema.NullOr(Schema.Literals(["passing", "failing", "pending"]))),
   auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
   auto_merge_method: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.String,
@@ -236,6 +242,8 @@ export interface GiteaPullRequest {
   readonly commentCount: number;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly reviewDecision?: PullRequestReviewDecision | null;
+  readonly checksState?: PullRequestChecksState | null;
 }
 
 export interface GiteaRepositoryAccess {
@@ -329,6 +337,8 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     ...(["merge", "squash", "rebase"].includes(value.auto_merge_method ?? "")
       ? { autoMergeMethod: value.auto_merge_method as PullRequestMergeMethod }
       : {}),
+    ...(value.review_decision === undefined ? {} : { reviewDecision: value.review_decision }),
+    ...(value.checks_state === undefined ? {} : { checksState: value.checks_state }),
   };
 }
 
@@ -465,6 +475,7 @@ export class GiteaPullRequestApi extends Context.Service<
       readonly limit: number;
       readonly query?: string;
       readonly cursor?: ProviderListCursor;
+      readonly includeTracking?: boolean;
     }) => Effect.Effect<
       {
         items: ReadonlyArray<GiteaPullRequest>;
@@ -477,6 +488,7 @@ export class GiteaPullRequestApi extends Context.Service<
       host: string;
       repository: string;
       number: number;
+      includeTracking?: boolean;
     }) => Effect.Effect<GiteaPullRequest, GiteaPullRequestApiError>;
     readonly getRepositoryAccess: (input: {
       host: string;
@@ -706,6 +718,7 @@ export const make = Effect.gen(function* () {
     host: string;
     repository: string;
     number: number;
+    includeTracking?: boolean;
   }) {
     const operation = "getPullRequest";
     const response = yield* request({
@@ -713,7 +726,9 @@ export const make = Effect.gen(function* () {
       host: input.host,
       repository: input.repository,
       method: "GET",
-      path: `${basePath(input.repository)}/pulls/${input.number}`,
+      path: query(`${basePath(input.repository)}/pulls/${input.number}`, {
+        include_tracking: input.includeTracking === true ? "true" : undefined,
+      }),
     });
     const raw = yield* decode(operation, RawPullRequest, response);
     const mapped = pullRequest(raw);
@@ -823,6 +838,7 @@ export const make = Effect.gen(function* () {
       readonly limit: number;
       readonly query: string;
       readonly cursor?: ProviderListCursor;
+      readonly includeTracking?: boolean;
     }) {
       const wanted = Math.max(1, input.limit);
       const delivered = input.cursor?.delivered ?? 0;
@@ -835,6 +851,7 @@ export const make = Effect.gen(function* () {
         viewer: input.viewer,
         page,
         limit: PAGE_SIZE,
+        includeTracking: input.includeTracking,
       });
       let rowsSeen = 0;
       let rowsSkipped = 0;
@@ -869,6 +886,7 @@ export const make = Effect.gen(function* () {
                   host: input.host,
                   repository: input.repository,
                   number,
+                  includeTracking: input.includeTracking,
                 });
           },
           { concurrency: SEARCH_HYDRATION_CONCURRENCY },
@@ -987,6 +1005,7 @@ export const make = Effect.gen(function* () {
       sort: "recentupdate",
       page,
       limit: PAGE_SIZE,
+      include_tracking: input.includeTracking === true ? "true" : undefined,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
     });
     let rowsSeen = 0;
