@@ -74,6 +74,75 @@ function callAt(index: number) {
 
 afterEach(() => mockedRequest.mockReset());
 
+it.effect("skips an invalid hydrated search pull request without dropping later valid rows", () =>
+  Effect.gen(function* () {
+    mockedRequest.mockImplementation((input) => {
+      if (input.path.startsWith("/repos/acme/web/issues/search?"))
+        return Effect.succeed(response([{ number: 1 }, { number: 2 }]));
+      if (input.path === "/repos/acme/web/pulls/1") return Effect.succeed(response({ number: 1 }));
+      if (input.path === "/repos/acme/web/pulls/2")
+        return Effect.succeed(response(rawPullRequest(2)));
+      return Effect.die(`unexpected request: ${input.path}`);
+    });
+    const api = yield* GiteaPullRequestApi.make.pipe(
+      Effect.provideService(
+        GiteaApi.GiteaApi,
+        GiteaApi.GiteaApi.of({
+          baseUrl: Option.some("https://forge.example.test/gitea"),
+          sshHosts: ["work-forge"],
+          request: mockedRequest,
+          probeAuth: Effect.die("not used"),
+        }),
+      ),
+    );
+    const page = yield* api.listPullRequests({
+      host: "forge.example.test",
+      repository: "acme/web",
+      state: "open",
+      involvement: "all",
+      viewer: "reader",
+      limit: 10,
+      query: "bug",
+    });
+    expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([2]);
+  }),
+);
+
+it.effect("keeps a search hydration transport failure fatal", () =>
+  Effect.gen(function* () {
+    mockedRequest.mockImplementation((input) => {
+      if (input.path.startsWith("/repos/acme/web/issues/search?"))
+        return Effect.succeed(response([{ number: 1 }]));
+      return Effect.fail(
+        new GiteaApi.GiteaApiError({ reason: "unauthenticated", detail: "expired" }),
+      );
+    });
+    const api = yield* GiteaPullRequestApi.make.pipe(
+      Effect.provideService(
+        GiteaApi.GiteaApi,
+        GiteaApi.GiteaApi.of({
+          baseUrl: Option.some("https://forge.example.test/gitea"),
+          sshHosts: ["work-forge"],
+          request: mockedRequest,
+          probeAuth: Effect.die("not used"),
+        }),
+      ),
+    );
+    const error = yield* api
+      .listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reader",
+        limit: 10,
+        query: "bug",
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.reason, "unauthenticated");
+  }),
+);
+
 layer("GiteaPullRequestApi", (it) => {
   it.effect("validates the requested host before making an HTTP request", () =>
     Effect.gen(function* () {

@@ -706,6 +706,30 @@ export const make = Effect.gen(function* () {
     return mapped;
   });
 
+  const getSearchPullRequest = Effect.fn("GiteaPullRequestApi.getSearchPullRequest")(
+    function* (input: {
+      host: string;
+      repository: string;
+      number: number;
+      includeTracking?: boolean;
+    }) {
+      const response = yield* request({
+        operation: "getPullRequest",
+        host: input.host,
+        repository: input.repository,
+        method: "GET",
+        path: query(`${basePath(input.repository)}/pulls/${input.number}`, {
+          include_tracking: input.includeTracking ? "true" : undefined,
+        }),
+      });
+      const raw = yield* decode("getPullRequest", RawPullRequest, response).pipe(Effect.option);
+      return Option.match(raw, {
+        onNone: () => null,
+        onSome: pullRequest,
+      });
+    },
+  );
+
   const readUnknownPage = Effect.fn("GiteaPullRequestApi.readUnknownPage")(function* (input: {
     operation: string;
     host: string;
@@ -769,7 +793,7 @@ export const make = Effect.gen(function* () {
             const number = GiteaSearch.giteaSearchIssueNumber(row);
             return number === null
               ? Effect.succeed<GiteaPullRequest | null>(null)
-              : getPullRequest({
+              : getSearchPullRequest({
                   host: input.host,
                   repository: input.repository,
                   number,
