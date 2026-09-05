@@ -1169,9 +1169,35 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const pendingTunnelEntries = new Map<
     string,
-    Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
+    {
+      readonly result: Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>;
+      readonly settled: Deferred.Deferred<void>;
+    }
   >();
+  type RemoteServerLease = { readonly stateKey: string; released: boolean };
+  const remoteServerLeaseCounts = new Map<string, number>();
   const authSecrets = new Map<string, string>();
+
+  const acquireRemoteServerLease = (target: DesktopSshEnvironmentTarget): RemoteServerLease => {
+    const stateKey = remoteStateKey(target);
+    remoteServerLeaseCounts.set(stateKey, (remoteServerLeaseCounts.get(stateKey) ?? 0) + 1);
+    return { stateKey, released: false };
+  };
+
+  const releaseRemoteServerLease = (lease: RemoteServerLease) =>
+    Effect.sync(() => {
+      if (lease.released) return;
+      lease.released = true;
+      const count = remoteServerLeaseCounts.get(lease.stateKey) ?? 0;
+      if (count <= 1) remoteServerLeaseCounts.delete(lease.stateKey);
+      else remoteServerLeaseCounts.set(lease.stateKey, count - 1);
+    });
+
+  const hasRemoteServerLease = (target: DesktopSshEnvironmentTarget) =>
+    (remoteServerLeaseCounts.get(remoteStateKey(target)) ?? 0) > 0;
+
+  const hasOtherRemoteServerLease = (lease: RemoteServerLease) =>
+    (remoteServerLeaseCounts.get(lease.stateKey) ?? 0) > (lease.released ? 0 : 1);
 
   const hasTunnelForRemoteServer = (target: DesktopSshEnvironmentTarget) => {
     const stateKey = remoteStateKey(target);
@@ -1204,8 +1230,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     if (!pending) {
       return;
     }
-    pendingTunnelEntries.delete(key);
-    yield* Deferred.fail(pending, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
+    yield* Deferred.fail(pending.result, makeSshTunnelCancelledError(target)).pipe(Effect.ignore);
+    yield* Deferred.await(pending.settled);
   });
 
   yield* Scope.addFinalizer(
@@ -1333,6 +1359,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     readonly key: string;
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly runner?: RemoteT3RunnerOptions;
+    readonly remoteServerLease: RemoteServerLease;
   }): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logDebug("ssh.environment.tunnel.create.start", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1399,7 +1426,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           remotePort: tunnelEntry.remotePort,
         });
         tunnels.delete(tunnelEntry.key);
-        const shouldStopRemoteServer = !hasTunnelForRemoteServer(tunnelEntry.target);
+        const shouldStopRemoteServer =
+          !hasTunnelForRemoteServer(tunnelEntry.target) &&
+          !hasOtherRemoteServerLease(input.remoteServerLease);
         const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
         yield* Effect.all(
           [
@@ -1438,7 +1467,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           localPort: tunnelEntry.localPort,
           remotePort: tunnelEntry.remotePort,
         });
-      }).pipe(Effect.ignore),
+      }).pipe(Effect.ensuring(releaseRemoteServerLease(input.remoteServerLease)), Effect.ignore),
     );
     yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1493,32 +1522,46 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         ...sshTargetLogFields(resolvedTarget),
         key,
       });
-      return yield* Deferred.await(pending);
+      return yield* Deferred.await(pending.result);
     }
 
-    const deferred = yield* Deferred.make<SshTunnelEntry, SshEnvironmentEffectError>();
-    pendingTunnelEntries.set(key, deferred);
+    const result = yield* Deferred.make<SshTunnelEntry, SshEnvironmentEffectError>();
+    const settled = yield* Deferred.make<void>();
+    const pendingEntry = { result, settled };
+    pendingTunnelEntries.set(key, pendingEntry);
+    const remoteServerLease = acquireRemoteServerLease(resolvedTarget);
 
-    return yield* createTunnelEntry({
-      key,
-      resolvedTarget,
-      ...(runner === undefined ? {} : { runner }),
-    }).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("ssh.environment.tunnel.create.failed", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-          cause,
-        }),
+    yield* Effect.forkIn(
+      createTunnelEntry({
+        key,
+        resolvedTarget,
+        remoteServerLease,
+        ...(runner === undefined ? {} : { runner }),
+      }).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("ssh.environment.tunnel.create.failed", {
+            ...sshTargetLogFields(resolvedTarget),
+            key,
+            cause,
+          }),
+        ),
+        Effect.onExit((exit) =>
+          (Exit.isSuccess(exit) ? Effect.void : releaseRemoteServerLease(remoteServerLease)).pipe(
+            Effect.andThen(Deferred.done(result, exit)),
+            Effect.andThen(Deferred.succeed(settled, undefined)),
+            Effect.andThen(
+              Effect.sync(() => {
+                if (pendingTunnelEntries.get(key) === pendingEntry) {
+                  pendingTunnelEntries.delete(key);
+                }
+              }),
+            ),
+          ),
+        ),
       ),
-      Effect.onExit((exit) =>
-        Effect.sync(() => {
-          if (pendingTunnelEntries.get(key) === deferred) {
-            pendingTunnelEntries.delete(key);
-          }
-        }).pipe(Effect.andThen(Deferred.done(deferred, exit))),
-      ),
+      managerScope,
     );
+    return yield* Deferred.await(result);
   });
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
@@ -1598,7 +1641,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
-    const entry = tunnels.get(key) ?? null;
+    let entry = tunnels.get(key) ?? null;
+    let closedTunnel = false;
     yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
       ...sshTargetLogFields(resolvedTarget),
       key,
@@ -1607,9 +1651,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
     if (entry !== null) {
       yield* closeTunnelEntry(entry);
+      closedTunnel = true;
     }
     yield* cancelPendingTunnelEntry(key, resolvedTarget);
-    if (entry === null && !hasTunnelForRemoteServer(resolvedTarget)) {
+    entry = tunnels.get(key) ?? null;
+    if (entry !== null) {
+      yield* closeTunnelEntry(entry);
+      closedTunnel = true;
+    }
+    if (
+      !closedTunnel &&
+      !hasTunnelForRemoteServer(resolvedTarget) &&
+      !hasRemoteServerLease(resolvedTarget)
+    ) {
       yield* runWithSshAuth({
         key,
         target: resolvedTarget,
