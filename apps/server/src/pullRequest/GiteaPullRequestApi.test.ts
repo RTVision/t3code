@@ -352,6 +352,41 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("expands a commit diff from that commit and its first parent", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((request) => {
+        if (request.path.endsWith("/pulls/7")) {
+          return Effect.succeed(response(rawPullRequest(7)));
+        }
+        if (request.path.includes("/git/commits/commit-sha")) {
+          return Effect.succeed(response({ sha: "commit-sha", parents: [{ sha: "parent-sha" }] }));
+        }
+        if (request.path.includes("ref=parent-sha")) {
+          return Effect.succeed(response({ type: "file", encoding: "base64", content: "b2xk" }));
+        }
+        return Effect.succeed(response({ type: "file", encoding: "base64", content: "bmV3" }));
+      });
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const files = yield* api.getDiffFileContents({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        commit: "commit-sha",
+        oldPath: "src/file.ts",
+        newPath: "src/file.ts",
+        changeType: "change",
+      });
+
+      expect(files).toEqual({ oldContents: "old", newContents: "new" });
+      expect(mockedRequest.mock.calls.map(([request]) => request.path)).toEqual(
+        expect.arrayContaining([
+          "/repos/acme/web/contents/src/file.ts?ref=parent-sha",
+          "/repos/acme/web/contents/src/file.ts?ref=commit-sha",
+        ]),
+      );
+    }),
+  );
+
   it.effect("preserves existing labels when adding another", () =>
     Effect.gen(function* () {
       mockedRequest

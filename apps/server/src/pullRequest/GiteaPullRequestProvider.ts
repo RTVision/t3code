@@ -12,8 +12,8 @@ import {
 } from "./PullRequestProvider.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
-  diff: false,
-  comment: false,
+  diff: true,
+  comment: true,
   actions: [],
   mergeMethods: [],
   // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
@@ -23,16 +23,16 @@ const CAPABILITIES: PullRequestCapabilities = {
   // the target API. The one capability covers every displayed remark, so partial support stays off.
   reactions: false,
   review: {
-    inlineComment: false,
-    reply: false,
-    resolve: false,
-    verdicts: [],
+    inlineComment: true,
+    reply: true,
+    resolve: true,
+    verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: false, listCandidates: false },
+  reviewers: { request: true, listCandidates: true },
   // Gitea can edit the pull request and ordinary issue comments. It has no edit route for a
   // review comment, and this capability applies to every conversation remark.
-  edit: { changeRequest: false, comment: false },
-  labels: false,
+  edit: { changeRequest: true, comment: false },
+  labels: true,
 };
 
 export function giteaProviderFailure(
@@ -239,7 +239,17 @@ export const make = Effect.gen(function* () {
         ),
 
     getDiffFileContents: (input) =>
-      api.getDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+      api
+        .getDiffFileContents({
+          host: input.host,
+          repository: input.repository,
+          number: input.number,
+          oldPath: input.oldPath,
+          newPath: input.newPath,
+          changeType: input.changeType,
+          ...(input.commit === undefined ? {} : { commit: input.commit }),
+        })
+        .pipe(Effect.mapError(fail("getDiffFileContents"))),
 
     runAction: (input) => api.runAction(input).pipe(Effect.mapError(fail("runAction"))),
 

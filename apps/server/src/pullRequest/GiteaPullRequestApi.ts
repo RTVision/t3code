@@ -121,6 +121,13 @@ const RawReviewComment = Schema.Struct({
 });
 const RawCommit = Schema.Struct({
   sha: Schema.String,
+  parents: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        sha: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   created: Schema.optional(Schema.String),
   author: Schema.optional(Schema.NullOr(RawUser)),
   committer: Schema.optional(Schema.NullOr(RawUser)),
@@ -305,21 +312,6 @@ function repositoryPath(repository: string): string | null {
   return `/repos/${parts.map(encodeURIComponent).join("/")}`;
 }
 
-const GITEA_REACTION_CONTENT: Readonly<Record<string, string>> = {
-  "thumbs-up": "+1",
-  "thumbs-down": "-1",
-  laugh: "laugh",
-  hooray: "hooray",
-  confused: "confused",
-  heart: "heart",
-  rocket: "rocket",
-  eyes: "eyes",
-};
-
-function reactionContent(content: string): string {
-  return GITEA_REACTION_CONTENT[content] ?? content;
-}
-
 export class GiteaPullRequestApi extends Context.Service<
   GiteaPullRequestApi,
   {
@@ -385,6 +377,7 @@ export class GiteaPullRequestApi extends Context.Service<
       host: string;
       repository: string;
       number: number;
+      commit?: string;
       oldPath: string;
       newPath: string;
       changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
@@ -713,16 +706,24 @@ export const make = Effect.gen(function* () {
     repository: string;
     number: number;
   }) {
-    const reviewRows = yield* readUnknownArray({
-      operation: "listReviews",
-      ...input,
-      path: query(`${basePath(input.repository)}/pulls/${input.number}/reviews`, {
-        page: 1,
-        limit: PAGE_SIZE,
-      }),
-    });
+    const reviewRows: Array<unknown> = [];
+    let reviewsTruncated = false;
+    for (let page = 1; page <= CONVERSATION_PAGES; page += 1) {
+      const rows = yield* readUnknownArray({
+        operation: "listReviews",
+        ...input,
+        path: query(`${basePath(input.repository)}/pulls/${input.number}/reviews`, {
+          page,
+          limit: PAGE_SIZE,
+        }),
+      });
+      reviewRows.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      reviewsTruncated = page === CONVERSATION_PAGES;
+    }
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
+    let commentsTruncated = reviewsTruncated;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -747,6 +748,7 @@ export const make = Effect.gen(function* () {
           { page: 1, limit: PAGE_SIZE },
         ),
       });
+      if (codeRows.length >= PAGE_SIZE) commentsTruncated = true;
       for (const codeRow of codeRows) {
         const decoded = decodeReviewComment(codeRow);
         if (Option.isNone(decoded)) continue;
@@ -788,7 +790,7 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    return { comments, threads, truncated: reviewRows.length >= PAGE_SIZE };
+    return { comments, threads, truncated: commentsTruncated };
   });
 
   const listCommits = Effect.fn("GiteaPullRequestApi.listCommits")(function* (input: {
@@ -796,14 +798,19 @@ export const make = Effect.gen(function* () {
     repository: string;
     number: number;
   }) {
-    const rows = yield* readUnknownArray({
-      operation: "listCommits",
-      ...input,
-      path: query(`${basePath(input.repository)}/pulls/${input.number}/commits`, {
-        page: 1,
-        limit: PAGE_SIZE,
-      }),
-    });
+    const rows: Array<unknown> = [];
+    for (let page = 1; ; page += 1) {
+      const pageRows = yield* readUnknownArray({
+        operation: "listCommits",
+        ...input,
+        path: query(`${basePath(input.repository)}/pulls/${input.number}/commits`, {
+          page,
+          limit: PAGE_SIZE,
+        }),
+      });
+      rows.push(...pageRows);
+      if (pageRows.length < PAGE_SIZE) break;
+    }
     return rows.flatMap((row): ReadonlyArray<PullRequestCommit> => {
       const decoded = decodeCommit(row);
       if (Option.isNone(decoded) || !decoded.value.sha.trim()) return [];
@@ -948,23 +955,40 @@ export const make = Effect.gen(function* () {
         maxBytes: DIFF_MAX_BYTES,
       }).pipe(Effect.map((response) => ({ patch: response.body, truncated: response.truncated }))),
     getDiffFileContents: (input) =>
-      getPullRequest(input).pipe(
-        Effect.flatMap((pr) =>
-          Effect.all(
-            {
-              oldContents:
-                input.changeType === "new"
-                  ? Effect.succeed("")
-                  : fileContents({ ...input, path: input.oldPath, ref: pr.baseSha }),
-              newContents:
-                input.changeType === "deleted"
-                  ? Effect.succeed("")
-                  : fileContents({ ...input, path: input.newPath, ref: pr.headSha }),
-            },
-            { concurrency: 2 },
-          ),
-        ),
-      ),
+      Effect.gen(function* () {
+        const pr = yield* getPullRequest(input);
+        let oldRef = pr.baseSha;
+        let newRef = pr.headSha;
+        if (input.commit !== undefined) {
+          const operation = "getDiffFileContents";
+          const response = yield* request({
+            operation,
+            host: input.host,
+            repository: input.repository,
+            method: "GET",
+            path: query(
+              `${basePath(input.repository)}/git/commits/${encodeURIComponent(input.commit)}`,
+              { stat: "false", verification: "false", files: "false" },
+            ),
+          });
+          const commit = yield* decode(operation, RawCommit, response);
+          newRef = commit.sha;
+          oldRef = commit.parents?.[0]?.sha?.trim() ?? "";
+        }
+        return yield* Effect.all(
+          {
+            oldContents:
+              input.changeType === "new" || oldRef === ""
+                ? Effect.succeed("")
+                : fileContents({ ...input, path: input.oldPath, ref: oldRef }),
+            newContents:
+              input.changeType === "deleted"
+                ? Effect.succeed("")
+                : fileContents({ ...input, path: input.newPath, ref: newRef }),
+          },
+          { concurrency: 2 },
+        );
+      }),
     runAction: (input) => {
       const path = `${basePath(input.repository)}/pulls/${input.number}`;
       switch (input.action) {
@@ -1220,20 +1244,14 @@ export const make = Effect.gen(function* () {
         method: "POST",
         path: `${basePath(input.repository)}/pulls/comments/${encodeURIComponent(input.threadId)}/${input.resolved ? "resolve" : "unresolve"}`,
       }),
-    setReaction: (input) => {
-      const path =
-        input.subjectId === undefined
-          ? `${basePath(input.repository)}/issues/${input.number}/reactions`
-          : `${basePath(input.repository)}/issues/comments/${input.subjectId.replace(/^issue:/u, "")}/reactions`;
-      return write({
-        operation: "setReaction",
-        host: input.host,
-        repository: input.repository,
-        method: input.reacted ? "POST" : "DELETE",
-        path,
-        body: { content: reactionContent(input.content) },
-      });
-    },
+    setReaction: () =>
+      Effect.fail(
+        new GiteaPullRequestApiError({
+          operation: "setReaction",
+          reason: "failed",
+          detail: "Gitea cannot apply reactions consistently to pull request review comments.",
+        }),
+      ),
   });
 });
 
