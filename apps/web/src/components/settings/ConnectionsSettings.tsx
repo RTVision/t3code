@@ -2991,6 +2991,41 @@ export function ConnectionsSettings() {
             </Select>
           }
         />
+        {desktopWslState.enabled && !desktopWslState.wslOnly ? (
+          <SettingsRow
+            title="SSH credentials"
+            description="Choose where SSH reads your keys, agent, and host configuration. T3 Code restarts when this changes."
+            className="bg-muted/20 pl-7 sm:pl-8"
+            control={
+              <Select
+                value={desktopWslState.sshRunner ?? "windows"}
+                onValueChange={(value) => {
+                  if (!desktopBridge || (value !== "windows" && value !== "wsl")) return;
+                  void applyWslSettingChange(() => desktopBridge.setSshRunner(value));
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-56"
+                  aria-label="SSH credentials"
+                  disabled={isUpdatingWslBackend}
+                >
+                  <SelectValue>
+                    {desktopWslState.sshRunner === "wsl" ? "WSL" : "Windows OpenSSH"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="windows">
+                    Windows OpenSSH
+                  </SelectItem>
+                  <SelectItem hideIndicator value="wsl">
+                    WSL
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
         {desktopWslState.enabled ? (
           <SettingsRow
             title="WSL only"

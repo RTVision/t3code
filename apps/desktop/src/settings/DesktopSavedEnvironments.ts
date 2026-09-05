@@ -1,4 +1,8 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import {
+  DesktopSshRunnerSchema,
+  EnvironmentId,
+  type PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -37,6 +41,7 @@ interface SavedEnvironmentRegistryStorageDocument {
 }
 
 const DesktopSshTargetSchema = Schema.Struct({
+  runner: Schema.optionalKey(DesktopSshRunnerSchema),
   alias: Schema.String,
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),

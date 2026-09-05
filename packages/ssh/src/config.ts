@@ -7,6 +7,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
+import { SshRunner } from "./runner.ts";
+
 import { SshHostDiscoveryError } from "./errors.ts";
 
 const NO_HOSTS: ReadonlyArray<string> = [] as const;
@@ -207,7 +209,7 @@ const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
   return parseKnownHostsHostnames(yield* fs.readFileString(filePath));
 });
 
-export const discoverSshHosts = Effect.fnUntraced(
+const discoverNativeSshHosts = Effect.fnUntraced(
   function* (input: { readonly homeDir?: string }) {
     const path = yield* Path.Path;
     const env = yield* Config.all({
@@ -267,3 +269,24 @@ export const discoverSshHosts = Effect.fnUntraced(
       }),
   ),
 );
+
+export const discoverSshHosts = Effect.fn("ssh/config.discoverSshHosts")(function* (input: {
+  readonly homeDir?: string;
+}) {
+  const runner = yield* SshRunner;
+  if (runner.kind === "native") return yield* discoverNativeSshHosts(input);
+  const fs = yield* FileSystem.FileSystem;
+  const toWindows = (path: string) =>
+    `\\\\wsl.localhost\\${runner.distro}${path.replaceAll("/", "\\")}`;
+  const distroFileSystem = FileSystem.FileSystem.of({
+    ...fs,
+    exists: (path) => fs.exists(toWindows(path)),
+    readFileString: (path, encoding) => fs.readFileString(toWindows(path), encoding),
+    readDirectory: (path) => fs.readDirectory(toWindows(path)),
+  });
+  // Preserve POSIX semantics for absolute Includes, globs, and nested config files.
+  return yield* discoverNativeSshHosts({ homeDir: runner.homeDir }).pipe(
+    Effect.provideService(FileSystem.FileSystem, distroFileSystem),
+    Effect.provide(Path.layer),
+  );
+});

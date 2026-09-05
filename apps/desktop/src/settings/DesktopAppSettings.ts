@@ -48,6 +48,7 @@ export interface DesktopSettings {
   // this requires a desktop restart because the pool's primary spec is
   // chosen once at layer init.
   readonly wslOnly: boolean;
+  readonly sshRunner: "windows" | "wsl";
 }
 
 export interface DesktopSettingsChange {
@@ -84,6 +85,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslBackendEnabled: false,
   wslDistro: null,
   wslOnly: false,
+  sshRunner: "windows",
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -109,6 +111,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  sshRunner: Schema.optionalKey(Schema.Literals(["windows", "wsl"])),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -171,6 +174,9 @@ export class DesktopAppSettings extends Context.Service<
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslDistro: (
       distro: string | null,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setSshRunner: (
+      runner: "windows" | "wsl",
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslOnly: (
       enabled: boolean,
@@ -238,6 +244,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    sshRunner: parsed.sshRunner ?? "windows",
   };
 }
 
@@ -276,6 +283,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslDistro !== defaults.wslDistro) {
     document.wslDistro = settings.wslDistro;
+  }
+  if (settings.sshRunner !== defaults.sshRunner) {
+    document.sshRunner = settings.sshRunner;
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
@@ -359,6 +369,10 @@ function setWslDistro(settings: DesktopSettings, distro: string | null): Desktop
         ...settings,
         wslDistro: normalized,
       };
+}
+
+function setSshRunner(settings: DesktopSettings, sshRunner: "windows" | "wsl"): DesktopSettings {
+  return settings.sshRunner === sshRunner ? settings : { ...settings, sshRunner };
 }
 
 function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSettings {
@@ -540,6 +554,7 @@ export const make = Effect.gen(function* () {
           attributes: { distro: distro ?? null },
         }),
       ),
+    setSshRunner: (runner) => persist((settings) => setSshRunner(settings, runner)),
     setWslOnly: (enabled) =>
       persist((settings) => setWslOnly(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslOnly", { attributes: { enabled } }),
@@ -584,6 +599,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
+        setSshRunner: (runner) => update((settings) => setSshRunner(settings, runner)),
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),

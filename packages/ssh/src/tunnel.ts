@@ -20,7 +20,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
+
+import { forwardWslTunnel } from "./wslTunnel.ts";
+import { describeSshRunner, SshRunner, spawnSsh } from "./runner.ts";
 
 import {
   buildSshChildEnvironment,
@@ -979,6 +982,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
+  const sshRunner = yield* SshRunner;
+  const runnerDescription = yield* describeSshRunner;
+  yield* forwardWslTunnel(input.localPort);
   const args = [
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
@@ -998,12 +1004,11 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-n",
     "-N",
     "-L",
-    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    `${sshRunner.kind === "wsl" ? `${sshRunner.tunnelHost}:` : ""}${input.localPort}:127.0.0.1:${input.remotePort}`,
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
@@ -1013,32 +1018,21 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     remoteServerKind: input.remoteServerKind,
     httpBaseUrl: input.httpBaseUrl,
   });
-  const child = yield* spawner
-    .spawn(
-      ChildProcess.make(sshCommand, args, {
-        env: childEnvironment,
-        extendEnv: true,
-        stdin: {
-          stream: Stream.empty,
-          endOnDone: true,
-        },
-      }),
-    )
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new SshCommandError({
-            command: tunnelCommand,
-            exitCode: null,
-            stderr: "",
-            message:
-              cause instanceof Error
-                ? cause.message
-                : `Failed to spawn SSH tunnel for ${input.resolvedTarget.alias}.`,
-            cause,
-          }),
-      ),
-    );
+  const child = yield* spawnSsh(args, { env: childEnvironment, stdin: Stream.empty }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SshCommandError({
+          command: tunnelCommand,
+          exitCode: null,
+          stderr: "",
+          message:
+            cause instanceof Error
+              ? cause.message
+              : `Failed to spawn SSH tunnel for ${input.resolvedTarget.alias}.`,
+          cause,
+        }),
+    ),
+  );
   yield* Effect.logDebug("ssh.tunnel.spawn.succeeded", {
     ...sshTargetLogFields(input.resolvedTarget),
     command: tunnelCommand,
@@ -1080,10 +1074,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         command: tunnelCommand,
         exitCode,
         stderr,
-        message: normalizeSshErrorMessage(
+        message: `${runnerDescription === "OpenSSH" ? "" : `via ${runnerDescription}: `}${normalizeSshErrorMessage(
           stderr,
           `SSH tunnel exited unexpectedly for ${input.resolvedTarget.alias} (exit ${exitCode}).`,
-        ),
+        )}`,
       });
       return Effect.logWarning("ssh.tunnel.process.exited", {
         ...sshTargetLogFields(input.resolvedTarget),
@@ -1383,6 +1377,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
+    const sshRunnerService = yield* SshRunner;
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystemService = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -1419,6 +1414,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                     interactiveAuth: true,
                   },
             ).pipe(
+              Effect.provideService(SshRunner, sshRunnerService),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
               Effect.provideService(FileSystem.FileSystem, fileSystemService),
               Effect.provideService(Path.Path, pathService),
@@ -1530,6 +1526,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,
+      ...(target.runner === undefined ? {} : { runner: target.runner }),
       ...(target.username !== null ? { username: target.username } : {}),
       ...(target.port !== null ? { port: target.port } : {}),
     };
@@ -1586,6 +1583,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,
+      ...(target.runner === undefined ? {} : { runner: target.runner }),
       ...(target.username !== null ? { username: target.username } : {}),
       ...(target.port !== null ? { port: target.port } : {}),
     };

@@ -3,6 +3,10 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SshRunner } from "@t3tools/ssh/runner";
+import { matchesSshRunner, sshRunnerIdentity } from "./DesktopSshRunner.ts";
+
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { resolveSshTarget } from "@t3tools/ssh/command";
@@ -43,7 +47,7 @@ export type DesktopSshEnvironmentOperationError =
   | SshPasswordPromptError
   | NetService.NetError;
 
-export type DesktopSshEnvironmentDiscoverError = SshHostDiscoveryError;
+export type DesktopSshEnvironmentDiscoverError = SshHostDiscoveryError | SshCommandError;
 
 export type DesktopSshEnvironmentError =
   | DesktopSshEnvironmentDiscoverError
@@ -71,6 +75,7 @@ export class DesktopSshEnvironment extends Context.Service<
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliPackageSpec?: () => string;
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
+  readonly resolveSshRunner?: Effect.Effect<SshRunner, SshCommandError>;
 }
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
@@ -128,44 +133,80 @@ const makePasswordPrompt = (
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
 });
 
-export const make = Effect.gen(function* () {
-  const manager = yield* SshTunnel.SshEnvironmentManager;
-  const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-  const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
-  const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
+  Effect.gen(function* () {
+    const manager = yield* SshTunnel.SshEnvironmentManager;
+    const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+    const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
+    const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+    const platform = yield* HostProcessPlatform;
+    const resolveRunner = options.resolveSshRunner ?? Effect.succeed({ kind: "native" } as const);
+    const withRunner = Effect.fn("desktop.ssh.withRunner")(function* <A, E, R>(
+      operation: (runner: SshRunner) => Effect.Effect<A, E, R>,
+    ) {
+      const runner = yield* resolveRunner;
+      return yield* operation(runner).pipe(Effect.provideService(SshRunner, runner));
+    });
+    const prepareTarget = (
+      target: DesktopSshEnvironmentTarget,
+      runner: SshRunner,
+      isNew: boolean,
+    ): Effect.Effect<DesktopSshEnvironmentTarget, SshCommandError> => {
+      const identity = sshRunnerIdentity(runner, platform);
+      if ((target.runner !== undefined || !isNew) && !matchesSshRunner(target.runner, identity)) {
+        return Effect.fail(
+          new SshCommandError({
+            command: ["ssh"],
+            exitCode: null,
+            stderr: "",
+            message:
+              "This saved SSH environment uses a different SSH runner or WSL distro. Restore its runner in Settings → Connections, or remove and add the environment again.",
+          }),
+        );
+      }
+      return Effect.succeed({ ...target, ...(identity === undefined ? {} : { runner: identity }) });
+    };
 
-  return DesktopSshEnvironment.of({
-    discoverHosts: (input) =>
-      discoverDesktopSshHostsEffect(input).pipe(
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.discoverHosts"),
-      ),
-    resolveHost: (alias) =>
-      resolveSshTarget(alias.trim()).pipe(
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.resolveHost"),
-      ),
-    ensureEnvironment: (target, ensureOptions) =>
-      manager
-        .ensureEnvironment(target, ensureOptions)
-        .pipe(
+    return DesktopSshEnvironment.of({
+      discoverHosts: (input) =>
+        withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.discoverHosts"),
+        ),
+      resolveHost: (alias) =>
+        withRunner((runner) =>
+          resolveSshTarget(alias.trim()).pipe(
+            Effect.map((target) => {
+              const identity = sshRunnerIdentity(runner, platform);
+              return { ...target, ...(identity === undefined ? {} : { runner: identity }) };
+            }),
+          ),
+        ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost")),
+      ensureEnvironment: (target, ensureOptions) =>
+        withRunner((runner) =>
+          prepareTarget(target, runner, ensureOptions?.issuePairingToken === true).pipe(
+            Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions)),
+          ),
+        ).pipe(
           Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.ensureEnvironment"),
         ),
-    disconnectEnvironment: (target) =>
-      manager
-        .disconnectEnvironment(target)
-        .pipe(
+      disconnectEnvironment: (target) =>
+        withRunner((runner) =>
+          prepareTarget(target, runner, false).pipe(
+            Effect.flatMap((resolved) => manager.disconnectEnvironment(resolved)),
+          ),
+        ).pipe(
           Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
           Effect.withSpan("desktop.ssh.disconnectEnvironment"),
         ),
+    });
   });
-});
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
-  Layer.effect(DesktopSshEnvironment, make).pipe(
+  Layer.effect(DesktopSshEnvironment, make(options)).pipe(
     Layer.provide(
       SshTunnel.SshEnvironmentManager.layer({
         ...(options.resolveCliPackageSpec === undefined
