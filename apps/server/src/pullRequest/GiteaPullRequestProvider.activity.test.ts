@@ -15,7 +15,7 @@ const response = (value: unknown) => ({
   headers: {},
 });
 const failure = () =>
-  Effect.fail(new GiteaApi.GiteaApiError({ reason: "failed", detail: "offline" }));
+  Effect.fail(new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }));
 
 const pull = {
   number: 7,
@@ -50,11 +50,11 @@ function route(viewerFails: boolean, reactionsFail: boolean) {
       return viewerFails ? failure() : Effect.succeed(response({ login: "reader" }));
     if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
     if (input.path === "/repos/acme/web/pulls/7") return Effect.succeed(response(pull));
-    if (input.path === "/repos/acme/web/issues/7/comments?page=1&limit=100")
+    if (input.path === "/repos/acme/web/issues/7/comments?page=1&limit=50")
       return Effect.succeed(
         response([{ id: 1, body: "ordinary", created_at: "2026-01-01T00:00:00Z" }]),
       );
-    if (input.path === "/repos/acme/web/pulls/7/reviews?page=1&limit=100")
+    if (input.path === "/repos/acme/web/pulls/7/reviews?page=1&limit=50")
       return Effect.succeed(
         response([{ id: 2, body: "summary", submitted_at: "2026-01-01T00:00:00Z" }]),
       );
@@ -64,7 +64,7 @@ function route(viewerFails: boolean, reactionsFail: boolean) {
           { id: 3, body: "inline", created_at: "2026-01-01T00:00:00Z", path: "a.ts", position: 1 },
         ]),
       );
-    if (input.path === "/repos/acme/web/pulls/7/commits?page=1&limit=100")
+    if (input.path === "/repos/acme/web/pulls/7/commits?page=1&limit=50")
       return Effect.succeed(response([]));
     if (input.path.includes("/reactions?"))
       return reactionsFail ? failure() : Effect.succeed(response([]));

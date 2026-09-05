@@ -223,52 +223,60 @@ export const make = Effect.gen(function* () {
             .listReviews(input)
             .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
           api.listCommits(input).pipe(Effect.orElseSucceed(() => [])),
-          api.getViewer(),
+          api.getViewer().pipe(Effect.orElseSucceed(() => "")),
         ],
         { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.flatMap(([pullRequest, issueComments, reviews, commits, viewer]) =>
-          api
-            .listConversationReactions({
-              ...input,
-              viewer,
-              subjectIds: [...issueComments.comments, ...reviews.comments].map(
-                (comment) => comment.id,
-              ),
-            })
-            .pipe(
-              Effect.mapError(fail("getChangeRequestActivity")),
-              Effect.map((reactions): ProviderChangeRequestActivity => ({
-                author: pullRequest.author,
-                reviewers: pullRequest.reviewers,
-                comments: [...issueComments.comments, ...reviews.comments]
-                  .map((comment) => {
-                    const remarkReactions = reactions.bySubjectId.get(comment.id);
-                    return remarkReactions === undefined
-                      ? comment
-                      : { ...comment, reactions: remarkReactions };
+        Effect.flatMap(([pullRequest, issueComments, reviews, commits, viewer]) => {
+          const reactions =
+            viewer === ""
+              ? Effect.succeed({ pullRequest: [], bySubjectId: new Map<string, never>() })
+              : api
+                  .listConversationReactions({
+                    ...input,
+                    viewer,
+                    subjectIds: [...issueComments.comments, ...reviews.comments].map(
+                      (comment) => comment.id,
+                    ),
                   })
-                  .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-                commentCount: Math.max(
-                  pullRequest.commentCount,
-                  issueComments.comments.length + reviews.comments.length,
-                ),
-                commentsTruncated: issueComments.truncated || reviews.truncated,
-                reviewThreads: reviews.threads.map((thread) => ({
-                  ...thread,
-                  comments: thread.comments.map((comment) => {
-                    const remarkReactions = reactions.bySubjectId.get(comment.id);
-                    return remarkReactions === undefined
-                      ? comment
-                      : { ...comment, reactions: remarkReactions };
-                  }),
-                })),
-                commits,
-                reactions: reactions.pullRequest,
+                  .pipe(
+                    Effect.orElseSucceed(() => ({
+                      pullRequest: [],
+                      bySubjectId: new Map<string, never>(),
+                    })),
+                  );
+          return reactions.pipe(
+            Effect.map((reactions): ProviderChangeRequestActivity => ({
+              author: pullRequest.author,
+              reviewers: pullRequest.reviewers,
+              comments: [...issueComments.comments, ...reviews.comments]
+                .map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                })
+                .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+              commentCount: Math.max(
+                pullRequest.commentCount,
+                issueComments.comments.length + reviews.comments.length,
+              ),
+              commentsTruncated: issueComments.truncated || reviews.truncated,
+              reviewThreads: reviews.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                }),
               })),
-            ),
-        ),
+              commits,
+              reactions: reactions.pullRequest,
+            })),
+          );
+        }),
       ),
 
     getViewerPermissions: (input) =>
