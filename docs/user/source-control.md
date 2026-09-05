@@ -60,8 +60,15 @@ comments and labels. Grant write access to repositories and issues for review an
 Restart the server after setting these variables, then choose **Settings → Source Control → Rescan**.
 
 One Gitea server can be configured per T3 environment. HTTPS remotes must use that web root;
-SSH remotes must use the same hostname. SSH aliases and a separate SSH hostname are not currently
-recognized. Configure Git authentication separately for cloning, fetching, and pushing.
+SSH remotes can use the same hostname or an explicitly configured SSH hostname or alias:
+
+```bash
+export T3CODE_GITEA_SSH_HOSTS="git.example.com,work-forge"
+```
+
+Use SSH aliases as `git@work-forge:owner/repository.git` or
+`ssh://git@work-forge/owner/repository.git`. API requests always go to the configured web address.
+Configure Git authentication separately for cloning, fetching, and pushing.
 
 ### Azure DevOps
 

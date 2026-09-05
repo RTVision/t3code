@@ -89,7 +89,7 @@ export const makeDiscovery = Effect.map(
     refineUnknownRemote: ({ context }) => {
       if (
         Option.isNone(api.baseUrl) ||
-        giteaRepositoryFromRemote(context.remoteUrl, api.baseUrl.value) === null
+        giteaRepositoryFromRemote(context.remoteUrl, api.baseUrl.value, api.sshHosts) === null
       )
         return null;
       return { kind: "gitea", name: "Gitea", baseUrl: api.baseUrl.value };
@@ -137,7 +137,7 @@ export const make = Effect.gen(function* () {
       const baseUrl = yield* configuredBaseUrl(input.cwd);
       if (
         input.context !== undefined &&
-        giteaRepositoryFromRemote(input.context.remoteUrl, baseUrl) === null
+        giteaRepositoryFromRemote(input.context.remoteUrl, baseUrl, api.sshHosts) === null
       ) {
         return yield* failure(
           "resolveRepository",
@@ -148,7 +148,7 @@ export const make = Effect.gen(function* () {
       if (input.repository !== undefined) {
         const repository =
           parseGiteaRepository(input.repository) ??
-          giteaRepositoryFromRemote(input.repository, baseUrl);
+          giteaRepositoryFromRemote(input.repository, baseUrl, api.sshHosts);
         if (repository !== null)
           return {
             repository,
@@ -162,7 +162,11 @@ export const make = Effect.gen(function* () {
         );
       }
       if (input.context !== undefined) {
-        const repository = giteaRepositoryFromRemote(input.context.remoteUrl, baseUrl);
+        const repository = giteaRepositoryFromRemote(
+          input.context.remoteUrl,
+          baseUrl,
+          api.sshHosts,
+        );
         if (repository !== null)
           return {
             repository,
@@ -185,7 +189,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       const candidates = remotes.flatMap((remote) => {
-        const repository = giteaRepositoryFromRemote(remote.url, baseUrl);
+        const repository = giteaRepositoryFromRemote(remote.url, baseUrl, api.sshHosts);
         return repository === null
           ? []
           : [{ repository, remoteName: remote.name, remoteUrl: remote.url }];
@@ -413,7 +417,7 @@ export const make = Effect.gen(function* () {
         const remoteUrl = isSshRemoteUrl(locator.remoteUrl)
           ? sourceRepository.ssh_url
           : sourceRepository.clone_url;
-        if (giteaRepositoryFromRemote(remoteUrl, baseUrl) === null)
+        if (giteaRepositoryFromRemote(remoteUrl, baseUrl, api.sshHosts) === null)
           return yield* failure(
             "checkoutChangeRequest",
             input.cwd,
