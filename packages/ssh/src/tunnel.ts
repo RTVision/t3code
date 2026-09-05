@@ -1171,11 +1171,25 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     string,
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
+  const closingTunnelEntries = new Map<
+    string,
+    { readonly entry: SshTunnelEntry; readonly done: Deferred.Deferred<void> }
+  >();
   const authSecrets = new Map<string, string>();
 
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
+    const activeClose = closingTunnelEntries.get(entry.key);
+    if (activeClose) {
+      yield* Deferred.await(activeClose.done);
+      return;
+    }
+    if (tunnels.get(entry.key) !== entry) {
+      yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+      return;
+    }
+    closingTunnelEntries.set(entry.key, { entry, done: Deferred.makeUnsafe<void>() });
     yield* Effect.logDebug("ssh.tunnel.close.start", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1411,47 +1425,64 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
       entryScope,
-      Effect.gen(function* () {
+      Effect.suspend(() => {
         if (tunnels.get(tunnelEntry.key) !== tunnelEntry) {
-          return;
+          return Effect.void;
         }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        tunnels.delete(tunnelEntry.key);
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* Effect.all(
-          [
-            stopRemoteServer(
-              tunnelEntry.target,
-              authSecret === null
-                ? {
-                    batchMode: "yes",
-                    interactiveAuth: false,
+        const activeClose = closingTunnelEntries.get(tunnelEntry.key);
+        if (activeClose && activeClose.entry !== tunnelEntry) {
+          return Effect.void;
+        }
+        const closing = activeClose ?? { entry: tunnelEntry, done: Deferred.makeUnsafe<void>() };
+        closingTunnelEntries.set(tunnelEntry.key, closing);
+        return Effect.gen(function* () {
+          yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
+            ...sshTargetLogFields(tunnelEntry.target),
+            key: tunnelEntry.key,
+            localPort: tunnelEntry.localPort,
+            remotePort: tunnelEntry.remotePort,
+          });
+          tunnels.delete(tunnelEntry.key);
+          const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
+          yield* stopRemoteServer(
+            tunnelEntry.target,
+            authSecret === null
+              ? {
+                  batchMode: "yes",
+                  interactiveAuth: false,
+                }
+              : {
+                  authSecret,
+                  batchMode: "no",
+                  interactiveAuth: true,
+                },
+          ).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
+            Effect.provideService(FileSystem.FileSystem, fileSystemService),
+            Effect.provideService(Path.Path, pathService),
+            Effect.ignore,
+          );
+          yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
+            ...sshTargetLogFields(tunnelEntry.target),
+            key: tunnelEntry.key,
+            localPort: tunnelEntry.localPort,
+            remotePort: tunnelEntry.remotePort,
+          });
+        }).pipe(
+          Effect.ensuring(
+            Deferred.succeed(closing.done, undefined).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (closingTunnelEntries.get(tunnelEntry.key) === closing) {
+                    closingTunnelEntries.delete(tunnelEntry.key);
                   }
-                : {
-                    authSecret,
-                    batchMode: "no",
-                    interactiveAuth: true,
-                  },
-            ).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-              Effect.provideService(FileSystem.FileSystem, fileSystemService),
-              Effect.provideService(Path.Path, pathService),
+                }),
+              ),
             ),
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.ignore);
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-      }).pipe(Effect.ignore),
+          ),
+          Effect.ignore,
+        );
+      }),
     );
     yield* Effect.forkIn(
       Effect.gen(function* () {
@@ -1532,6 +1563,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     resolvedTarget: DesktopSshEnvironmentTarget,
     runner?: RemoteT3RunnerOptions,
   ): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
+    const closing = closingTunnelEntries.get(key);
+    if (closing) {
+      yield* Deferred.await(closing.done);
+      return yield* ensureTunnelEntry(key, resolvedTarget, runner);
+    }
     const entry = tunnels.get(key);
     if (entry !== undefined) {
       // The tunnel supervisor owns reconnects and keeps the forwarded port stable.

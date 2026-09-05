@@ -705,4 +705,59 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
+
+  it.effect("waits for remote cleanup before starting a replacement tunnel", () =>
+    Effect.gen(function* () {
+      const stopStarted = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      let launchCount = 0;
+      let tunnelCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            tunnelCount += 1;
+            return makeRunningProcess(() => undefined);
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            launchCount += 1;
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            yield* Deferred.succeed(stopStarted, undefined);
+            yield* Deferred.await(releaseStop);
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+
+        const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(reconnectTarget));
+        yield* Deferred.await(stopStarted);
+        const replacement = yield* Effect.forkChild(manager.ensureEnvironment(reconnectTarget));
+        yield* Effect.yieldNow;
+
+        assert.equal(launchCount, 1);
+        assert.equal(tunnelCount, 1);
+
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* Fiber.join(disconnect);
+        yield* Fiber.join(replacement);
+
+        assert.equal(launchCount, 2);
+        assert.equal(tunnelCount, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 });
