@@ -16,6 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { SshReadinessError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -328,6 +329,33 @@ describe("SSH tunnel reconnect", () => {
         assert.isTrue(Result.isFailure(result));
         yield* TestClock.adjust(60_000);
         assert.deepEqual(harness.counts(), { spawnCount: 1, killCount: 1, stopCount: 1 });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("bounds foreground waits for a reconnect and closes the stale tunnel", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        harness.blockReadiness(yield* Deferred.make<void>());
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(2_000);
+        yield* Queue.take(harness.spawned);
+        yield* Queue.take(harness.readinessRequested);
+
+        const waiting = yield* Effect.forkChild(
+          Effect.result(manager.ensureEnvironment(reconnectTarget)),
+        );
+        yield* TestClock.adjust(20_000);
+        const result = yield* Fiber.join(waiting);
+
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.instanceOf(result.failure, SshReadinessError);
+        // The harness counts the failure log-tail command alongside the remote stop command.
+        assert.deepEqual(harness.counts(), { spawnCount: 2, killCount: 2, stopCount: 2 });
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

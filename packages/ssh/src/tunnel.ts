@@ -1536,13 +1536,22 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     if (entry !== undefined) {
       // The tunnel supervisor owns reconnects and keeps the forwarded port stable.
       // Client connection preparation remains pending (shown as reconnecting) until HTTP is ready.
-      yield* entry.awaitReady;
+      const awaitReady = Effect.gen(function* () {
+        const ready = yield* entry.awaitReady.pipe(Effect.timeoutOption(SSH_READY_TIMEOUT_MS));
+        if (Option.isSome(ready)) return;
+        yield* closeTunnelEntry(entry);
+        yield* cancelPendingTunnelEntry(key, resolvedTarget);
+        return yield* new SshReadinessError({
+          message: `SSH tunnel did not reconnect within ${SSH_READY_TIMEOUT_MS / 1_000} seconds for ${resolvedTarget.alias || resolvedTarget.hostname}.`,
+        });
+      });
+      yield* awaitReady;
       const readiness = yield* Effect.exit(
         waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
       );
       if (Exit.isSuccess(readiness)) return entry;
       if (yield* entry.isReconnecting) {
-        yield* entry.awaitReady;
+        yield* awaitReady;
         return entry;
       }
       // The SSH process can outlive its remote server. Preserve the existing
