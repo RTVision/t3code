@@ -1,10 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -13,6 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { SshReadinessError } from "./errors.ts";
 import { SshRunner } from "./runner.ts";
 import {
   buildRemoteLaunchScript,
@@ -99,6 +103,264 @@ const testNetService = NetService.NetService.of({
 function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
 }
+
+const reconnectTarget = {
+  alias: "devbox",
+  hostname: "devbox.example.com",
+  username: "julius",
+  port: 2222,
+} as const;
+
+const makeReconnectHarness = Effect.fn("makeReconnectHarness")(function* () {
+  const spawned = yield* Queue.unbounded<{
+    readonly exited: Deferred.Deferred<ChildProcessSpawner.ExitCode>;
+    readonly at: number;
+    readonly args: ReadonlyArray<string>;
+  }>();
+  const readinessRequested = yield* Queue.unbounded<void>();
+  let readiness: Deferred.Deferred<void> | null = null;
+  let spawnCount = 0;
+  let killCount = 0;
+  let stopCount = 0;
+  let remotePort = 3773;
+  let failNextLaunch = false;
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = commandArgs(command);
+      if (args.includes("-N")) {
+        spawnCount += 1;
+        const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        yield* Queue.offer(spawned, { exited, at: yield* Clock.currentTimeMillis, args });
+        return ChildProcessSpawner.makeHandle({
+          ...makeSuccessfulProcess(""),
+          exitCode: Deferred.await(exited),
+          isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+          kill: () =>
+            Effect.sync(() => {
+              killCount += 1;
+            }).pipe(
+              Effect.andThen(Deferred.succeed(exited, ChildProcessSpawner.ExitCode(143))),
+              Effect.asVoid,
+            ),
+        });
+      }
+      if (args.includes("sh") && args.includes("--")) {
+        if (failNextLaunch) {
+          failNextLaunch = false;
+          return ChildProcessSpawner.makeHandle({
+            ...makeSuccessfulProcess(""),
+            stderr: Stream.make(new TextEncoder().encode("Permission denied (publickey).")),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+          });
+        }
+        return makeSuccessfulProcess(`{"remotePort":${remotePort}}\n`);
+      }
+      if (args.includes("sh")) stopCount += 1;
+      return makeSuccessfulProcess("\n");
+    }),
+  );
+  const httpClient = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      yield* Queue.offer(readinessRequested, undefined);
+      if (readiness !== null) yield* Deferred.await(readiness);
+      return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+    }),
+  );
+  const layer = Layer.mergeAll(
+    NodeServices.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Layer.succeed(HttpClient.HttpClient, httpClient),
+    Layer.succeed(NetService.NetService, testNetService),
+    SshPasswordPrompt.disabledLayer,
+    SshEnvironmentManager.layer(),
+  );
+  return {
+    spawned,
+    readinessRequested,
+    layer,
+    blockReadiness: (deferred: Deferred.Deferred<void>) => {
+      readiness = deferred;
+    },
+    counts: () => ({ spawnCount, killCount, stopCount }),
+    setRemotePort: (port: number) => {
+      remotePort = port;
+    },
+    failAuthentication: () => {
+      failNextLaunch = true;
+    },
+  };
+});
+
+describe("SSH tunnel reconnect", () => {
+  it.effect(
+    "keeps the forwarded port and waits for HTTP readiness before reusing a reconnect",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeReconnectHarness();
+        yield* Effect.gen(function* () {
+          const manager = yield* SshEnvironmentManager;
+          const first = yield* manager.ensureEnvironment(reconnectTarget);
+          const original = yield* Queue.take(harness.spawned);
+          yield* Queue.take(harness.readinessRequested);
+          const ready = yield* Deferred.make<void>();
+          harness.blockReadiness(ready);
+          yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+          yield* TestClock.adjust(2_000);
+          const restarted = yield* Queue.take(harness.spawned);
+          yield* Queue.take(harness.readinessRequested);
+          const ensure = yield* Effect.forkChild(manager.ensureEnvironment(reconnectTarget));
+          yield* Effect.yieldNow;
+          assert.isUndefined(ensure.pollUnsafe());
+          assert.deepEqual(restarted.args.slice(2), original.args.slice(2));
+          assert.include(restarted.args, "BatchMode=yes");
+          yield* Deferred.succeed(ready, undefined);
+          assert.equal((yield* Fiber.join(ensure)).httpBaseUrl, first.httpBaseUrl);
+          yield* manager.disconnectEnvironment(reconnectTarget);
+          yield* TestClock.adjust(60_000);
+          assert.deepEqual(harness.counts(), { spawnCount: 2, killCount: 2, stopCount: 1 });
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+  );
+
+  it.effect("backs off repeated exits, caps retries, and resets after a stable connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        let process = yield* Queue.take(harness.spawned);
+        for (const delay of [2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+          const before = yield* Clock.currentTimeMillis;
+          yield* Deferred.succeed(process.exited, ChildProcessSpawner.ExitCode(255));
+          yield* TestClock.adjust(delay);
+          process = yield* Queue.take(harness.spawned);
+          assert.equal(process.at - before, delay);
+        }
+        yield* TestClock.adjust(60_001);
+        const before = yield* Clock.currentTimeMillis;
+        yield* Deferred.succeed(process.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(2_000);
+        process = yield* Queue.take(harness.spawned);
+        assert.equal(process.at - before, 2_000);
+        yield* manager.disconnectEnvironment(reconnectTarget);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("relaunches a lost remote server while keeping the local port", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        const first = yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        harness.setRemotePort(3775);
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(2_000);
+        const restarted = yield* Queue.take(harness.spawned);
+        const next = yield* manager.ensureEnvironment(reconnectTarget);
+        assert.include(restarted.args, "41773:127.0.0.1:3775");
+        assert.equal(next.remotePort, 3775);
+        assert.equal(next.httpBaseUrl, first.httpBaseUrl);
+        assert.equal(harness.counts().stopCount, 0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves authentication failures to a new ensure without background prompts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        harness.failAuthentication();
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(1_000);
+        const waiting = yield* Effect.forkChild(
+          Effect.result(manager.ensureEnvironment(reconnectTarget)),
+        );
+        yield* TestClock.adjust(1_000);
+        const result = yield* Fiber.join(waiting);
+        assert.isTrue(Result.isFailure(result));
+        yield* TestClock.adjust(60_000);
+        assert.equal(harness.counts().spawnCount, 1);
+        assert.equal(harness.counts().stopCount, 0);
+        yield* manager.ensureEnvironment(reconnectTarget);
+        assert.equal(harness.counts().spawnCount, 2);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("disconnect during readiness kills the new child and cancels the reconnect", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        yield* Queue.take(harness.readinessRequested);
+        harness.blockReadiness(yield* Deferred.make<void>());
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(2_000);
+        yield* Queue.take(harness.spawned);
+        yield* Queue.take(harness.readinessRequested);
+        yield* manager.disconnectEnvironment(reconnectTarget);
+        yield* TestClock.adjust(60_000);
+        assert.deepEqual(harness.counts(), { spawnCount: 2, killCount: 2, stopCount: 1 });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("disconnect during backoff cancels pending ensures and prevents respawning", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(1_000);
+        const ensure = yield* Effect.forkChild(
+          Effect.result(manager.ensureEnvironment(reconnectTarget)),
+        );
+        yield* Effect.yieldNow;
+        yield* manager.disconnectEnvironment(reconnectTarget);
+        const result = yield* Fiber.join(ensure);
+        assert.isTrue(Result.isFailure(result));
+        yield* TestClock.adjust(60_000);
+        assert.deepEqual(harness.counts(), { spawnCount: 1, killCount: 1, stopCount: 1 });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("bounds foreground waits for a reconnect and closes the stale tunnel", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeReconnectHarness();
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+        const original = yield* Queue.take(harness.spawned);
+        harness.blockReadiness(yield* Deferred.make<void>());
+        yield* Deferred.succeed(original.exited, ChildProcessSpawner.ExitCode(255));
+        yield* TestClock.adjust(2_000);
+        yield* Queue.take(harness.spawned);
+        yield* Queue.take(harness.readinessRequested);
+
+        const waiting = yield* Effect.forkChild(
+          Effect.result(manager.ensureEnvironment(reconnectTarget)),
+        );
+        yield* TestClock.adjust(20_000);
+        const result = yield* Fiber.join(waiting);
+
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.instanceOf(result.failure, SshReadinessError);
+        // The harness counts the failure log-tail command alongside the remote stop command.
+        assert.deepEqual(harness.counts(), { spawnCount: 2, killCount: 2, stopCount: 2 });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+});
 
 describe("ssh tunnel scripts", () => {
   it("builds the remote t3 runner with npx and npm fallbacks", () => {
@@ -444,6 +706,61 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
+
+  it.effect("waits for remote cleanup before starting a replacement tunnel", () =>
+    Effect.gen(function* () {
+      const stopStarted = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      let launchCount = 0;
+      let tunnelCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            tunnelCount += 1;
+            return makeRunningProcess(() => undefined);
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            launchCount += 1;
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            yield* Deferred.succeed(stopStarted, undefined);
+            yield* Deferred.await(releaseStop);
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(reconnectTarget);
+
+        const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(reconnectTarget));
+        yield* Deferred.await(stopStarted);
+        const replacement = yield* Effect.forkChild(manager.ensureEnvironment(reconnectTarget));
+        yield* Effect.yieldNow;
+
+        assert.equal(launchCount, 1);
+        assert.equal(tunnelCount, 1);
+
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* Fiber.join(disconnect);
+        yield* Fiber.join(replacement);
+
+        assert.equal(launchCount, 2);
+        assert.equal(tunnelCount, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 
   it.effect("keeps a shared remote server alive until the last runner disconnects", () => {
     let tunnelSpawnCount = 0;
