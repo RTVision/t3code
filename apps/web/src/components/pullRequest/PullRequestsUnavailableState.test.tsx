@@ -30,12 +30,12 @@ describe("PullRequestsUnavailableState", () => {
       <PullRequestsUnavailableState
         error="GitHub did not answer."
         onRetry={() => {}}
-        gitHubUrl="https://github.com/pingdotgg/t3code/pull/42"
+        browserUrl="https://github.com/pingdotgg/t3code/pull/42"
       />,
     );
 
     expect(html).toContain("Retry");
-    expect(html).toContain("Open on GitHub");
+    expect(html).toContain("Open in browser");
     expect(html).toContain('href="https://github.com/pingdotgg/t3code/pull/42"');
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
@@ -45,11 +45,11 @@ describe("PullRequestsUnavailableState", () => {
     const html = renderToStaticMarkup(
       <PullRequestsUnavailableState
         error="This server cannot read the pull request."
-        gitHubUrl="https://github.com/pingdotgg/t3code/pull/9"
+        browserUrl="https://github.com/pingdotgg/t3code/pull/9"
       />,
     );
 
-    expect(html).toContain("Open on GitHub");
+    expect(html).toContain("Open in browser");
     expect(html).not.toContain("Retry");
   });
 

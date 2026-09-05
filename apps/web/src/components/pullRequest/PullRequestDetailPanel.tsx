@@ -55,7 +55,11 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
+import {
+  changeRequestRepositoryUrl,
+  giteaPullRequestBrowserUrl,
+  gitHubPullRequestBrowserUrl,
+} from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -759,12 +763,21 @@ export function PullRequestDetailPanel({
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
   const projects = useProjects();
-  const unavailableGitHubUrl = useMemo(() => {
+  const unavailableBrowserUrl = useMemo(() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
-    return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
-  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
+    return matchingListEntry?.provider === "gitea" || identity?.provider === "gitea"
+      ? giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
+      : gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
+  }, [
+    environmentId,
+    matchingListEntry?.provider,
+    projects,
+    reference.number,
+    reference.projectId,
+    reference.repository,
+  ]);
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
@@ -2312,7 +2325,7 @@ export function PullRequestDetailPanel({
           <PullRequestsUnavailableState
             error={detailQuery.error}
             onRetry={refreshDetail}
-            {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
+            {...(unavailableBrowserUrl ? { browserUrl: unavailableBrowserUrl } : {})}
           />
         ) : detail ? (
           <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>

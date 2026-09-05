@@ -88,6 +88,16 @@ describe("add project shared logic", () => {
     ).toBe("git@gitlab.com:group/project.git");
   });
 
+  it("offers Gitea as an API-configured clone source", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitea",
+        url: "https://gitea.example.test/acme/repository.git",
+        sshUrl: "git@gitea.example.test:acme/repository.git",
+      }),
+    ).toBe("git@gitea.example.test:acme/repository.git");
+  });
+
   it("derives the clone folder name from any pasted clone URL", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");

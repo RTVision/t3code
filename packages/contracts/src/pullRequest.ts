@@ -1075,6 +1075,12 @@ const PROVIDER_REQUIREMENT: Partial<
     unauthenticated:
       "Bitbucket rejected the configured credentials. Check T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
   },
+  gitea: {
+    missing:
+      "Gitea needs API configuration on the server. Set T3CODE_GITEA_BASE_URL and T3CODE_GITEA_TOKEN.",
+    unauthenticated:
+      "Gitea rejected the configured token. Check T3CODE_GITEA_BASE_URL and T3CODE_GITEA_TOKEN.",
+  },
 };
 
 /**

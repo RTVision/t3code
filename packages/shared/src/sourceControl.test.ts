@@ -28,6 +28,10 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
+    expect(getChangeRequestTerminologyForKind("gitea")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -39,6 +43,18 @@ describe("source control presentation", () => {
         longName: "change request",
       }),
     );
+  });
+
+  it("uses Gitea pull request presentation without a CLI checkout command", () => {
+    const presentation = resolveChangeRequestPresentation({
+      kind: "gitea",
+      name: "Gitea",
+      baseUrl: "",
+    });
+    expect(presentation).toEqual(
+      expect.objectContaining({ providerName: "Gitea", shortName: "PR" }),
+    );
+    expect(presentation).not.toHaveProperty("checkoutCommandExample");
   });
 });
 
@@ -56,6 +72,16 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+  });
+
+  it("keeps arbitrary Gitea hosts unknown for server-side configured-host refinement", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@gitea.example.test:owner/repo.git"),
+    ).toEqual({
+      kind: "unknown",
+      name: "gitea.example.test",
+      baseUrl: "https://gitea.example.test",
+    });
   });
 
   it("detects Azure DevOps SSH remotes", () => {
