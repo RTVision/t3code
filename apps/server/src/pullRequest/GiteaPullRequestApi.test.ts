@@ -443,6 +443,7 @@ layer("GiteaPullRequestApi", (it) => {
   it.effect("walks later pages until involvement filtering fills the requested slice", () =>
     Effect.gen(function* () {
       mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response([])))
         .mockReturnValueOnce(
           Effect.succeed(
             response(
@@ -468,7 +469,7 @@ layer("GiteaPullRequestApi", (it) => {
       expect(page.items.map((item) => item.number)).toEqual([51]);
       assert.strictEqual(page.consumed, 51);
       assert.isFalse(page.truncated);
-      expect(callAt(1).path).toContain("page=2");
+      expect(callAt(2).path).toContain("page=2");
     }),
   );
 
@@ -1853,6 +1854,133 @@ layer("GiteaPullRequestApi", (it) => {
         }),
       );
       expect(callAt(2).path).toContain("page=2");
+    }),
+  );
+
+  it.effect("includes requested native teams in reviewer candidates and sends their names", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/repos/acme/web/pulls/7")
+          return Effect.succeed(
+            response(
+              rawPullRequest(7, {
+                requested_reviewers_teams: [
+                  { id: 41, name: "maintainers", organization: { username: "acme" } },
+                ],
+              }),
+            ),
+          );
+        if (input.path.startsWith("/repos/acme/web/reviewers?"))
+          return Effect.succeed(response([{ id: 2, login: "reviewer" }]));
+        if (input.path === "/repos/acme/web/teams")
+          return Effect.succeed(
+            response([{ id: 41, name: "maintainers", organization: { username: "acme" } }]),
+          );
+        if (input.path === "/repos/acme/web/pulls/7/requested_reviewers")
+          return Effect.succeed(response({}));
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const candidates = yield* api.listReviewerCandidates({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(candidates).toEqual({
+        candidates: [
+          expect.objectContaining({ id: "reviewer", kind: "user", isRequested: true }),
+          expect.objectContaining({
+            id: "maintainers",
+            kind: "team",
+            login: "maintainers",
+            name: "acme",
+            isRequested: true,
+          }),
+        ],
+        truncated: false,
+      });
+      yield* api.setReviewerRequest({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        requested: true,
+        reviewers: [candidates.candidates[1]!],
+      });
+      const request = callAt(3);
+      expect(decodeJson(request.body ?? "{}")).toEqual({
+        reviewers: [],
+        team_reviewers: ["maintainers"],
+      });
+    }),
+  );
+
+  it.effect("treats a native repository team 405 as a personal repository", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/repos/acme/web/pulls/7")
+          return Effect.succeed(response(rawPullRequest(7)));
+        if (input.path.startsWith("/repos/acme/web/reviewers?"))
+          return Effect.succeed(response([{ id: 2, login: "reviewer" }]));
+        if (input.path === "/repos/acme/web/teams")
+          return Effect.fail(
+            new GiteaApi.GiteaApiError({
+              operation: "listTeamReviewerCandidates",
+              reason: "failed",
+              detail: "Gitea returned HTTP 405.",
+              status: 405,
+            }),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const candidates = yield* api.listReviewerCandidates({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(candidates.candidates).toEqual([
+        expect.objectContaining({ id: "reviewer", kind: "user" }),
+      ]);
+    }),
+  );
+
+  it.effect("includes pull requests requested from a viewer team in reviewing listings", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/user/teams?page=1&limit=50")
+          return Effect.succeed(response([{ id: 4, name: "first" }], { "x-total-count": "2" }));
+        if (input.path === "/user/teams?page=2&limit=50")
+          return Effect.succeed(
+            response([{ id: 9, name: "maintainers" }], { "x-total-count": "2" }),
+          );
+        if (input.path.startsWith("/repos/acme/web/pulls?"))
+          return Effect.succeed(
+            response(
+              [
+                rawPullRequest(7, {
+                  requested_reviewers: [],
+                  requested_reviewers_teams: [{ id: 9, name: "maintainers" }],
+                }),
+              ],
+              { "x-total-count": "1" },
+            ),
+          );
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "viewer",
+        limit: 10,
+      });
+
+      expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([7]);
+      assert.strictEqual(mockedRequest.mock.calls.length, 3);
     }),
   );
 

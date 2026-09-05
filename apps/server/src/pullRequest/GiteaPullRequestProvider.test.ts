@@ -31,6 +31,8 @@ const trackedPullRequest: GiteaPullRequest = {
   mergedAt: null,
   closedAt: null,
   reviewRequestLogins: [],
+  reviewRequestTeamIDs: [],
+  reviewRequestTeamNames: [],
   reviewers: [],
   labels: [],
   commentCount: 0,
