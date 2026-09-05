@@ -25,6 +25,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaLifecycle from "./GiteaLifecycle.ts";
 import type { ProviderListCursor } from "./PullRequestProvider.ts";
 import { dedupeChecks } from "./pullRequestChecks.ts";
 
@@ -428,6 +429,11 @@ export class GiteaPullRequestApi extends Context.Service<
       host: string;
       repository: string;
     }) => Effect.Effect<GiteaRepositoryAccess, GiteaPullRequestApiError>;
+    readonly getAutoMergeEnabled: (input: {
+      host: string;
+      repository: string;
+      number: number;
+    }) => Effect.Effect<boolean, GiteaPullRequestApiError>;
     readonly listComments: (input: {
       host: string;
       repository: string;
@@ -558,6 +564,7 @@ export class GiteaPullRequestApi extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const gitea = yield* GiteaApi.GiteaApi;
+  const draftPrefixes = yield* GiteaLifecycle.draftPrefixesConfig;
 
   const failure = (operation: string, error: GiteaApi.GiteaApiError) =>
     new GiteaPullRequestApiError({
@@ -1174,6 +1181,100 @@ export const make = Effect.gen(function* () {
       ...(input.body === undefined ? {} : { body: encodeObject(input.body) }),
     }).pipe(Effect.asVoid);
 
+  const getAutoMergeEnabled = Effect.fn("GiteaPullRequestApi.getAutoMergeEnabled")(
+    function* (input: { host: string; repository: string; number: number }) {
+      const operation = "getAutoMergeEnabled";
+      const events: Array<GiteaLifecycle.RawGiteaLifecycleEvent> = [];
+      let path = query(`${basePath(input.repository)}/issues/${input.number}/timeline`, {
+        page: 1,
+        limit: PAGE_SIZE,
+      });
+      for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+        const response = yield* request({
+          operation,
+          host: input.host,
+          repository: input.repository,
+          method: "GET",
+          path,
+        });
+        const pageEvents = yield* decode(
+          operation,
+          Schema.Array(GiteaLifecycle.RawGiteaLifecycleEvent),
+          response,
+        );
+        events.push(...pageEvents);
+        // Gitea's timeline route reports the current page length in X-Total-Count rather than the
+        // total number of events, so that header cannot prove the timeline is complete.
+        const next =
+          nextLink(response.headers) ??
+          (pageEvents.length >= PAGE_SIZE ? pathAtPage(path, page + 1) : null);
+        if (next === null) return GiteaLifecycle.autoMergeEnabled(events);
+        path = next;
+      }
+      return yield* new GiteaPullRequestApiError({
+        operation,
+        reason: "failed",
+        detail: "Gitea's pull request timeline exceeded the pagination safety bound.",
+      });
+    },
+  );
+
+  const setDraftState = Effect.fn("GiteaPullRequestApi.setDraftState")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+    action: Extract<PullRequestAction, "draft" | "ready">;
+  }) {
+    const before = yield* getPullRequest(input);
+    const title = GiteaLifecycle.titleForDraftAction({
+      action: input.action,
+      title: before.title,
+      isDraft: before.isDraft,
+      prefixes: draftPrefixes,
+    });
+    if (title === null) {
+      return yield* new GiteaPullRequestApiError({
+        operation: "runAction",
+        reason: "failed",
+        detail:
+          "Gitea reports this pull request as draft, but its title does not start with a configured T3CODE_GITEA_DRAFT_PREFIXES value.",
+      });
+    }
+    if (title === before.title) return;
+
+    const path = `${basePath(input.repository)}/pulls/${input.number}`;
+    yield* write({
+      operation: "runAction",
+      host: input.host,
+      repository: input.repository,
+      method: "PATCH",
+      path,
+      body: { title },
+    });
+    const after = yield* getPullRequest(input);
+    const expectedDraft = input.action === "draft";
+    if (after.isDraft === expectedDraft) return;
+
+    // A mismatched prefix changed the title without changing Gitea's draft state. Put the title
+    // back only while it is still exactly the value this operation wrote.
+    if (after.title === title) {
+      yield* write({
+        operation: "runAction",
+        host: input.host,
+        repository: input.repository,
+        method: "PATCH",
+        path,
+        body: { title: before.title },
+      });
+    }
+    return yield* new GiteaPullRequestApiError({
+      operation: "runAction",
+      reason: "failed",
+      detail:
+        "Gitea did not apply the requested draft state. Set T3CODE_GITEA_DRAFT_PREFIXES to the server's WORK_IN_PROGRESS_PREFIXES value.",
+    });
+  });
+
   const unsupportedAction = (action: string) =>
     new GiteaPullRequestApiError({
       operation: "runAction",
@@ -1203,6 +1304,7 @@ export const make = Effect.gen(function* () {
     listPullRequests,
     getPullRequest,
     getRepositoryAccess,
+    getAutoMergeEnabled,
     listComments,
     listReviews,
     listCommits,
@@ -1363,6 +1465,12 @@ export const make = Effect.gen(function* () {
           });
         case "ready":
         case "draft":
+          return setDraftState({
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+            action: input.action,
+          });
         case "revert":
         case "approve-workflows":
           return Effect.fail(unsupportedAction(input.action));
