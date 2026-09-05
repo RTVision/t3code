@@ -59,7 +59,8 @@ export function giteaPullRequestNumber(
   try {
     const url = new URL(reference);
     const base = new URL(baseUrl);
-    const expected = `${base.pathname.replace(/\/+$/u, "")}/${repository}/pulls/`;
+    const encodedRepository = repository.split("/").map(encodeURIComponent).join("/");
+    const expected = `${base.pathname.replace(/\/+$/u, "")}/${encodedRepository}/pulls/`;
     if (
       url.origin !== base.origin ||
       !url.pathname.toLowerCase().startsWith(expected.toLowerCase())
