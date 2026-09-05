@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import * as GiteaApi from "./GiteaApi.ts";
 
@@ -126,6 +131,42 @@ it.effect("does not follow a redirect or replay a write", () => {
     assert.strictEqual(error.status, 307);
     assert.strictEqual(execute.mock.calls.length, 1);
   }).pipe(Effect.provide(layer));
+});
+
+it.effect("disables automatic redirects in the production Fetch transport", () => {
+  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+    assert.strictEqual(init?.redirect, "manual");
+    return new Response(null, {
+      status: 307,
+      headers: { location: "https://forge.example.test/outside-api" },
+    });
+  });
+  const layer = GiteaApi.layer.pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: {
+            T3CODE_GITEA_BASE_URL: "https://forge.example.test",
+            T3CODE_GITEA_TOKEN: "test-token",
+          },
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const api = yield* GiteaApi.GiteaApi;
+    const error = yield* api
+      .request({
+        operation: "comment",
+        method: "POST",
+        path: "/repos/team/repo/issues/1/comments",
+        body: '{"body":"hello"}',
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.status, 307);
+    assert.strictEqual(fetch.mock.calls.length, 1);
+  }).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, fetch));
 });
 
 it.effect("distinguishes rejected credentials from permission failures", () =>

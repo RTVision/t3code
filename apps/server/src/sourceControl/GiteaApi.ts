@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { type SourceControlProviderAuth, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { providerAuth } from "./SourceControlProviderDiscovery.ts";
@@ -158,6 +158,7 @@ export const make = Effect.gen(function* () {
             : outgoing.pipe(HttpClientRequest.bodyText(input.body, "application/json")),
         )
         .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
           Effect.mapError(
             () =>
               new GiteaApiError({
