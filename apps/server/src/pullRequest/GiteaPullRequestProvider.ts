@@ -29,9 +29,15 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
   // narrowing correct at the service boundary without claiming host-side search.
   search: false,
-  // Issue reactions exist, but review-comment reactions do not have a corresponding route in
-  // the target API. The one capability covers every displayed remark, so partial support stays off.
+  // Review summaries have no Gitea reaction route. Conversation rows carry reactions only for
+  // target kinds the host supports; the provider must not claim the legacy all-remarks flag.
   reactions: false,
+  reactionSubjects: {
+    changeRequest: true,
+    issueComment: true,
+    reviewComment: true,
+    review: false,
+  },
   review: {
     inlineComment: true,
     reply: true,
@@ -39,9 +45,9 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
-  // Gitea can edit the pull request and ordinary issue comments. It has no edit route for a
-  // review comment, and this capability applies to every conversation remark.
-  edit: { changeRequest: true, comment: false },
+  // Inline review comments are issue-comment records in Gitea and share this PATCH route.
+  // A review summary is a separate Review record and is not a rewriteable comment in this API.
+  edit: { changeRequest: true, comment: true },
   labels: true,
 };
 
@@ -217,26 +223,60 @@ export const make = Effect.gen(function* () {
             .listReviews(input)
             .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
           api.listCommits(input).pipe(Effect.orElseSucceed(() => [])),
+          api.getViewer().pipe(Effect.orElseSucceed(() => "")),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, issueComments, reviews, commits]): ProviderChangeRequestActivity => ({
-            author: pullRequest.author,
-            reviewers: pullRequest.reviewers,
-            comments: [...issueComments.comments, ...reviews.comments].toSorted((left, right) =>
-              left.createdAt.localeCompare(right.createdAt),
-            ),
-            commentCount: Math.max(
-              pullRequest.commentCount,
-              issueComments.comments.length + reviews.comments.length,
-            ),
-            commentsTruncated: issueComments.truncated || reviews.truncated,
-            reviewThreads: reviews.threads,
-            commits,
-          }),
-        ),
+        Effect.flatMap(([pullRequest, issueComments, reviews, commits, viewer]) => {
+          const reactions =
+            viewer === ""
+              ? Effect.succeed({ pullRequest: [], bySubjectId: new Map<string, never>() })
+              : api
+                  .listConversationReactions({
+                    ...input,
+                    viewer,
+                    subjectIds: [...issueComments.comments, ...reviews.comments].map(
+                      (comment) => comment.id,
+                    ),
+                  })
+                  .pipe(
+                    Effect.orElseSucceed(() => ({
+                      pullRequest: [],
+                      bySubjectId: new Map<string, never>(),
+                    })),
+                  );
+          return reactions.pipe(
+            Effect.map((reactions): ProviderChangeRequestActivity => ({
+              author: pullRequest.author,
+              reviewers: pullRequest.reviewers,
+              comments: [...issueComments.comments, ...reviews.comments]
+                .map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                })
+                .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+              commentCount: Math.max(
+                pullRequest.commentCount,
+                issueComments.comments.length + reviews.comments.length,
+              ),
+              commentsTruncated: issueComments.truncated || reviews.truncated,
+              reviewThreads: reviews.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                }),
+              })),
+              commits,
+              reactions: reactions.pullRequest,
+            })),
+          );
+        }),
       ),
 
     getViewerPermissions: (input) =>
@@ -290,7 +330,6 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => api.comment(input).pipe(Effect.mapError(fail("comment"))),
 
-    // Never called: Gitea cannot edit every kind of remark, and the capability stays false.
     updateComment: (input) => api.updateComment(input).pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) => api.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
@@ -311,7 +350,6 @@ export const make = Effect.gen(function* () {
     setThreadResolution: (input) =>
       api.setThreadResolution(input).pipe(Effect.mapError(fail("setThreadResolution"))),
 
-    // Never called: the target API cannot cover reactions on review comments.
     setReaction: (input) =>
       api
         .setReaction({

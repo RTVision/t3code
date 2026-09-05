@@ -821,6 +821,134 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect(
+    "edits ordinary and inline review comments through Gitea's issue-comment endpoint",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest
+          .mockReturnValueOnce(Effect.succeed(response({})))
+          .mockReturnValueOnce(Effect.succeed(response({})));
+        const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+        yield* api.updateComment({
+          host: "forge.example.test",
+          repository: "acme/web",
+          commentId: "issue:12",
+          body: "Reworded.",
+        });
+        yield* api.updateComment({
+          host: "forge.example.test",
+          repository: "acme/web",
+          commentId: "review-comment:34",
+          body: "Also reworded.",
+        });
+
+        expect(callAt(0)).toMatchObject({
+          method: "PATCH",
+          path: "/repos/acme/web/issues/comments/12",
+        });
+        expect(callAt(1)).toMatchObject({
+          method: "PATCH",
+          path: "/repos/acme/web/issues/comments/34",
+        });
+      }),
+  );
+
+  it.effect(
+    "reacts to a pull request description and inline review comment through issue routes",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest
+          .mockReturnValueOnce(Effect.succeed(response({})))
+          .mockReturnValueOnce(Effect.succeed(response({})));
+        const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+        yield* api.setReaction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          content: "thumbs-up",
+          reacted: true,
+        });
+        yield* api.setReaction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          subjectId: "review-comment:34",
+          content: "heart",
+          reacted: false,
+        });
+
+        expect(callAt(0)).toMatchObject({
+          method: "POST",
+          path: "/repos/acme/web/issues/7/reactions",
+        });
+        expect(decodeJson(callAt(0).body ?? "{}")).toEqual({ content: "+1" });
+        expect(callAt(1)).toMatchObject({
+          method: "DELETE",
+          path: "/repos/acme/web/issues/comments/34/reactions",
+        });
+        expect(decodeJson(callAt(1).body ?? "{}")).toEqual({ content: "heart" });
+      }),
+  );
+
+  it.effect("loads reactions for the pull request and every issue-backed remark", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { reaction: "+1", user: { login: "reader" } },
+              { reaction: "+1", user: { login: "teammate" } },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(response([{ reaction: "heart", user: { login: "friend" } }])),
+        )
+        .mockReturnValueOnce(Effect.succeed(response([])));
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const reactions = yield* api.listConversationReactions({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        viewer: "Reader",
+        subjectIds: ["issue:12", "review-comment:34", "review:21", "issue:12"],
+      });
+
+      expect(reactions.pullRequest).toEqual([
+        { content: "thumbs-up", count: 2, actors: ["teammate"], viewerHasReacted: true },
+      ]);
+      expect(reactions.bySubjectId.get("issue:12")).toEqual([
+        { content: "heart", count: 1, actors: ["friend"], viewerHasReacted: false },
+      ]);
+      expect(reactions.bySubjectId.get("review-comment:34")).toEqual([]);
+      expect(reactions.bySubjectId.has("review:21")).toBe(false);
+      expect(mockedRequest.mock.calls.map((call) => call[0].path)).toEqual([
+        "/repos/acme/web/issues/7/reactions",
+        "/repos/acme/web/issues/comments/12/reactions",
+        "/repos/acme/web/issues/comments/34/reactions",
+      ]);
+    }),
+  );
+
+  it.effect("reports Gitea's missing review-summary reaction route without issuing a request", () =>
+    Effect.gen(function* () {
+      const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+      const error = yield* api
+        .setReaction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          subjectId: "review:21",
+          content: "eyes",
+          reacted: true,
+        })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toContain("review summaries");
+      assert.strictEqual(mockedRequest.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("preserves existing labels when adding another", () =>
     Effect.gen(function* () {
       mockedRequest
