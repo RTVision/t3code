@@ -854,7 +854,7 @@ export const make = Effect.gen(function* () {
   );
 
   const getFeatures = yield* Effect.cachedWithTTL(
-    gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }).pipe(
+    Effect.suspend(() => gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" })).pipe(
       Effect.mapError((error) => failure("getFeatures", error)),
       Effect.flatMap((response) =>
         decode(
@@ -1955,8 +1955,7 @@ export const make = Effect.gen(function* () {
         );
       }
       return Effect.gen(function* () {
-        const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
-        if (target.kind === "review" && !features.includes("pull-review-reactions")) {
+        if (target.kind === "review" && !(yield* getFeatures.pipe(Effect.orElseSucceed(() => []))).includes("pull-review-reactions")) {
           return yield* new GiteaPullRequestApiError({
             operation: "setReaction",
             reason: "failed",
