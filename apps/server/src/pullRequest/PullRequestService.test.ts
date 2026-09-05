@@ -1869,6 +1869,62 @@ it.effect("refuses to react on a host whose capabilities omit reactions entirely
   }),
 );
 
+it.effect("uses dynamic reaction capabilities after rate-limit wrapping", () =>
+  Effect.gen(function* () {
+    let reactionCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge"],
+            search: true,
+            reactions: false,
+            reactionSubjects: {
+              changeRequest: true,
+              issueComment: true,
+              reviewComment: true,
+              review: false,
+            },
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getCapabilities: () =>
+            Effect.succeed({
+              ...fakeProvider("github").capabilities,
+              reactions: false,
+              reactionSubjects: {
+                changeRequest: true,
+                issueComment: true,
+                reviewComment: true,
+                review: true,
+              },
+            }),
+          setReaction: () =>
+            Effect.sync(() => {
+              reactionCalls += 1;
+            }),
+        }),
+      ],
+    });
+
+    yield* service.setReaction({
+      projectId: "p1" as ProjectId,
+      repository: "pingdotgg/t3code",
+      number: 1,
+      subjectId: "review:9",
+      content: "heart",
+      reacted: true,
+    });
+    assert.strictEqual(reactionCalls, 1);
+  }),
+);
+
 it.effect("passes a reaction through with its subject id on a host that has them", () =>
   Effect.gen(function* () {
     let received: {

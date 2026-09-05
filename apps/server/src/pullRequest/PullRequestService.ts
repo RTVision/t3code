@@ -457,6 +457,9 @@ function withRateLimitBackoff(
   return {
     kind: api.kind,
     capabilities: api.capabilities,
+    ...(api.getCapabilities === undefined
+      ? {}
+      : { getCapabilities: wrap("getCapabilities", api.getCapabilities) }),
     getViewer: wrap("getViewer", api.getViewer),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
