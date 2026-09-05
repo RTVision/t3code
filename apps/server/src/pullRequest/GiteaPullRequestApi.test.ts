@@ -150,6 +150,39 @@ layer("GiteaPullRequestApi", (it) => {
     expect(yield* api.getAutoMergeEnabled({host: "forge.example.test", repository: "acme/web", number: 7})).toBe(true);
     expect(callAt(1).path).toContain("/timeline?");
   }));
+  it.effect("opens a native revert PR only on an advertising Gitea server", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-revert"] })))
+        .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(8))));
+      const api = yield* GiteaPullRequestApi.make;
+      yield* api.runAction({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        action: "revert",
+      });
+      expect(callAt(1)).toMatchObject({ method: "POST", path: "/repos/acme/web/pulls/7/revert" });
+      expect(mockedRequest.mock.calls).toHaveLength(2);
+    }),
+  );
+  it.effect("does not attempt a revert on stock Gitea", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .runAction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          action: "revert",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toContain("does not expose native pull request reverts");
+      expect(mockedRequest.mock.calls.every(([call]) => call.method === "GET")).toBe(true);
+    }),
+  );
+
   it.effect("approves only the current pull request's waiting workflow runs", () =>
     Effect.gen(function* () {
       const pull = rawPullRequest(7);

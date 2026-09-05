@@ -25,6 +25,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     "enable-auto-merge",
     "disable-auto-merge",
     "approve-workflows",
+    "revert",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
@@ -66,11 +67,13 @@ export function giteaProviderFailure(
 export function giteaViewerPermissions(input: {
   readonly canWrite: boolean;
   readonly workflowApprovalSupported?: boolean;
+  readonly revertSupported?: boolean;
   readonly ownsPullRequest: boolean;
   readonly updateMethods: ReadonlyArray<"merge" | "rebase">;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter((action) => {
+      if (action === "revert") return input.canWrite && input.revertSupported === true;
       if (action === "approve-workflows")
         return input.canWrite && input.workflowApprovalSupported === true;
       if (action === "ready" || action === "draft" || action === "close" || action === "reopen")
@@ -137,10 +140,12 @@ export const make = Effect.gen(function* () {
     readonly viewer: string;
     readonly author: string | undefined;
     readonly workflowApprovalSupported?: boolean;
+    readonly revertSupported?: boolean;
   }) =>
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
       workflowApprovalSupported: input.workflowApprovalSupported,
+      revertSupported: input.revertSupported,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -190,10 +195,11 @@ export const make = Effect.gen(function* () {
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
+          api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
         ],
         { concurrency: 4 },
       ).pipe(
-        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows]) =>
+        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows, features]) =>
           api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
             Effect.orElseSucceed(() => []),
             Effect.map((checks): ProviderChangeRequestDetail => ({
@@ -224,6 +230,7 @@ export const make = Effect.gen(function* () {
                 viewer,
                 author: pullRequest.author?.login,
                 workflowApprovalSupported: workflows.supported,
+                revertSupported: features.includes("pull-revert"),
               }),
             })),
           ),
@@ -332,6 +339,7 @@ export const make = Effect.gen(function* () {
             viewer,
             author: pullRequest.author?.login,
             workflowApprovalSupported: features.includes("actions-run-approve"),
+            revertSupported: features.includes("pull-revert"),
           }),
         ),
       ),

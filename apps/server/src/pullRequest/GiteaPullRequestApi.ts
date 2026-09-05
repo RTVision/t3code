@@ -1631,12 +1631,25 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const unsupportedAction = (action: string) =>
-    new GiteaPullRequestApiError({
-      operation: "runAction",
-      reason: "failed",
-      detail: `Gitea does not expose a reliable ${action} operation through this API.`,
+  const revertPullRequest = Effect.fn("GiteaPullRequestApi.revertPullRequest")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+  }) {
+    yield* validateHost(input.host);
+    if (!(yield* getFeatures).includes("pull-revert"))
+      return yield* new GiteaPullRequestApiError({
+        operation: "revertPullRequest",
+        reason: "failed",
+        detail: "This Gitea server does not expose native pull request reverts.",
+      });
+    return yield* write({
+      operation: "revertPullRequest",
+      ...input,
+      method: "POST",
+      path: `${basePath(input.repository)}/pulls/${input.number}/revert`,
     });
+  });
 
   return GiteaPullRequestApi.of({
     getFeatures: () => getFeatures,
@@ -1833,7 +1846,7 @@ export const make = Effect.gen(function* () {
         case "approve-workflows":
           return approveWorkflows(input);
         case "revert":
-          return Effect.fail(unsupportedAction(input.action));
+          return revertPullRequest(input);
       }
     },
     updatePullRequest: (input) =>
