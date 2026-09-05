@@ -833,8 +833,9 @@ export const make = Effect.gen(function* () {
    * answers unnarrowed, and without this pass a draft filter or a label filter would be sent,
    * accepted and quietly ignored. Idempotent for the hosts that did narrow.
    *
-   * `checks` is absent because no listed row carries its check state: that one filter is the
-   * host's alone, and a row nobody narrowed stays rather than being guessed at.
+   * `checks` is judged when a row carries its check state. A host that leaves the field undefined
+   * cannot be judged, so that row stays rather than being guessed at; null means the host answered
+   * that no checks are present and therefore matches neither passing nor failing.
    */
   const matchesRowFilters = (
     item: ProviderChangeRequest,
@@ -856,6 +857,9 @@ export const make = Effect.gen(function* () {
         (filters.review === "none"
           ? item.reviewDecision === null
           : item.reviewDecision === filters.review)) &&
+      (filters.checks === undefined ||
+        item.checksState === undefined ||
+        item.checksState === filters.checks) &&
       (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
       (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
       (filters.author === undefined ||
