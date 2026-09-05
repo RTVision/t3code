@@ -149,6 +149,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
     try: () =>
       bridge.ensureSshEnvironment(target, {
         issuePairingToken: true,
+        isNewTarget: true,
       }),
     catch: sshPreparationError,
   });

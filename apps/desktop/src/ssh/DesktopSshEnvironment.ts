@@ -64,7 +64,7 @@ export class DesktopSshEnvironment extends Context.Service<
     ) => Effect.Effect<DesktopSshEnvironmentTarget, SshCommandError | SshInvalidTargetError>;
     readonly ensureEnvironment: (
       target: DesktopSshEnvironmentTarget,
-      options?: { readonly issuePairingToken?: boolean },
+      options?: { readonly issuePairingToken?: boolean; readonly isNewTarget?: boolean },
     ) => Effect.Effect<DesktopSshEnvironmentBootstrap, DesktopSshEnvironmentOperationError>;
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
@@ -133,6 +133,27 @@ const makePasswordPrompt = (
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
 });
 
+export function prepareTargetForSshRunner(
+  target: DesktopSshEnvironmentTarget,
+  runner: SshRunner,
+  platform: NodeJS.Platform,
+  isNewTarget: boolean,
+): Effect.Effect<DesktopSshEnvironmentTarget, SshCommandError> {
+  const identity = sshRunnerIdentity(runner, platform);
+  if ((target.runner !== undefined || !isNewTarget) && !matchesSshRunner(target.runner, identity)) {
+    return Effect.fail(
+      new SshCommandError({
+        command: ["ssh"],
+        exitCode: null,
+        stderr: "",
+        message:
+          "This saved SSH environment uses a different SSH runner or WSL distro. Restore its runner in Settings → Connections, or remove and add the environment again.",
+      }),
+    );
+  }
+  return Effect.succeed({ ...target, ...(identity === undefined ? {} : { runner: identity }) });
+}
+
 export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Effect.gen(function* () {
     const manager = yield* SshTunnel.SshEnvironmentManager;
@@ -147,26 +168,6 @@ export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
       const runner = yield* resolveRunner;
       return yield* operation(runner).pipe(Effect.provideService(SshRunner, runner));
     });
-    const prepareTarget = (
-      target: DesktopSshEnvironmentTarget,
-      runner: SshRunner,
-      isNew: boolean,
-    ): Effect.Effect<DesktopSshEnvironmentTarget, SshCommandError> => {
-      const identity = sshRunnerIdentity(runner, platform);
-      if ((target.runner !== undefined || !isNew) && !matchesSshRunner(target.runner, identity)) {
-        return Effect.fail(
-          new SshCommandError({
-            command: ["ssh"],
-            exitCode: null,
-            stderr: "",
-            message:
-              "This saved SSH environment uses a different SSH runner or WSL distro. Restore its runner in Settings → Connections, or remove and add the environment again.",
-          }),
-        );
-      }
-      return Effect.succeed({ ...target, ...(identity === undefined ? {} : { runner: identity }) });
-    };
-
     return DesktopSshEnvironment.of({
       discoverHosts: (input) =>
         withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
@@ -184,9 +185,12 @@ export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
         ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost")),
       ensureEnvironment: (target, ensureOptions) =>
         withRunner((runner) =>
-          prepareTarget(target, runner, ensureOptions?.issuePairingToken === true).pipe(
-            Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions)),
-          ),
+          prepareTargetForSshRunner(
+            target,
+            runner,
+            platform,
+            ensureOptions?.isNewTarget === true,
+          ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
         ).pipe(
           Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
@@ -194,7 +198,7 @@ export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
         ),
       disconnectEnvironment: (target) =>
         withRunner((runner) =>
-          prepareTarget(target, runner, false).pipe(
+          prepareTargetForSshRunner(target, runner, platform, false).pipe(
             Effect.flatMap((resolved) => manager.disconnectEnvironment(resolved)),
           ),
         ).pipe(
