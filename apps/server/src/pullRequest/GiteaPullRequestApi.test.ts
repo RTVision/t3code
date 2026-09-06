@@ -194,6 +194,10 @@ layer("GiteaPullRequestApi", (it) => {
       });
       expect(callAt(1).path).toContain("include_tracking=true");
       expect(mockedRequest).toHaveBeenCalledTimes(2);
+      const api = yield* GiteaPullRequestApi.make;
+      yield* api.listPullRequests({ ...input, relationshipOnly: true, includeTracking: true });
+      expect(callAt(2).path).not.toContain("include_tracking");
+      expect(mockedRequest).toHaveBeenCalledTimes(3);
     }),
   );
   it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () =>
@@ -1334,6 +1338,48 @@ layer("GiteaPullRequestApi", (it) => {
       }),
   );
 
+  it.effect.each([1, 4])(
+    "marks inline comments incomplete when page %i has no pagination evidence",
+    (pageCount) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "Review", state: "COMMENT", submitted_at: "2026-09-03T11:00:00Z" },
+            ]),
+          ),
+        );
+        for (let page = 1; page <= pageCount; page += 1) {
+          mockedRequest.mockReturnValueOnce(
+            Effect.succeed(
+              response(
+                Array.from({ length: 50 }, (_, index) => ({
+                  id: page * 50 + index,
+                  body: `Comment ${index + 1}`,
+                  path: "src/a.ts",
+                  position: index + 1,
+                  created_at: "2026-09-03T11:01:00Z",
+                })),
+                page === pageCount ? {} : { "x-total-count": "201" },
+              ),
+            ),
+          );
+        }
+        const api = yield* GiteaPullRequestApi.make;
+        const result = yield* api.listReviews({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        assert.isTrue(result.truncated);
+        expect(result.comments.filter((comment) => comment.kind === "review-comment")).toHaveLength(
+          50 * pageCount,
+        );
+        expect(mockedRequest).toHaveBeenCalledTimes(1 + pageCount);
+      }),
+  );
+
   it.effect("does not repeat an unpaginated native review-comment response at the page size", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -1419,6 +1465,51 @@ layer("GiteaPullRequestApi", (it) => {
         200,
       );
       assert.strictEqual(mockedRequest.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("shares the raw inline-comment budget across reviews", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
+              { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
+              { id: 23, body: "Third review", submitted_at: "2026-09-03T13:00:00Z" },
+            ]),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response([
+              ...Array.from({ length: 199 }, (_, index) => ({
+                id: index + 31,
+                body: `Comment ${index + 1}`,
+                path: "src/a.ts",
+                position: index + 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+              { id: "malformed" },
+            ]),
+          ),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(
+        result.comments.filter((comment) => comment.kind === "review").map((comment) => comment.id),
+      ).toEqual(["review:21", "review:22", "review:23"]);
+      expect(result.comments.filter((comment) => comment.kind === "review-comment")).toHaveLength(
+        199,
+      );
+      assert.isTrue(result.truncated);
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+      expect(callAt(1).path).toContain("/reviews/21/comments?");
     }),
   );
 
@@ -2249,7 +2340,7 @@ layer("GiteaPullRequestApi", (it) => {
           number: 7,
         }),
       );
-      expect(callAt(2).path).toContain("page=2");
+      expect(callAt(2).path).toBe("/repos/acme/web/issues/7/timeline?page=2&limit=1");
     }),
   );
 

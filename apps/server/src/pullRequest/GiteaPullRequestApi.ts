@@ -1079,13 +1079,20 @@ export const make = Effect.gen(function* () {
         nextLink(result.headers) !== null || totalCount(result.headers) !== null;
       const paginationNext =
         input.requirePaginationEvidence && !hasPaginationEvidence ? null : next;
+      // Native unpaginated endpoints can return more than the requested page size. Exactly
+      // one requested page is ambiguous when headers do not establish whether more rows exist.
+      const paginationUncertain =
+        input.requirePaginationEvidence === true &&
+        !hasPaginationEvidence &&
+        result.rows.length === PAGE_SIZE;
       if (result.rows.length > remaining || rows.length >= input.limit) {
         return {
           rows,
-          truncated: result.rows.length > remaining || paginationNext !== null,
+          truncated:
+            result.rows.length > remaining || paginationNext !== null || paginationUncertain,
         };
       }
-      if (paginationNext === null) return { rows, truncated: false };
+      if (paginationNext === null) return { rows, truncated: paginationUncertain };
       path = paginationNext;
     }
     return { rows, truncated: true };
@@ -1109,7 +1116,7 @@ export const make = Effect.gen(function* () {
       sort: relationshipOnly ? "oldest" : "recentupdate",
       page,
       limit: PAGE_SIZE,
-      include_tracking: input.includeTracking === true ? "true" : undefined,
+      include_tracking: !relationshipOnly && input.includeTracking === true ? "true" : undefined,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
     });
     let rowsSeen = 0;
@@ -1368,6 +1375,7 @@ export const make = Effect.gen(function* () {
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
     let commentsTruncated = reviewsTruncated;
+    let remainingReviewCommentRows = PAGE_SIZE * CONVERSATION_PAGES;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -1384,6 +1392,10 @@ export const make = Effect.gen(function* () {
           reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
         });
       }
+      if (remainingReviewCommentRows === 0) {
+        commentsTruncated = true;
+        continue;
+      }
       const codeRows = yield* readUnknownSlice({
         operation: "listReviewComments",
         ...input,
@@ -1391,9 +1403,10 @@ export const make = Effect.gen(function* () {
           `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
           { page: 1, limit: PAGE_SIZE },
         ),
-        limit: PAGE_SIZE * CONVERSATION_PAGES,
+        limit: remainingReviewCommentRows,
         requirePaginationEvidence: true,
       });
+      remainingReviewCommentRows -= codeRows.rows.length;
       commentsTruncated ||= codeRows.truncated;
       const grouped = new Map<
         string,
