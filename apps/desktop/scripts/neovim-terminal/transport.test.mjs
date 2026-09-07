@@ -118,6 +118,10 @@ test("UTF-16 columns become Neovim byte columns without splitting surrogate pair
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-neovim-column-"));
   try {
     const file = NodePath.join(directory, "multibyte.txt");
+    NodeAssert.deepEqual(
+      await neovimArgs({ kind: "file", path: file, line: 2, column: 5, columnEncoding: "utf-16" }),
+      ["+call cursor(2,5)", "--", file],
+    );
     await NodeFSP.writeFile(file, "first\na雪😀z\n");
     NodeAssert.deepEqual(
       await neovimArgs({ kind: "file", path: file, line: 2, column: 5, columnEncoding: "utf-16" }),

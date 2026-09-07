@@ -41,7 +41,10 @@ import {
 } from "../JetBrainsIcons";
 import { cn } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { Link } from "@tanstack/react-router";
 
 type OpenInOption = {
@@ -213,6 +216,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         { kind: compact ? "file" : "directory", path: openInCwd },
         editor,
       );
+      if (isAtomCommandInterrupted(result)) return;
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
         toastManager.add({

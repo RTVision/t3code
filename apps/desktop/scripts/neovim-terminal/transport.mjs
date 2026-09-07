@@ -250,12 +250,15 @@ export async function neovimArgs(target) {
     const line = target.line ?? 1;
     let column = target.column ?? 1;
     if (target.columnEncoding === "utf-16" && column > 1) {
-      const content = await NodeFSP.readFile(target.path, "utf8");
-      const sourceLine = content.split("\n", line)[line - 1] ?? "";
-      const prefix = sourceLine.slice(0, column - 1);
-      if (/[\uD800-\uDBFF]$/u.test(prefix))
-        throw new Error("Column splits a UTF-16 surrogate pair.");
-      column = Buffer.byteLength(prefix, "utf8") + 1;
+      // Position conversion must not prevent opening a missing or unreadable file.
+      const content = await NodeFSP.readFile(target.path, "utf8").catch(() => undefined);
+      if (content !== undefined) {
+        const sourceLine = content.split("\n", line)[line - 1] ?? "";
+        const prefix = sourceLine.slice(0, column - 1);
+        if (/[\uD800-\uDBFF]$/u.test(prefix))
+          throw new Error("Column splits a UTF-16 surrogate pair.");
+        column = Buffer.byteLength(prefix, "utf8") + 1;
+      }
     }
     args.push(`+call cursor(${line},${column})`);
   }

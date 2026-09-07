@@ -125,14 +125,13 @@ export const resolveDesktopSshRunner = Effect.fn("desktop.ssh.resolveRunner")(fu
       message: `The selected WSL SSH distro (${distro ?? "default"}) is unavailable. Check Settings → Connections.`,
     });
   }
-  const home = yield* wsl.getUserHome(distro);
   const ip = yield* wsl.getDistroIp(distro);
-  if (Option.isNone(home) || Option.isNone(ip)) {
+  if (Option.isNone(ip)) {
     return yield* new SshCommandError({
       command: ["wsl.exe"],
       exitCode: null,
       stderr: "",
-      message: `Could not resolve SSH home or network address via WSL (${distro}).`,
+      message: `Could not resolve the network address via WSL (${distro}).`,
     });
   }
   const account = yield* preflightWslSsh(distro);

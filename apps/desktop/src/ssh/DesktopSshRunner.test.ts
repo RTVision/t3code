@@ -1,10 +1,19 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { HostProcessAddresses, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { DEFAULT_DESKTOP_SETTINGS } from "../settings/DesktopAppSettings.ts";
+import { layerTest as wslTestLayer } from "../wsl/DesktopWslEnvironment.ts";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, describe, it } from "@effect/vitest";
-import { matchesSshRunner, selectSshRunner, preflightWslSsh } from "./DesktopSshRunner.ts";
+import {
+  matchesSshRunner,
+  selectSshRunner,
+  preflightWslSsh,
+  resolveDesktopSshRunner,
+} from "./DesktopSshRunner.ts";
 
 describe("desktop SSH runner selection", () => {
   it.effect(
@@ -40,6 +49,30 @@ describe("desktop SSH runner selection", () => {
         yield* preflightWslSsh("Debian").pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner(0)),
         );
+        const runner = yield* resolveDesktopSshRunner({
+          ...DEFAULT_DESKTOP_SETTINGS,
+          wslBackendEnabled: true,
+          sshRunner: "wsl",
+          wslDistro: "Debian",
+        }).pipe(
+          Effect.provide(
+            wslTestLayer({
+              distros: [{ name: "Debian", isDefault: true, version: 2 }],
+              getUserHome: () => Option.none(),
+              getDistroIp: () => Option.some("172.20.0.2"),
+            }),
+          ),
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcessAddresses, Effect.succeed(new Set<string>())),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner(0)),
+        );
+        assert.deepEqual(runner, {
+          kind: "wsl",
+          distro: "Debian",
+          user: "alice",
+          homeDir: "/home/alice",
+          tunnelHost: "172.20.0.2",
+        });
         const failure = yield* Effect.result(
           preflightWslSsh("Debian").pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner(127)),

@@ -502,7 +502,6 @@ const NODE_PTY_PROBE_SCRIPT = (
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
-printf 'runningUser:%s\\n' "$(id -un)"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The WSL Node can't read inside app.asar, so confirm what the server needs is
 // unpacked on the real filesystem before reporting the backend healthy. Exit 3
@@ -663,6 +662,15 @@ export const formatMissingToolsReason = (
   return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
 };
 
+// Account binding must not consume output from user login profiles.
+export const resolveWslRunningUser = Effect.fn("desktop.wsl.resolveRunningUser")(function* (
+  distro: string | null,
+) {
+  const result = yield* runWslShell(distro, "id -un\n", PROBE_TIMEOUT, { resolveNode: false });
+  const user = result.stdout.trim();
+  return result.exitCode === 0 && /^[^\s:]+$/u.test(user) ? user : null;
+});
+
 const ensureNodePtyImpl = (
   distro: string | null,
   linuxRepoRoot: string,
@@ -681,17 +689,21 @@ const ensureNodePtyImpl = (
     );
     const nodePath = parseNodePath(probe.stdout);
     const resolvedPath = parseResolvedPath(probe.stdout);
-    const runningUser = probe.stdout
-      .split(/\r?\n/u)
-      .find((line) => line.startsWith("runningUser:"))
-      ?.slice(12)
-      .trim();
 
     const transportFailureReason = formatWslShellTransportFailureReason(probe.transportFailure);
     if (transportFailureReason !== null) {
       return {
         ok: false,
         reason: transportFailureReason,
+        fatal: false,
+      } as const;
+    }
+
+    const runningUser = yield* resolveWslRunningUser(distro);
+    if (runningUser === null) {
+      return {
+        ok: false,
+        reason: "Could not resolve the WSL account. Retry the connection.",
         fatal: false,
       } as const;
     }

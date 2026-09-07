@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { useEditorPreference } from "./editorPreferenceStorage";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -92,7 +92,10 @@ export function useEditorChoice(
     null,
     NullableEditorChoice,
   );
-  const choice = resolveEditorChoice(explicit, fallback, legacy, effectiveEditors);
+  const choice = useMemo(
+    () => resolveEditorChoice(explicit, fallback, legacy, effectiveEditors),
+    [explicit, fallback, legacy, effectiveEditors],
+  );
   return { choice, select, effectiveEditors, terminal, remote };
 }
 
