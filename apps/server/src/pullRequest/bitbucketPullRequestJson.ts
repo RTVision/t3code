@@ -203,6 +203,11 @@ function trimmed(value: string | null | undefined): string | null {
   return text.length > 0 ? text : null;
 }
 
+function qualifiedRepository(value: string | null | undefined): string | null {
+  const repository = trimmed(value);
+  return repository?.includes("/") ? repository : null;
+}
+
 /**
  * Bitbucket stamps times as `+00:00` with microseconds. The page sorts change requests from
  * every host against each other as plain strings, so they are normalized to the same `Z` form
@@ -293,7 +298,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     url: raw.links.html.href,
     author: toActor(raw.author),
     headBranch: raw.source.branch.name,
-    headRepositoryNameWithOwner: raw.source.repository?.full_name ?? null,
+    headRepositoryNameWithOwner: qualifiedRepository(raw.source.repository?.full_name),
     baseBranch: raw.destination.branch.name,
     state: toState(raw),
     isDraft: raw.draft ?? false,
@@ -328,10 +333,15 @@ export interface BitbucketPage<A> {
   readonly next: string | null;
 }
 
+export interface BitbucketPullRequestPage extends BitbucketPage<BitbucketPullRequest> {
+  /** Rows before decoding; a skipped row cannot silently certify a complete relationship read. */
+  readonly rawCount: number;
+}
+
 /** Malformed entries are skipped rather than failing the page, as on the other hosts. */
 export function decodePullRequestPageJson(
   raw: string,
-): Result.Result<BitbucketPage<BitbucketPullRequest>, DecodeFailure> {
+): Result.Result<BitbucketPullRequestPage, DecodeFailure> {
   const decoded = decodePage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -343,7 +353,11 @@ export function decodePullRequestPageJson(
       items.push(toPullRequest(item.value));
     }
   }
-  return Result.succeed({ items, next: trimmed(decoded.success.next) });
+  return Result.succeed({
+    items,
+    next: trimmed(decoded.success.next),
+    rawCount: decoded.success.values.length,
+  });
 }
 
 export function decodePullRequestJson(

@@ -42,6 +42,21 @@ const RawPipelineSchema = Schema.Struct({
   source: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const GitLabProjectReferenceSchema = Schema.Struct({
+  path: Schema.optional(Schema.String),
+  path_with_namespace: Schema.optional(Schema.String),
+  pathWithNamespace: Schema.optional(Schema.String),
+  namespace: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        path: Schema.optional(Schema.String),
+        full_path: Schema.optional(Schema.String),
+        fullPath: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+
 const RawMergeRequestSchema = Schema.Struct({
   iid: Schema.Int,
   title: Schema.String,
@@ -50,6 +65,11 @@ const RawMergeRequestSchema = Schema.Struct({
   author: Schema.optional(Schema.NullOr(RawUserSchema)),
   source_branch: Schema.String,
   target_branch: Schema.String,
+  /** Present on REST list and detail responses; absent on older or redacted installations. */
+  source_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
+  target_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
+  source_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
+  target_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
@@ -203,6 +223,8 @@ export interface GitLabMergeRequestListItem {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  /** The repository-qualified head ref, or null when GitLab omitted source project metadata. */
+  readonly headRepositoryNameWithOwner: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -244,6 +266,26 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
 function trimmed(value: string | null | undefined): string | null {
   const text = value?.trim() ?? "";
   return text.length > 0 ? text : null;
+}
+
+function projectPathWithNamespace(
+  project: Schema.Schema.Type<typeof GitLabProjectReferenceSchema> | null | undefined,
+): string | null {
+  const explicit = trimmed(project?.path_with_namespace) ?? trimmed(project?.pathWithNamespace);
+  if (explicit?.includes("/")) return explicit;
+
+  const projectPath = trimmed(project?.path);
+  const namespacePath =
+    trimmed(project?.namespace?.full_path) ??
+    trimmed(project?.namespace?.fullPath) ??
+    trimmed(project?.namespace?.path);
+  return projectPath !== null && namespacePath !== null ? `${namespacePath}/${projectPath}` : null;
+}
+
+/** A repository supplied with the request is safe to use only in its qualified form. */
+function requestedRepositoryPath(repository: string | undefined): string | null {
+  const path = trimmed(repository);
+  return path?.includes("/") ? path : null;
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -339,13 +381,23 @@ function toChecks(
 
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
+  repository?: string,
 ): GitLabMergeRequestListItem {
+  const targetProjectPath = projectPathWithNamespace(raw.target_project);
+  const sourceProjectPath =
+    projectPathWithNamespace(raw.source_project) ??
+    (typeof raw.source_project_id === "number" &&
+    typeof raw.target_project_id === "number" &&
+    raw.source_project_id === raw.target_project_id
+      ? (targetProjectPath ?? requestedRepositoryPath(repository))
+      : null);
   return {
     number: raw.iid,
     title: raw.title,
     url: raw.web_url,
     author: toActor(raw.author),
     headBranch: raw.source_branch,
+    headRepositoryNameWithOwner: sourceProjectPath,
     baseBranch: raw.target_branch,
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
@@ -362,8 +414,11 @@ function toListItem(
   };
 }
 
-function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLabMergeRequestDetail {
-  const listItem = toListItem(raw);
+function toDetail(
+  raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
+  repository?: string,
+): GitLabMergeRequestDetail {
+  const listItem = toListItem(raw, repository);
   const autoMerge =
     raw.merge_when_pipeline_succeeds == null && raw.auto_merge_enabled == null
       ? undefined
@@ -425,6 +480,7 @@ export interface GitLabMergeRequestListBatch {
  *  must not blank the whole list. */
 export function decodeMergeRequestListJson(
   raw: string,
+  repository?: string,
 ): Result.Result<GitLabMergeRequestListBatch, DecodeFailure> {
   const decoded = decodeUnknownList(raw);
   if (!Result.isSuccess(decoded)) {
@@ -435,7 +491,7 @@ export function decodeMergeRequestListJson(
   for (const [rawIndex, entry] of decoded.success.entries()) {
     const item = decodeMergeRequestEntry(entry);
     if (Exit.isSuccess(item)) {
-      items.push(toListItem(item.value));
+      items.push(toListItem(item.value, repository));
       rawIndexes.push(rawIndex);
     }
   }
@@ -444,10 +500,11 @@ export function decodeMergeRequestListJson(
 
 export function decodeMergeRequestDetailJson(
   raw: string,
+  repository?: string,
 ): Result.Result<GitLabMergeRequestDetail, DecodeFailure> {
   const decoded = decodeMergeRequest(raw);
   return Result.isSuccess(decoded)
-    ? Result.succeed(toDetail(decoded.success))
+    ? Result.succeed(toDetail(decoded.success, repository))
     : Result.fail(decoded.failure);
 }
 

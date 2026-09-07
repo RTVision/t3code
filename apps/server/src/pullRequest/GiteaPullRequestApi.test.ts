@@ -144,12 +144,30 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
-  it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () => Effect.gen(function* () {
-    mockedRequest.mockReturnValueOnce(Effect.fail(new GiteaApi.GiteaApiError({operation: "getFeatures", reason: "failed", detail: "temporarily unavailable"}))).mockReturnValueOnce(Effect.succeed(response([{id: 1, type: "pull_scheduled_merge"}])));
-    const api = yield* GiteaPullRequestApi.make;
-    expect(yield* api.getAutoMergeEnabled({host: "forge.example.test", repository: "acme/web", number: 7})).toBe(true);
-    expect(callAt(1).path).toContain("/timeline?");
-  }));
+  it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GiteaApi.GiteaApiError({
+              operation: "getFeatures",
+              reason: "failed",
+              detail: "temporarily unavailable",
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response([{ id: 1, type: "pull_scheduled_merge" }])));
+      const api = yield* GiteaPullRequestApi.make;
+      expect(
+        yield* api.getAutoMergeEnabled({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        }),
+      ).toBe(true);
+      expect(callAt(1).path).toContain("/timeline?");
+    }),
+  );
   it.effect("approves only the current pull request's waiting workflow runs", () =>
     Effect.gen(function* () {
       const pull = rawPullRequest(7);
@@ -342,6 +360,227 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("marks a bounded dependency read partial when an exhausted page skips a row", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([rawPullRequest(1), { number: "broken" }], { "x-total-count": "2" }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([1]);
+      assert.strictEqual(page.consumed, 2);
+      assert.isTrue(page.truncated);
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("returns a partial dependency page after four raw pages", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation(() =>
+        Effect.succeed(
+          response(
+            Array.from({ length: 50 }, () => ({ number: "broken" })),
+            {
+              "x-total-count": "250",
+            },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      expect(page.items).toEqual([]);
+      assert.strictEqual(page.consumed, 200);
+      assert.isTrue(page.truncated);
+      assert.strictEqual(mockedRequest.mock.calls.length, 4);
+      expect(callAt(3).path).toContain("page=4");
+    }),
+  );
+
+  it.effect("uses the stored branch label without treating an internal pull ref as live", () =>
+    Effect.gen(function* () {
+      // Field projection follows the captured deleted-fork fixture. Keeping the source repository
+      // here models the separately source-verified deleted-branch case for an open pull request.
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            [
+              rawPullRequest(9, {
+                base: {
+                  ref: "main",
+                  repo_id: 5,
+                  repo: { id: 5, full_name: "acme/web" },
+                },
+                head: {
+                  ref: "refs/pull/9/head",
+                  label: "fork-head",
+                  repo_id: 6,
+                  repo: { id: 6, full_name: "acme/web-fork" },
+                },
+              }),
+            ],
+            { "x-total-count": "1" },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      assert.strictEqual(page.items[0]?.relationshipHeadBranch, "fork-head");
+      assert.isFalse(page.items[0]?.headBranchAvailable);
+      assert.strictEqual(page.items[0]?.headRepositoryNameWithOwner, "acme/web-fork");
+      assert.isFalse(page.truncated);
+      expect(callAt(0).path).toContain("sort=oldest");
+    }),
+  );
+
+  it.effect("marks duplicate dependency identities and inconsistent counts partial", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response([rawPullRequest(1), rawPullRequest(1)], { "x-total-count": "1" })),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([1]);
+      assert.strictEqual(page.consumed, 2);
+      assert.isTrue(page.truncated);
+    }),
+  );
+
+  it.effect("rejects a mismatched dependency target without claiming complete coverage", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            [
+              rawPullRequest(1, {
+                base: { ref: "main", repo: { id: 9, full_name: "other/web" } },
+              }),
+            ],
+            { "x-total-count": "1" },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      expect(page.items).toEqual([]);
+      assert.isTrue(page.truncated);
+    }),
+  );
+
+  it.effect("keeps conflicting repository IDs partial even when full names agree", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            [
+              rawPullRequest(1, {
+                base: { ref: "main", repo: { id: 9, full_name: "acme/web" } },
+                head: { ref: "feature", label: "feature", repo: { id: 10, full_name: "acme/web" } },
+              }),
+            ],
+            { "x-total-count": "1" },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+      expect(page.items[0]?.headRepositoryNameWithOwner).toBe("acme/web");
+      expect(page.items[0]?.headRepositoryId).toBe(10);
+      expect(page.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("retains conflicting repo_id evidence when nested repository IDs are null", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            [
+              rawPullRequest(1, {
+                base: { ref: "main", repo_id: 9, repo: { id: null, full_name: "acme/web" } },
+                head: {
+                  ref: "feature",
+                  label: "feature",
+                  repo_id: 10,
+                  repo: { id: null, full_name: "acme/web" },
+                },
+              }),
+            ],
+            { "x-total-count": "1" },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "",
+        limit: 200,
+        relationshipOnly: true,
+      });
+
+      expect(page.items[0]?.baseRepositoryId).toBe(9);
+      expect(page.items[0]?.headRepositoryId).toBe(10);
+      expect(page.truncated).toBe(true);
+    }),
+  );
+
   it.effect("walks later pages until involvement filtering fills the requested slice", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -399,6 +638,77 @@ layer("GiteaPullRequestApi", (it) => {
       assert.strictEqual(page.consumed, 2);
       assert.isTrue(page.truncated);
       expect(callAt(0).path).toContain("page=1");
+    }),
+  );
+
+  it.effect("continues from a server-clamped relationship page", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((request) => {
+        const url = new URL(request.path, "https://forge.example.test");
+        const page = Number(url.searchParams.get("page"));
+        const first = (page - 1) * 20 + 1;
+        return Effect.succeed(
+          response(
+            Array.from({ length: 20 }, (_, index) => rawPullRequest(first + index)),
+            {
+              "x-total-count": "200",
+              ...(page < 10
+                ? {
+                    link: `<https://forge.example.test/gitea/api/v1/repos/acme/web/pulls?page=${page + 1}&limit=50>; rel="next"`,
+                  }
+                : {}),
+            },
+          ),
+        );
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 200,
+        relationshipOnly: true,
+        cursor: {
+          updatedBefore: "2026-09-02T10:20:00.000Z",
+          delivered: 80,
+        },
+      });
+
+      expect(page.items).toHaveLength(60);
+      assert.strictEqual(page.items[0]?.number, 81);
+      assert.strictEqual(page.items[59]?.number, 140);
+      assert.strictEqual(page.consumed, 60);
+      assert.isTrue(page.truncated);
+      expect(mockedRequest).toHaveBeenCalledTimes(4);
+      expect(callAt(0).path).toContain("page=1");
+      expect(callAt(1).path).toContain("page=5");
+      expect(callAt(3).path).toContain("page=7");
+    }),
+  );
+
+  it.effect("keeps relationship discovery with a query on the bounded listing path", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response([rawPullRequest(1)], { "x-total-count": "1" })),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "reviewer",
+        limit: 200,
+        query: "ignored for relationship discovery",
+        relationshipOnly: true,
+      });
+
+      expect(page.items.map((item) => item.number)).toEqual([1]);
+      expect(mockedRequest).toHaveBeenCalledTimes(1);
+      expect(callAt(0).path).toContain("/repos/acme/web/pulls?");
+      expect(callAt(0).path).not.toContain("/issues?");
     }),
   );
 

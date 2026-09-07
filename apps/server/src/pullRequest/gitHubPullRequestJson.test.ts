@@ -73,6 +73,56 @@ describe("pull request list decoding", () => {
     expect(entry?.reviewRequestLogins).toEqual(["octocat"]);
   });
 
+  it("maps a qualified head repository on list responses", () => {
+    const [entry] = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            headRepository: { nameWithOwner: "contributor/web", name: "web" },
+            headRepositoryOwner: { login: "contributor" },
+            isCrossRepository: true,
+          },
+        ]),
+      ),
+    ).items;
+
+    expect(entry).toMatchObject({
+      headRepositoryNameWithOwner: "contributor/web",
+      isCrossRepository: true,
+    });
+  });
+
+  it("uses the owner and repository fields when older gh output lacks nameWithOwner", () => {
+    const [entry] = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            headRepository: { name: "web" },
+            headRepositoryOwner: { login: "acme" },
+          },
+        ]),
+      ),
+    ).items;
+
+    expect(entry?.headRepositoryNameWithOwner).toBe("acme/web");
+  });
+
+  it("does not turn a bare or deleted head repository into the target identity", () => {
+    const entries = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          { headRepository: { name: "web" }, headRepositoryOwner: null },
+          { headRepository: null, headRepositoryOwner: null, isCrossRepository: true },
+        ]),
+      ),
+    ).items;
+
+    expect(entries.map((entry) => entry.headRepositoryNameWithOwner)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("normalizes the review decision and reports nothing for one GitHub does not summarize", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
@@ -214,6 +264,43 @@ describe("pull request detail decoding", () => {
         ],
       },
     ],
+  });
+
+  it("maps the qualified head repository on detail responses", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          isCrossRepository: true,
+          headRepository: { nameWithOwner: "contributor/web", name: "web" },
+          headRepositoryOwner: { login: "contributor" },
+        }),
+      ),
+    );
+
+    expect(detail).toMatchObject({
+      headRepositoryNameWithOwner: "contributor/web",
+      headRepositoryOwner: "contributor",
+      isCrossRepository: true,
+    });
+  });
+
+  it("leaves a deleted head repository unresolved on detail responses", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          isCrossRepository: true,
+          headRepository: null,
+          headRepositoryOwner: null,
+        }),
+      ),
+    );
+
+    expect(detail.headRepositoryNameWithOwner).toBeUndefined();
+    expect(detail.headRepositoryOwner).toBeNull();
   });
 
   it("maps check-run status and commit-status state onto one vocabulary", () => {
