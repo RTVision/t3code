@@ -18,15 +18,12 @@ import {
   BackendInstanceId,
   PRIMARY_INSTANCE_ID,
 } from "../../backend/DesktopBackendPool.ts";
-import { DesktopSavedEnvironments } from "../../settings/DesktopSavedEnvironments.ts";
+import { DesktopConnectionCatalogStore } from "../../app/DesktopConnectionCatalogStore.ts";
+import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { WSL_INSTANCE_ID_PREFIX } from "../../wsl/DesktopWslBackend.ts";
 import { DesktopAppSettings } from "../../settings/DesktopAppSettings.ts";
 import { matchesSshRunner, selectSshRunner } from "../../ssh/DesktopSshRunner.ts";
-import {
-  TerminalEditorRuntime,
-  routeHash,
-  type EditorRouteDescriptor,
-} from "../../editors/terminalEditorRuntime.ts";
+import { TerminalEditorRuntime, routeHash } from "../../editors/terminalEditorRuntime.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -60,14 +57,11 @@ const runtime = Effect.gen(function* () {
   return value;
 });
 
+const decodeCatalog = Schema.decodeEffect(Schema.fromJsonString(ConnectionCatalogDocument));
+
 export const resolveEditorRoute = Effect.fn("desktop.editors.resolveRoute")(function* (
   connection: DesktopEditorConnectionRef,
-): Effect.fn.Return<
-  EditorRouteDescriptor,
-  | TerminalEditorRouteError
-  | import("../../settings/DesktopSavedEnvironments.ts").DesktopSavedEnvironmentsReadRegistryError,
-  DesktopBackendPool | DesktopEnvironment | DesktopSavedEnvironments | DesktopAppSettings
-> {
+) {
   const pool = yield* DesktopBackendPool;
   const environment = yield* DesktopEnvironment;
   if (connection.kind !== "saved") {
@@ -103,21 +97,23 @@ export const resolveEditorRoute = Effect.fn("desktop.editors.resolveRoute")(func
       };
     }
     return {
-      route: { kind: "native" },
+      route: { kind: "native" } as const,
       identity: routeHash([connection, "native"]),
       generation: routeHash([connection, Option.getOrNull(snapshot.activePid)]),
     };
   }
-  const registry = yield* DesktopSavedEnvironments;
-  const record = (yield* registry.getRegistry).find(
-    (record) => record.environmentId === connection.environmentId,
+  const stored = yield* (yield* DesktopConnectionCatalogStore).get;
+  const catalog = Option.isSome(stored) ? yield* decodeCatalog(stored.value) : null;
+  const record = catalog?.profiles.find(
+    (profile) =>
+      profile.environmentId === connection.environmentId && profile._tag === "SshConnectionProfile",
   );
-  if (!record?.desktopSsh)
+  if (record?._tag !== "SshConnectionProfile")
     return yield* unavailable(
       "ssh-association-required",
       "Add and select this host as a saved SSH environment in Settings → Connections to open Neovim on it.",
     );
-  const target = record.desktopSsh;
+  const target = record.target;
   const settings = yield* (yield* DesktopAppSettings).get;
   const common = {
     host: target.alias || target.hostname,
@@ -159,6 +155,7 @@ export const resolveEditorRoute = Effect.fn("desktop.editors.resolveRoute")(func
       kind: "wsl-ssh",
       distro: target.runner.distro,
       user: target.runner.user,
+      ...(config.wslNodePath ? { node: config.wslNodePath } : {}),
       ...common,
     } as const;
     return {
@@ -166,8 +163,8 @@ export const resolveEditorRoute = Effect.fn("desktop.editors.resolveRoute")(func
       identity: routeHash([connection, target]),
       generation: routeHash([
         target,
-        record.lastConnectedAt,
-        record.httpBaseUrl,
+        record.connectionId,
+        config.wslNodePath,
         settings.sshRunner,
         settings.wslOnly,
         settings.wslDistro,
@@ -186,9 +183,9 @@ export const resolveEditorRoute = Effect.fn("desktop.editors.resolveRoute")(func
       "Restore this environment's SSH runner in Settings → Connections. Neovim will not switch credential stores.",
     );
   return {
-    route: { kind: "ssh", ...common },
+    route: { kind: "ssh", ...common } as const,
     identity: routeHash([connection, target]),
-    generation: routeHash([target, record.lastConnectedAt, record.httpBaseUrl]),
+    generation: routeHash([target, record.connectionId]),
   };
 });
 

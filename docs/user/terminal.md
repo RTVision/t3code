@@ -19,13 +19,16 @@ terminal session continues when you close T3 Code.
 installation, or set an absolute Neovim executable path for an environment.
 Detection and launch use the target account's Bash login PATH for WSL and Linux
 SSH environments; interactive-only shell aliases are not supported. The account
-also needs Node.js in that login PATH for the launcher.
+also needs Node.js for the launcher. WSL uses the connected backend's Node.js
+runtime when available; SSH hosts need Node.js in the account's login PATH.
 
 Remote projects must use a saved SSH environment configured in
 **Settings → Connections**. The session uses that environment's native Windows
 or WSL SSH credentials. If detection requires SSH sign-in, choose the labeled
 **Check on open** option and authenticate in the new terminal. Changing the SSH
 runner, WSL distro or account can require reconnecting the saved environment.
+SSH may ask for authentication twice: once to prepare the helper and once to open
+the editor session.
 
 External terminal launching requires the Windows desktop app with terminal editor
 support. Browser, mobile and older desktop clients retain their existing GUI

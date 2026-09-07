@@ -18,11 +18,17 @@ export const ProbeResult = Schema.Struct({
 export type ProbeResult = typeof ProbeResult.Type;
 const decodeProbeResult = Schema.decodeUnknownSync(ProbeResult);
 
+export function checkPosixNode(node?: string) {
+  return `${node ? `node_path=${quotePosix(node)}` : "node_path=$(command -v node) || { echo T3NEOVIM_RUNTIME_MISSING >&2; exit 72; }"}
+"$node_path" --version >/dev/null 2>&1 || { echo T3NEOVIM_RUNTIME_MISSING >&2; exit 72; }
+`;
+}
+
 // A fixed program decodes the override as data and probes without loading Neovim config.
 export function neovimProbeScript(override: string | null, node?: string) {
   const token = NodeBuffer.Buffer.from(JSON.stringify(override)).toString("base64");
   return `set -eu
-${node ? `node_path=${quotePosix(node)}` : "node_path=$(command -v node) || { echo T3NEOVIM_RUNTIME_MISSING >&2; exit 72; }"}
+${checkPosixNode(node)}
 "$node_path" --input-type=module <<'T3_NEOVIM_PROBE'
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -87,7 +93,7 @@ export async function probePosixRoute(
       }),
     );
   }
-  const command = `exec ssh ${args.map(quotePosix).join(" ")} <<'T3_NEOVIM_REMOTE'\n${script}\nT3_NEOVIM_REMOTE\n`;
+  const command = `${checkPosixNode(route.node)}exec ssh ${args.map(quotePosix).join(" ")} <<'T3_NEOVIM_REMOTE'\n${script}\nT3_NEOVIM_REMOTE\n`;
   return parseNeovimProbe(
     await run("wsl.exe", [...wslArgs(route), "/bin/bash", "-l", "-s"], {
       input: command,

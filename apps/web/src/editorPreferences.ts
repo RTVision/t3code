@@ -16,7 +16,8 @@ import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { getLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { getLocalStorageItem } from "./hooks/useLocalStorage";
+import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect } from "react";
 import { randomUUID } from "./lib/utils";
 import { shellEnvironment } from "./state/shell";
@@ -63,17 +64,17 @@ export function useEditorChoice(
   const remote = useRemoteOpenResolution(environmentId);
   const remoteEditors = useRemoteCapableEditors();
   const effectiveEditors = remote.state.mode === "local-exec" ? availableEditors : remoteEditors;
-  const [legacy] = useLocalStorage<EditorId | null, EditorId | null>(
+  const [legacy] = useEditorPreference<EditorId | null, EditorId | null>(
     LAST_EDITOR_KEY,
     null,
     NullableEditorId,
   );
-  const [fallback, setFallback] = useLocalStorage<EditorChoice | null, EditorChoice | null>(
+  const [fallback, setFallback] = useEditorPreference<EditorChoice | null, EditorChoice | null>(
     "t3code:editor-choice:v1",
     null,
     NullableEditorChoice,
   );
-  const [routeKey, setRouteKey] = useLocalStorage(
+  const [routeKey, setRouteKey] = useEditorPreference(
     `t3code:editor-route:v1:${environmentId ?? "none"}`,
     "",
     Schema.String,
@@ -86,7 +87,7 @@ export function useEditorChoice(
     if (terminal.capability.preferenceKey && routeKey !== terminal.capability.preferenceKey)
       setRouteKey(terminal.capability.preferenceKey);
   }, [terminal.capability.preferenceKey, routeKey, setRouteKey]);
-  const [explicit, select] = useLocalStorage<EditorChoice | null, EditorChoice | null>(
+  const [explicit, select] = useEditorPreference<EditorChoice | null, EditorChoice | null>(
     `t3code:editor-choice:v1:${environmentId ?? "none"}:${currentRouteKey}`,
     null,
     NullableEditorChoice,

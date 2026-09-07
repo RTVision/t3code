@@ -1,8 +1,7 @@
 # Validate the external Neovim launcher
 
 Validate the desktop integration through Settings → Editors and the Open menu.
-The standalone harness below can isolate transport failures. Keep the feature PR
-in draft until the packaged Windows and interactive SSH checks pass.
+The standalone harness below can isolate transport failures.
 
 Build the Windows desktop from this branch using the normal desktop artifact
 procedure. Use the resulting packaged executable: a development Node process

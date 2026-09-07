@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import type { TerminalEditorOpenRequest } from "@t3tools/contracts";
 import { TerminalEditorRuntime, type EditorRouteDescriptor } from "./terminalEditorRuntime.ts";
-import { parseNeovimProbe, neovimProbeScript } from "./terminalProbe.ts";
+import { parseNeovimProbe, neovimProbeScript, checkPosixNode } from "./terminalProbe.ts";
 import { run } from "../../scripts/neovim-terminal/transport.mjs";
 
 const directories: string[] = [];
@@ -205,6 +205,20 @@ it.skipIf(NodeOS.platform() === "win32")(
         env: { PATH: directory },
         capture: true,
         timeout: 15_000,
+      }),
+    ).rejects.toThrow(/T3NEOVIM_RUNTIME_MISSING/u);
+  },
+);
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Real Bash subprocess fixtures require a POSIX host.
+it.skipIf(NodeOS.platform() === "win32")(
+  "rejects a missing WSL-hop runtime before reaching SSH",
+  async () => {
+    await expect(
+      run("/bin/bash", ["-s"], {
+        input: checkPosixNode("/missing/t3-node") + "echo SSH_WOULD_RUN",
+        capture: true,
+        timeout: 10000,
       }),
     ).rejects.toThrow(/T3NEOVIM_RUNTIME_MISSING/u);
   },
