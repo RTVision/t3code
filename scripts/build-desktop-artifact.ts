@@ -1098,7 +1098,7 @@ export const WINDOWS_NEOVIM_HELPER_RESOURCES = [
   {
     from: "apps/desktop/scripts/neovim-terminal",
     to: "neovim-terminal",
-    filter: ["launch.ps1", "session.mjs", "transport.mjs", "spike.mjs"],
+    filter: ["launch.ps1", "session.mjs", "transport.mjs"],
   },
 ] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [

@@ -279,7 +279,11 @@ export const OpenInPicker = memo(function OpenInPicker({
         </span>
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
-      <Menu>
+      <Menu
+        onOpenChange={(open) => {
+          if (open) void dispatch.terminal.refresh();
+        }}
+      >
         <MenuTrigger
           render={
             <Button

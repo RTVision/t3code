@@ -56,8 +56,10 @@ configuration, ProxyJump, keys and known hosts come from the selected account.
 Do not supply passwords or keys in the request. For native Windows Neovim, use
 `route: { "kind": "native" }`, `platform: "win32"` and Windows paths.
 
-Run from PowerShell, replacing these paths with the packaged installation and
-your request file:
+For this manual test only, copy `apps/desktop/scripts/neovim-terminal/spike.mjs`
+from the checkout into the test package’s `resources/neovim-terminal` directory.
+The harness is not shipped to users. Run from PowerShell, replacing these paths
+with the test package and your request file:
 
 ```powershell
 $runtime = 'C:\path\to\T3 Code (Alpha).exe'

@@ -250,3 +250,18 @@ test("distinguishes a missing configured executable from empty PATH discovery", 
   await NodeAssert.rejects(findNeovim(missing), /configured Neovim executable is not runnable/u);
   await NodeAssert.rejects(findNeovim(undefined, { PATH: "" }), /login PATH/u);
 });
+
+test("early stdin closure preserves the child authentication error", async () => {
+  await NodeAssert.rejects(
+    run(
+      process.execPath,
+      ["-e", "process.stderr.write('Permission denied (publickey).'); process.exit(255)"],
+      {
+        input: "x".repeat(4 * 1024 * 1024),
+        capture: true,
+        timeout: 10000,
+      },
+    ),
+    /Permission denied \(publickey\)/u,
+  );
+});

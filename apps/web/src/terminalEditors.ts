@@ -4,7 +4,7 @@ import type {
   TerminalEditorProbeInput,
 } from "@t3tools/contracts";
 import { terminalEditorConnectionRef } from "@t3tools/client-runtime/editor-choice";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { environmentCatalog } from "./connection/catalog";
 import { useEnvironmentPresentation } from "./state/presentation";
 import { useEnvironmentQuery } from "./state/query";
@@ -24,8 +24,20 @@ const DISCONNECTED: TerminalEditorCapability = {
   reason: "disconnected",
   message: "Connect the environment to check Neovim.",
 };
-const cache = new Map<string, { expires: number; result: Promise<TerminalEditorCapability> }>();
-let revision = 0;
+const DESKTOP_REQUIRED: TerminalEditorCapability = {
+  ...CHECKING,
+  state: "unavailable",
+  reason: "desktop-required",
+  message: "Neovim (Terminal) requires a desktop app with terminal editor support.",
+};
+const cache = new Map<
+  string,
+  {
+    expires: number;
+    value: TerminalEditorCapability;
+    result: Promise<TerminalEditorCapability>;
+  }
+>();
 const listeners = new Set<() => void>();
 function subscribe(listener: () => void) {
   listeners.add(listener);
@@ -33,36 +45,43 @@ function subscribe(listener: () => void) {
     listeners.delete(listener);
   };
 }
-export function invalidateTerminalEditors() {
-  cache.clear();
-  revision++;
+function notify() {
   for (const listener of listeners) listener();
 }
+export function invalidateTerminalEditors() {
+  cache.clear();
+  notify();
+}
+// Reading a capability never starts a probe. Only editor actions and discovery UI refresh it.
 function probe(input: TerminalEditorProbeInput) {
-  const key = JSON.stringify(input);
+  const key = JSON.stringify({
+    connection: input.connection,
+    connectionGeneration: input.connectionGeneration,
+  });
   const existing = cache.get(key);
-  if (existing && existing.expires > performance.now()) return existing.result;
+  if (!input.rescan && existing && existing.expires > performance.now()) return existing.result;
   const bridge = window.desktopBridge?.probeTerminalEditor;
-  if (!bridge)
-    return Promise.resolve({
-      ...CHECKING,
-      state: "unavailable" as const,
-      reason: "desktop-required" as const,
-      message: "Neovim (Terminal) requires a desktop app with terminal editor support.",
-    });
+  if (!bridge) return Promise.resolve(DESKTOP_REQUIRED);
   const entry = {
     expires: Infinity,
-    result: bridge(input).catch((error: unknown): TerminalEditorCapability => ({
-      ...CHECKING,
-      state: "unavailable",
-      reason: "probe-error",
-      message: error instanceof Error ? error.message : "Could not check Neovim.",
-    })),
+    value: CHECKING,
+    result: Promise.resolve()
+      .then(() => bridge(input))
+      .catch((error: unknown): TerminalEditorCapability => ({
+        ...CHECKING,
+        state: "unavailable",
+        reason: "probe-error",
+        message: error instanceof Error ? error.message : "Could not check Neovim.",
+      })),
   };
   cache.set(key, entry);
   if (cache.size > 64) cache.delete(cache.keys().next().value!);
+  notify();
   void entry.result.then((value) => {
-    entry.expires = performance.now() + (value.state === "available" ? 60_000 : 5_000);
+    if (cache.get(key) !== entry) return;
+    entry.value = value;
+    entry.expires = performance.now() + 60_000;
+    notify();
   });
   return entry.result;
 }
@@ -82,11 +101,12 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
     () => (connection ? { connection, connectionGeneration: generation } : null),
     [connection, generation],
   );
-  const currentRevision = useSyncExternalStore(subscribe, () => revision);
-  const key = JSON.stringify([input, currentRevision]);
-  const [response, setResponse] = useState<{ key: string; value: TerminalEditorCapability } | null>(
-    null,
-  );
+  const key = JSON.stringify(input);
+  const capability = useSyncExternalStore(subscribe, () => {
+    if (!connected || !input) return DISCONNECTED;
+    if (!window.desktopBridge?.probeTerminalEditor) return DESKTOP_REQUIRED;
+    return cache.get(key)?.value ?? CHECKING;
+  });
   const refresh = useCallback(
     async (rescan = false) => {
       if (!connected || !input) return DISCONNECTED;
@@ -94,20 +114,7 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
     },
     [connected, input],
   );
-  useEffect(() => {
-    let stale = false;
-    void refresh().then((value) => {
-      if (!stale) setResponse({ key, value });
-    });
-    return () => {
-      stale = true;
-    };
-  }, [refresh, key]);
-  const capability = !connected ? DISCONNECTED : response?.key === key ? response.value : CHECKING;
-  const rescan = useCallback(async () => {
-    await refresh(true);
-    invalidateTerminalEditors();
-  }, [refresh]);
+  const rescan = useCallback(() => refresh(true), [refresh]);
   return useMemo(
     () => ({ capability, connection, generation, connected, refresh, rescan }),
     [capability, connection, generation, connected, refresh, rescan],

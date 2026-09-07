@@ -25,7 +25,8 @@ export function resolveEditorChoice(
   legacy: EditorId | null,
   available: readonly EditorId[],
 ): EditorChoice | null {
-  if (explicit) return explicit;
+  if (explicit?.kind === "terminal" || (explicit && available.includes(explicit.editor)))
+    return explicit;
   if (fallback?.kind === "terminal") return fallback;
   const preferred = fallback?.editor ?? legacy;
   const editor =

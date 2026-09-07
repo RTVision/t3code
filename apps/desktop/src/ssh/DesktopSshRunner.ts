@@ -165,6 +165,8 @@ export function matchesSshRunner(
   return (
     saved.kind === current?.kind &&
     (saved.kind !== "wsl" ||
-      (current.kind === "wsl" && saved.distro === current.distro && saved.user === current.user))
+      (current.kind === "wsl" &&
+        saved.distro === current.distro &&
+        (saved.user === undefined || saved.user === current.user)))
   );
 }

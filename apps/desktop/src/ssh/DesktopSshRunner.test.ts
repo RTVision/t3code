@@ -71,7 +71,8 @@ describe("desktop SSH runner selection", () => {
     const wsl = { kind: "wsl", distro: "Debian", user: "alice" } as const;
     assert.isTrue(matchesSshRunner(wsl, { ...wsl }));
     assert.isFalse(matchesSshRunner(wsl, { ...wsl, user: "bob" }));
-    assert.isFalse(matchesSshRunner({ kind: "wsl", distro: "Debian" }, wsl));
+    assert.isTrue(matchesSshRunner({ kind: "wsl", distro: "Debian" }, wsl));
+    assert.isFalse(matchesSshRunner(wsl, { kind: "wsl", distro: "Debian" }));
     assert.isFalse(matchesSshRunner(wsl, { kind: "windows" }));
     assert.isFalse(matchesSshRunner(wsl, { kind: "wsl", distro: "Ubuntu" }));
     assert.isTrue(matchesSshRunner(undefined, { kind: "windows" }));

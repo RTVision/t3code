@@ -15,6 +15,12 @@ describe("editor choice", () => {
       resolveEditorChoice({ kind: "terminal", editor: "neovim" }, null, "vscode", ["vscode"]),
     ).toEqual({ kind: "terminal", editor: "neovim" });
   });
+  it("falls back when an explicit GUI editor is no longer available", () => {
+    expect(
+      resolveEditorChoice({ kind: "gui", editor: "file-manager" }, null, "vscode", ["vscode"]),
+    ).toEqual({ kind: "gui", editor: "vscode" });
+    expect(resolveEditorChoice({ kind: "gui", editor: "cursor" }, null, null, [])).toBeNull();
+  });
   it("migrates legacy choices without silently selecting a terminal editor", () => {
     expect(resolveEditorChoice(null, null, "vscode", ["vscode", "cursor"])).toEqual({
       kind: "gui",

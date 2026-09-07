@@ -1,9 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { EDITORS } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useEditorChoice } from "../../editorPreferences";
-import { invalidateTerminalEditors } from "../../terminalEditors";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
@@ -18,7 +17,10 @@ export function EditorsSettingsPanel() {
       ?.environmentId ?? primary;
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const state = useEditorChoice(environmentId, config?.availableEditors ?? []);
-  const { capability, connection } = state.terminal;
+  const { capability, connection, refresh } = state.terminal;
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
   const draftKey = `${environmentId}:${capability.preferenceKey}`;
   const [draft, setDraft] = useState<{
     key: string;
@@ -50,7 +52,6 @@ export function EditorsSettingsPanel() {
     try {
       await bridge({ connection, terminal, executableOverride: override || null });
       await state.terminal.refresh(true);
-      invalidateTerminalEditors();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save editor settings.");
     } finally {

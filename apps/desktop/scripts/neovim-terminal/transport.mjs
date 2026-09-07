@@ -210,7 +210,7 @@ export function run(command, args, { input, timeout, cwd, capture = false, env }
     });
     if (input !== undefined) {
       child.stdin.on("error", (error) => {
-        if (input.length > 0) failure ??= error;
+        if (input.length > 0 && error.code !== "EPIPE") failure ??= error;
       });
       child.stdin.end(input);
     }
