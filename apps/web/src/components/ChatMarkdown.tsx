@@ -2038,6 +2038,8 @@ function useChatMarkdownState({
   const editorDispatch = useEditorDispatch(environmentId, availableEditors, cwd);
   const preferredEditorMenuLabel = openInEditorMenuLabel(editorDispatch.choice?.editor ?? null);
   const openInPreferredEditor = editorDispatch.open;
+  const canOpenPreferredEditor =
+    canUseShellActions || (environmentId !== null && editorDispatch.choice !== null);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -2308,7 +2310,7 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canOpenPreferredEditor ? { onOpen: openInPreferredEditor } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2335,6 +2337,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOpenPreferredEditor,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

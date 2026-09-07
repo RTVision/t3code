@@ -207,7 +207,7 @@ describe("ChatMarkdown streaming", () => {
 describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
 
-  it("allows editor and file manager actions for local environments", () => {
+  it("allows file manager actions for local environments", () => {
     expect(canUseMarkdownFileShellActions(environmentId, "local-exec", true)).toBe(true);
   });
 
@@ -215,7 +215,7 @@ describe("canUseMarkdownFileShellActions", () => {
     expect(canUseMarkdownFileShellActions(environmentId, "local-exec", false)).toBe(false);
   });
 
-  it("hides editor and file manager actions for remote environments", () => {
+  it("hides file manager actions for remote environments", () => {
     expect(canUseMarkdownFileShellActions(environmentId, "remote-links", true)).toBe(false);
     expect(canUseMarkdownFileShellActions(environmentId, "remote-unavailable", true)).toBe(false);
   });
