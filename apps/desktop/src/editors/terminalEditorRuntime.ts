@@ -262,9 +262,9 @@ export class TerminalEditorRuntime {
       let probe: ProbeResult;
       if (this.operations.probe) probe = await this.operations.probe(descriptor, override);
       else if (descriptor.route.kind === "native") {
-        let executable: string;
+        let discovered: Awaited<ReturnType<typeof findNeovim>>;
         try {
-          executable = await findNeovim(override ?? undefined, this.options.environment);
+          discovered = await findNeovim(override ?? undefined, this.options.environment);
         } catch (error) {
           if (error instanceof Error && error.message.includes("not found"))
             return unavailable(
@@ -273,14 +273,8 @@ export class TerminalEditorRuntime {
             );
           throw error;
         }
-        const version = await run(executable, ["--version"], {
-          input: "",
-          timeout: 10_000,
-          capture: true,
-        });
         probe = {
-          executable,
-          version: version.split(/\r?\n/u)[0] ?? "",
+          ...discovered,
           account: NodeOS.userInfo().username,
           node: this.options.runtime,
         };

@@ -265,3 +265,21 @@ test("early stdin closure preserves the child authentication error", async () =>
     /Permission denied \(publickey\)/u,
   );
 });
+
+test("the helper executes through a symlinked directory instead of silently exiting", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-neovim-link-"));
+  try {
+    const alias = NodePath.join(directory, "linked helper");
+    const source = NodeURL.fileURLToPath(new URL(".", import.meta.url));
+    await NodeFSP.symlink(source, alias, "junction");
+    await NodeAssert.rejects(
+      run(process.execPath, [NodePath.join(alias, "session.mjs"), "bad-token"], {
+        input: "",
+        capture: true,
+      }),
+      /Neovim could not complete the session/u,
+    );
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});

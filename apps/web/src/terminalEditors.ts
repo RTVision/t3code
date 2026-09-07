@@ -80,7 +80,7 @@ function probe(input: TerminalEditorProbeInput) {
   void entry.result.then((value) => {
     if (cache.get(key) !== entry) return;
     entry.value = value;
-    entry.expires = performance.now() + 60_000;
+    entry.expires = performance.now() + (value.state === "available" ? 60_000 : 5_000);
     notify();
   });
   return entry.result;

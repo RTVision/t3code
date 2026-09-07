@@ -79,7 +79,7 @@ it("mounting and scrolling consumers never probes, even after a negative cache e
   });
   expect(bridge).toHaveBeenCalledTimes(1);
   expect(current.capability).toEqual(unavailable);
-  now = 120_000;
+  now = 5_001;
   await renderConsumers(20);
   expect(bridge).toHaveBeenCalledTimes(1);
   await act(async () => {

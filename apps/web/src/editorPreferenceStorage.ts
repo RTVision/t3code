@@ -75,9 +75,11 @@ export function useEditorPreference<T, E>(
   const set = useCallback(
     (next: T) => {
       try {
-        if (next === null) window.localStorage.removeItem(key);
-        else
-          window.localStorage.setItem(key, Schema.encodeSync(Schema.fromJsonString(schema))(next));
+        const serialized =
+          next === null ? null : Schema.encodeSync(Schema.fromJsonString(schema))(next);
+        if (snapshot(key) === serialized) return;
+        if (serialized === null) window.localStorage.removeItem(key);
+        else window.localStorage.setItem(key, serialized);
         window.dispatchEvent(new CustomEvent(changeEvent, { detail: { key } }));
       } catch (error) {
         console.error("Could not save editor preference.", error);

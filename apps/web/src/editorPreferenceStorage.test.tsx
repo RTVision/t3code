@@ -74,3 +74,15 @@ it("shares browser listeners and cached reads across many editor consumers", asy
   await act(() => windowEvents.dispatchEvent(event));
   expect(current).toBe("vscode");
 });
+
+it("writes and notifies only once when many consumers migrate the same preference", async () => {
+  await renderConsumers(40);
+  const write = vi.spyOn(window.localStorage, "setItem");
+  const dispatch = vi.spyOn(windowEvents, "dispatchEvent");
+  await act(() => {
+    for (let index = 0; index < 40; index++) setValue("vscode");
+  });
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(dispatch).toHaveBeenCalledTimes(1);
+  expect(current).toBe("vscode");
+});

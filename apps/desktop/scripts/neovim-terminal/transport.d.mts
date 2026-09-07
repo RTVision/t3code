@@ -48,5 +48,8 @@ export function run(
     env?: NodeJS.ProcessEnv;
   },
 ): Promise<string>;
-export function findNeovim(override?: string, environment?: NodeJS.ProcessEnv): Promise<string>;
+export function findNeovim(
+  override?: string,
+  environment?: NodeJS.ProcessEnv,
+): Promise<{ executable: string; version: string }>;
 export function neovimArgs(target: EditorOpenTarget): Promise<string[]>;

@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeOS from "node:os";
@@ -68,7 +69,7 @@ export async function launchSession(request) {
   if (route.kind === "native") {
     if (request.expectedAccount && NodeOS.userInfo().username !== request.expectedAccount)
       throw new Error("The target account changed. Reconnect and check Neovim again.");
-    const executable = await findNeovim(request.executable);
+    const { executable } = await findNeovim(request.executable);
     await run(executable, await neovimArgs(request.target), { cwd: request.workspace });
     return;
   }
@@ -124,7 +125,8 @@ async function main() {
 }
 if (
   process.argv[1] &&
-  NodeURL.pathToFileURL(NodePath.resolve(process.argv[1])).href === import.meta.url
+  NodeFS.realpathSync(process.argv[1]) ===
+    NodeFS.realpathSync(NodeURL.fileURLToPath(import.meta.url))
 ) {
   main().catch((error) => {
     console.error(`Neovim could not complete the session: ${error.message}`);

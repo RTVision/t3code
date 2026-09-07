@@ -239,7 +239,7 @@ export async function findNeovim(override, environment = process.env) {
       capture: true,
     });
     if (!version.startsWith("NVIM v")) throw new Error("The executable is not Neovim.");
-    return candidate;
+    return { executable: candidate, version: version.split(/\r?\n/u)[0] };
   }
   throw new Error("Neovim was not found in the selected account's login PATH.");
 }
