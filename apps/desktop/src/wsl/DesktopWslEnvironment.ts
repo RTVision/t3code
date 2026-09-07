@@ -58,6 +58,7 @@ export type EnsureWslNodePtyResult =
       readonly ok: true;
       readonly nodePath: string;
       readonly resolvedPath: string;
+      readonly runningUser?: string;
     }
   | {
       readonly ok: false;
@@ -661,6 +662,15 @@ export const formatMissingToolsReason = (
   return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
 };
 
+// Account binding must not consume output from user login profiles.
+export const resolveWslRunningUser = Effect.fn("desktop.wsl.resolveRunningUser")(function* (
+  distro: string | null,
+) {
+  const result = yield* runWslShell(distro, "id -un\n", PROBE_TIMEOUT, { resolveNode: false });
+  const user = result.stdout.trim();
+  return result.exitCode === 0 && /^[^\s:]+$/u.test(user) ? user : null;
+});
+
 const ensureNodePtyImpl = (
   distro: string | null,
   linuxRepoRoot: string,
@@ -685,6 +695,15 @@ const ensureNodePtyImpl = (
       return {
         ok: false,
         reason: transportFailureReason,
+        fatal: false,
+      } as const;
+    }
+
+    const runningUser = yield* resolveWslRunningUser(distro);
+    if (runningUser === null) {
+      return {
+        ok: false,
+        reason: "Could not resolve the WSL account. Retry the connection.",
         fatal: false,
       } as const;
     }
@@ -754,7 +773,7 @@ const ensureNodePtyImpl = (
           fatal: true,
         } as const;
       }
-      return { ok: true, nodePath, resolvedPath } as const;
+      return { ok: true, nodePath, resolvedPath, ...(runningUser ? { runningUser } : {}) } as const;
     }
 
     if (options.allowBuild !== true) {
@@ -835,7 +854,8 @@ const ensureNodePtyImpl = (
         retryLimit: BUILD_TRANSPORT_RETRY_LIMIT,
       } as const;
     }
-    if (build.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
+    if (build.exitCode === 0)
+      return { ok: true, nodePath, resolvedPath, ...(runningUser ? { runningUser } : {}) } as const;
     const trimmedTail = `${build.stdout}${build.stderr}`.trim().slice(-500);
     return {
       ok: false,

@@ -119,6 +119,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
+  probeTerminalEditor: (input) =>
+    ipcRenderer.invoke(IpcChannels.PROBE_TERMINAL_EDITOR_CHANNEL, input),
+  openTerminalEditor: (input) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_TERMINAL_EDITOR_CHANNEL, input),
+  setTerminalEditorSettings: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_TERMINAL_EDITOR_SETTINGS_CHANNEL, input),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {

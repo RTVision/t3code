@@ -147,7 +147,7 @@ export function prepareTargetForSshRunner(
         exitCode: null,
         stderr: "",
         message:
-          "This saved SSH environment uses a different SSH runner or WSL distro. Restore its runner in Settings → Connections, or remove and add the environment again.",
+          "This saved SSH environment uses a different SSH runner, WSL distro or account. Restore its runner in Settings → Connections, or remove and add the environment again.",
       }),
     );
   }

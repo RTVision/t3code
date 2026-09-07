@@ -12,6 +12,7 @@ export type SshRunner =
   | {
       readonly kind: "wsl";
       readonly distro: string;
+      readonly user?: string;
       readonly homeDir: string;
       readonly tunnelHost: string;
     };
@@ -114,6 +115,7 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
             [
               "-d",
               runner.distro,
+              ...(runner.user ? ["--user", runner.user] : []),
               "--exec",
               "sh",
               "-c",
@@ -134,6 +136,7 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
       [
         "-d",
         runner.distro,
+        ...(runner.user ? ["--user", runner.user] : []),
         "--exec",
         "bash",
         "-lc",

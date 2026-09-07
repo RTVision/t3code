@@ -1,4 +1,11 @@
 import type {
+  TerminalEditorProbeInput,
+  TerminalEditorCapability,
+  TerminalEditorSettingsInput,
+  TerminalEditorOpenRequest,
+  TerminalEditorLaunchResult,
+} from "./terminalEditor.ts";
+import type {
   VcsCreateRefInput,
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
@@ -308,7 +315,11 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
 
 export const DesktopSshRunnerSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("windows") }),
-  Schema.Struct({ kind: Schema.Literal("wsl"), distro: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("wsl"),
+    distro: Schema.String,
+    user: Schema.optionalKey(Schema.String),
+  }),
 ]);
 
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
@@ -1069,6 +1080,9 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  probeTerminalEditor?: (input: TerminalEditorProbeInput) => Promise<TerminalEditorCapability>;
+  openTerminalEditor?: (input: TerminalEditorOpenRequest) => Promise<TerminalEditorLaunchResult>;
+  setTerminalEditorSettings?: (input: TerminalEditorSettingsInput) => Promise<void>;
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
