@@ -1053,7 +1053,6 @@ export const make = Effect.gen(function* () {
     limit: number;
     nullAsEmpty?: boolean;
     requirePaginationEvidence?: boolean;
-    nullAsEmpty?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
