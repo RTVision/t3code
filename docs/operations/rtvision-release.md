@@ -6,6 +6,9 @@ updater metadata, checksums, and the `@rtvision/t3` npm tarball. Desktop install
 are unsigned. The npm registry is reachable only on RTVision's network, so npm
 publication runs locally.
 
+Desktop and CLI builds load `.env.example` to enable upstream's production T3
+Connect service. Its Clerk identifiers and relay URL are public build settings.
+
 Run `node scripts/update-release-package-versions.ts <version>` with a new stable
 version, commit the changes on `rtvision`, and push. Changing the server package
 version triggers the workflow. Desktop updates use `RTVision/t3code`; server
