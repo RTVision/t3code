@@ -104,6 +104,8 @@ export interface ProviderChangeRequestSummary {
 }
 
 export interface ProviderChangeRequestPage {
+  /** Optional enrichment failed; pagination still describes only the rows the host returned. */
+  readonly coverageWarning?: string;
   readonly items: ReadonlyArray<ProviderChangeRequest>;
   /** True when the host has more rows than the page size asked for. */
   readonly truncated: boolean;

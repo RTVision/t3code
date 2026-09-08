@@ -677,7 +677,7 @@ describe("DesktopBackendConfiguration", () => {
                   isAvailable: true,
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                   windowsToWslPath: () => Option.some(linuxAppRoot),
-                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
+                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath, runningUser: "alice" }),
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
               ),
@@ -694,10 +694,14 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
 
+        assert.equal(config.runningUser, "alice");
+        assert.equal(config.wslNodePath, nodePath);
         assert.equal(config.bootstrapDelivery, "stdin");
         assert.deepEqual(config.args, [
           "-d",
           "Ubuntu",
+          "--user",
+          "alice",
           "--exec",
           "env",
           "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
