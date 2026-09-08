@@ -26,7 +26,7 @@ const GiteaConfig = Config.all({
 
 const GiteaViewer = Schema.Struct({ login: TrimmedNonEmptyString });
 
-export class GiteaApiError extends Schema.TaggedErrorClass<GiteaApiError>()("GiteaApiError", {
+export class GiteaApiError extends Schema.TaggedError<GiteaApiError>()("GiteaApiError", {
   operation: Schema.String,
   reason: Schema.Literals(["unconfigured", "unauthenticated", "rate-limited", "failed"]),
   detail: Schema.String,

@@ -32,7 +32,8 @@ import { invalidateTerminalEditors, useTerminalEditor } from "./terminalEditors"
 const NullableEditorId = Schema.NullOr(EditorId);
 const NullableEditorChoice = Schema.NullOr(EditorChoice);
 const LAST_EDITOR_KEY = "t3code:last-editor";
-export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedErrorClass<PreferredEditorEnvironmentRequiredError>()(
+
+export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",
   { targetPath: Schema.String },
 ) {
@@ -40,7 +41,8 @@ export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedErrorC
     return `Cannot open ${this.targetPath} because no environment is selected.`;
   }
 }
-export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<PreferredEditorUnavailableError>()(
+
+export class PreferredEditorUnavailableError extends Schema.TaggedError<PreferredEditorUnavailableError>()(
   "PreferredEditorUnavailableError",
   {
     environmentId: EnvironmentId,
@@ -52,7 +54,7 @@ export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<Pre
     return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
   }
 }
-export class EditorOpenError extends Schema.TaggedErrorClass<EditorOpenError>()("EditorOpenError", {
+export class EditorOpenError extends Schema.TaggedError<EditorOpenError>()("EditorOpenError", {
   message: Schema.String,
 }) {}
 

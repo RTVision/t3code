@@ -1026,7 +1026,7 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
-  it.effect.each(["local tunnel", "remote server"] as const)(
+  it.effect.each(["local tunnel", "remote server", "failed remote server"] as const)(
     "waits for %s shutdown before reconnecting the same target",
     (stalledStep) =>
       Effect.gen(function* () {
@@ -1072,14 +1072,20 @@ describe("ssh tunnel scripts", () => {
             }
             const stop = makeSuccessfulProcess('{"stopped":true}\n');
             if (!isTarget) return stop;
-            const pause = ++stops === 1 && stalledStep === "remote server";
+            const pause = ++stops === 1 && stalledStep !== "local tunnel";
+            const fail = pause && stalledStep === "failed remote server";
             return {
               ...stop,
+              stderr: fail
+                ? Stream.make(
+                    new TextEncoder().encode("Remote T3 server did not stop within 2 seconds.\n"),
+                  )
+                : stop.stderr,
               exitCode: (pause ? pauseShutdown : Effect.void).pipe(
                 Effect.andThen(
                   Effect.sync(() => {
-                    remoteRunning = false;
-                    return ChildProcessSpawner.ExitCode(0);
+                    remoteRunning = fail;
+                    return ChildProcessSpawner.ExitCode(fail ? 1 : 0);
                   }),
                 ),
               ),
@@ -1097,7 +1103,9 @@ describe("ssh tunnel scripts", () => {
         yield* Effect.gen(function* () {
           const manager = yield* SshEnvironmentManager;
           yield* manager.ensureEnvironment(target);
-          const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(target));
+          const disconnect = yield* Effect.forkChild(
+            Effect.result(manager.disconnectEnvironment(target)),
+          );
           yield* Deferred.await(shutdownStarted);
           const firstReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
           const secondReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
@@ -1112,7 +1120,8 @@ describe("ssh tunnel scripts", () => {
           yield* TestClock.adjust(Duration.zero);
           const launchesBeforeShutdown = launches;
           yield* Deferred.succeed(finishShutdown, undefined);
-          yield* Fiber.join(disconnect);
+          const disconnected = yield* Fiber.join(disconnect);
+          assert.equal(Result.isFailure(disconnected), stalledStep === "failed remote server");
           const first = yield* Fiber.join(firstReconnect);
           const second = yield* Fiber.join(secondReconnect);
 

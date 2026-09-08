@@ -275,7 +275,7 @@ export interface GiteaRepositoryAccess {
   readonly updateMethods: ReadonlyArray<PullRequestUpdateMethod>;
 }
 
-export class GiteaPullRequestApiError extends Schema.TaggedErrorClass<GiteaPullRequestApiError>()(
+export class GiteaPullRequestApiError extends Schema.TaggedError<GiteaPullRequestApiError>()(
   "GiteaPullRequestApiError",
   {
     operation: Schema.String,

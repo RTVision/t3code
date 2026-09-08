@@ -1509,8 +1509,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
               Effect.provideService(FileSystem.FileSystem, fileSystemService),
               Effect.provideService(Path.Path, pathService),
-              Effect.tapError((error) => Deferred.fail(closing.done, error)),
-              Effect.ignore,
             );
           }
           yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
@@ -1520,8 +1518,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             remotePort: tunnelEntry.remotePort,
           });
         }).pipe(
-          Effect.ensuring(
-            Deferred.succeed(closing.done, undefined).pipe(
+          Effect.onExit((exit) =>
+            releaseRemoteServerLease(input.remoteServerLease).pipe(
               Effect.andThen(
                 Effect.sync(() => {
                   if (closingTunnelEntries.get(tunnelEntry.key) === closing) {
@@ -1529,6 +1527,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                   }
                 }),
               ),
+              Effect.andThen(Deferred.done(closing.done, exit)),
             ),
           ),
           Effect.ignore,
@@ -1616,7 +1615,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   ): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     const closing = closingTunnelEntries.get(key);
     if (closing) {
-      yield* Deferred.await(closing.done);
+      yield* Deferred.await(closing.done).pipe(Effect.ignore);
       return yield* ensureTunnelEntry(key, resolvedTarget, runner);
     }
     const entry = tunnels.get(key);
@@ -1626,8 +1625,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       const awaitReady = Effect.gen(function* () {
         const ready = yield* entry.awaitReady.pipe(Effect.timeoutOption(SSH_READY_TIMEOUT_MS));
         if (Option.isSome(ready)) return;
-        yield* closeTunnelEntry(entry);
         yield* cancelPendingTunnelEntry(key, resolvedTarget);
+        yield* closeTunnelEntry(entry).pipe(Effect.ignore);
         return yield* new SshReadinessError({
           message: `SSH tunnel did not reconnect within ${SSH_READY_TIMEOUT_MS / 1_000} seconds for ${resolvedTarget.alias || resolvedTarget.hostname}.`,
         });
@@ -1643,8 +1642,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       }
       // The SSH process can outlive its remote server. Preserve the existing
       // foreground recovery path when HTTP fails without a tunnel exit.
-      yield* closeTunnelEntry(entry);
       yield* cancelPendingTunnelEntry(key, resolvedTarget);
+      yield* closeTunnelEntry(entry).pipe(Effect.ignore);
     }
 
     const pending = pendingTunnelEntries.get(key);
@@ -1781,14 +1780,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       hasPendingTunnel: pendingTunnelEntries.has(key),
     });
     if (entry !== null) {
+      yield* cancelPendingTunnelEntry(key, resolvedTarget);
       yield* closeTunnelEntry(entry);
       closedTunnel = true;
-    }
-    yield* cancelPendingTunnelEntry(key, resolvedTarget);
-    entry = tunnels.get(key) ?? null;
-    if (entry !== null) {
-      yield* closeTunnelEntry(entry);
-      closedTunnel = true;
+    } else {
+      yield* cancelPendingTunnelEntry(key, resolvedTarget);
+      entry = tunnels.get(key) ?? null;
+      if (entry !== null) {
+        yield* closeTunnelEntry(entry);
+        closedTunnel = true;
+      }
     }
     if (
       !closedTunnel &&

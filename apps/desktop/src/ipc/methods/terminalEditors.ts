@@ -27,7 +27,7 @@ import { TerminalEditorRuntime, routeHash } from "../../editors/terminalEditorRu
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
-export class TerminalEditorRouteError extends Schema.TaggedErrorClass<TerminalEditorRouteError>()(
+export class TerminalEditorRouteError extends Schema.TaggedError<TerminalEditorRouteError>()(
   "TerminalEditorRouteError",
   { reason: Schema.String, message: Schema.String },
 ) {}
