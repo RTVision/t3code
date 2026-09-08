@@ -145,7 +145,7 @@ export const make = Effect.gen(function* () {
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
       workflowApprovalSupported: input.workflowApprovalSupported,
-      revertSupported: input.revertSupported,
+      revertSupported: input.revertSupported === true,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -195,7 +195,7 @@ export const make = Effect.gen(function* () {
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
-          api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         { concurrency: 4 },
       ).pipe(
