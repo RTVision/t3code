@@ -22,6 +22,7 @@ export interface NormalizedGitLabMergeRequestRecord {
 }
 
 const GitLabProjectReferenceSchema = Schema.Struct({
+  path: Schema.optional(Schema.String),
   path_with_namespace: Schema.optional(Schema.String),
   pathWithNamespace: Schema.optional(Schema.String),
   namespace: Schema.optional(
@@ -75,15 +76,16 @@ function projectPathWithNamespace(
   const explicit =
     trimOptionalString(project?.path_with_namespace) ??
     trimOptionalString(project?.pathWithNamespace);
-  if (explicit) {
+  if (explicit?.includes("/")) {
     return explicit;
   }
 
+  const projectPath = trimOptionalString(project?.path);
   const namespacePath =
     trimOptionalString(project?.namespace?.full_path) ??
     trimOptionalString(project?.namespace?.fullPath) ??
     trimOptionalString(project?.namespace?.path);
-  return namespacePath;
+  return projectPath !== null && namespacePath !== null ? `${namespacePath}/${projectPath}` : null;
 }
 
 function ownerLoginFromPathWithNamespace(pathWithNamespace: string | null): string | null {
@@ -91,11 +93,24 @@ function ownerLoginFromPathWithNamespace(pathWithNamespace: string | null): stri
   return trimOptionalString(owner);
 }
 
+/** A repository supplied with the request is safe to use only in its qualified form. */
+function requestedRepositoryPath(repository: string | undefined): string | null {
+  const path = trimOptionalString(repository);
+  return path?.includes("/") ? path : null;
+}
+
 function normalizeGitLabMergeRequestRecord(
   raw: Schema.Schema.Type<typeof GitLabMergeRequestSchema>,
+  repository?: string,
 ): NormalizedGitLabMergeRequestRecord {
-  const sourceProjectPath = projectPathWithNamespace(raw.source_project);
   const targetProjectPath = projectPathWithNamespace(raw.target_project);
+  const sourceProjectPath =
+    projectPathWithNamespace(raw.source_project) ??
+    (typeof raw.source_project_id === "number" &&
+    typeof raw.target_project_id === "number" &&
+    raw.source_project_id === raw.target_project_id
+      ? (targetProjectPath ?? requestedRepositoryPath(repository))
+      : null);
   const isCrossRepository =
     typeof raw.source_project_id === "number" && typeof raw.target_project_id === "number"
       ? raw.source_project_id !== raw.target_project_id
@@ -127,6 +142,7 @@ export const formatGitLabJsonDecodeError = formatSchemaError;
 
 export function decodeGitLabMergeRequestListJson(
   raw: string,
+  repository?: string,
 ): Result.Result<
   ReadonlyArray<NormalizedGitLabMergeRequestRecord>,
   Cause.Cause<Schema.SchemaError>
@@ -139,7 +155,7 @@ export function decodeGitLabMergeRequestListJson(
       if (Exit.isFailure(decodedEntry)) {
         continue;
       }
-      mergeRequests.push(normalizeGitLabMergeRequestRecord(decodedEntry.value));
+      mergeRequests.push(normalizeGitLabMergeRequestRecord(decodedEntry.value, repository));
     }
     return Result.succeed(mergeRequests);
   }
@@ -148,10 +164,11 @@ export function decodeGitLabMergeRequestListJson(
 
 export function decodeGitLabMergeRequestJson(
   raw: string,
+  repository?: string,
 ): Result.Result<NormalizedGitLabMergeRequestRecord, Cause.Cause<Schema.SchemaError>> {
   const result = decodeGitLabMergeRequest(raw);
   if (Result.isSuccess(result)) {
-    return Result.succeed(normalizeGitLabMergeRequestRecord(result.success));
+    return Result.succeed(normalizeGitLabMergeRequestRecord(result.success, repository));
   }
   return Result.fail(result.failure);
 }

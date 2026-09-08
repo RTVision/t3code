@@ -79,6 +79,60 @@ describe("decodeMergeRequestListJson", () => {
     });
   });
 
+  it("keeps the source project identity for a cross-project merge request", () => {
+    const batch = expectSuccess(
+      decodeMergeRequestListJson(
+        listJson([
+          {
+            source_project_id: 12,
+            target_project_id: 11,
+            source_project: { path_with_namespace: "contributor/web" },
+            target_project: { path_with_namespace: "acme/web" },
+          },
+        ]),
+      ),
+    );
+
+    expect(batch.items[0]).toMatchObject({
+      headRepositoryNameWithOwner: "contributor/web",
+    });
+  });
+
+  it("uses the target project only when matching project ids prove a same-repository source", () => {
+    const batch = expectSuccess(
+      decodeMergeRequestListJson(
+        listJson([
+          {
+            source_project_id: 11,
+            target_project_id: 11,
+            target_project: { path_with_namespace: "acme/web" },
+          },
+        ]),
+      ),
+    );
+
+    expect(batch.items[0]).toMatchObject({
+      headRepositoryNameWithOwner: "acme/web",
+    });
+  });
+
+  it("leaves a deleted or redacted source project unqualified", () => {
+    const batch = expectSuccess(
+      decodeMergeRequestListJson(
+        listJson([
+          {
+            source_project_id: 12,
+            target_project_id: 11,
+            source_project: null,
+            target_project: { path_with_namespace: "acme/web" },
+          },
+        ]),
+      ),
+    );
+
+    expect(batch.items[0]?.headRepositoryNameWithOwner).toBeNull();
+  });
+
   it("reports no line counts, which GitLab does not expose", () => {
     const batch = expectSuccess(decodeMergeRequestListJson(listJson([{}])));
 
@@ -137,6 +191,21 @@ describe("decodeMergeRequestListJson", () => {
 });
 
 describe("decodeMergeRequestDetailJson", () => {
+  it("maps the source project identity on detail responses too", () => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(
+        detailJson({
+          source_project_id: 12,
+          target_project_id: 11,
+          source_project: { path_with_namespace: "contributor/web" },
+          target_project: { path_with_namespace: "acme/web" },
+        }),
+      ),
+    );
+
+    expect(detail.headRepositoryNameWithOwner).toBe("contributor/web");
+  });
+
   it("reads the description, file count and pipeline", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(
