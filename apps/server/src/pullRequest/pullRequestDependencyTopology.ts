@@ -34,10 +34,12 @@ export interface PullRequestDependencyTopologyInput {
   readonly complete: boolean;
 }
 
-// GitHub repository names are case-insensitive. Preserve case elsewhere because a generic helper
-// cannot assume the same of every self-hosted provider; adapters own any further canonicalization.
+// GitHub and Gitea repository identities are case-insensitive. Preserve case for other providers;
+// their adapters own any further canonicalization.
 const normalizedRepository = (provider: SourceControlProviderKind, repository: string) =>
-  provider === "github" ? repository.trim().toLowerCase() : repository.trim();
+  provider === "github" || provider === "gitea"
+    ? repository.trim().toLowerCase()
+    : repository.trim();
 
 /**
  * Relates ordinary pull requests using only repository-qualified branch identities. The result is
