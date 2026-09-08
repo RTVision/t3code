@@ -100,6 +100,8 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
+  readonly runningUser?: string;
+  readonly wslNodePath?: string;
   // Present only when this run launched from a staged WSL-local runtime.
   // Once HTTP readiness succeeds, the manager uses it to retain this cache
   // plus the newest previous cache and prune older versions.
