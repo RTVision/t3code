@@ -823,9 +823,23 @@ export const make = Effect.gen(function* () {
     host: string;
     repository: string;
     path: string;
+    nullAsEmpty?: boolean;
   }) {
-    const response = yield* request({ ...input, method: "GET" });
-    const rows = yield* decode(input.operation, Schema.Array(Schema.Unknown), response);
+    const response = yield* request({
+      operation: input.operation,
+      host: input.host,
+      repository: input.repository,
+      path: input.path,
+      method: "GET",
+    });
+    const decoded = yield* decode(
+      input.operation,
+      input.nullAsEmpty
+        ? Schema.NullOr(Schema.Array(Schema.Unknown))
+        : Schema.Array(Schema.Unknown),
+      response,
+    );
+    const rows = decoded ?? [];
     return { rows, headers: response.headers } satisfies UnknownPage;
   });
 
@@ -925,11 +939,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
-    (input: { operation: string; host: string; repository: string; path: string }) =>
-      readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
-  );
-
   const getFeatures = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }),
@@ -953,6 +962,8 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     limit: number;
+    nullAsEmpty?: boolean;
+    requirePaginationEvidence?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -963,6 +974,7 @@ export const make = Effect.gen(function* () {
         host: input.host,
         repository: input.repository,
         path,
+        ...(input.nullAsEmpty === undefined ? {} : { nullAsEmpty: input.nullAsEmpty }),
       });
       rowsSeen += result.rows.length;
       const remaining = Math.max(0, input.limit - rows.length);
@@ -974,14 +986,25 @@ export const make = Effect.gen(function* () {
         rowsSeen,
         headers: result.headers,
       });
+      const hasPaginationEvidence =
+        nextLink(result.headers) !== null || totalCount(result.headers) !== null;
+      const paginationNext =
+        input.requirePaginationEvidence && !hasPaginationEvidence ? null : next;
+      // Native unpaginated endpoints can return more than the requested page size. Exactly
+      // one requested page is ambiguous when headers do not establish whether more rows exist.
+      const paginationUncertain =
+        input.requirePaginationEvidence === true &&
+        !hasPaginationEvidence &&
+        result.rows.length === PAGE_SIZE;
       if (result.rows.length > remaining || rows.length >= input.limit) {
         return {
           rows,
-          truncated: result.rows.length > remaining || next !== null,
+          truncated:
+            result.rows.length > remaining || paginationNext !== null || paginationUncertain,
         };
       }
-      if (next === null) return { rows, truncated: false };
-      path = next;
+      if (paginationNext === null) return { rows, truncated: paginationUncertain };
+      path = paginationNext;
     }
     return { rows, truncated: true };
   });
@@ -1160,20 +1183,15 @@ export const make = Effect.gen(function* () {
       });
       const repo = yield* decode(operation, RawRepository, response);
       return {
-        // An omitted permission block is unknown rather than a denial. Gitea will still enforce
-        // the write, while hiding it here would leave an entitled viewer with no route to try.
-        canWrite:
-          repo.permissions == null ||
-          repo.permissions.push === true ||
-          repo.permissions.admin === true,
+        canWrite: repo.permissions?.push === true || repo.permissions?.admin === true,
         mergeCapabilities: {
-          merge: repo.allow_merge_commits ?? true,
-          squash: repo.allow_squash_merge ?? true,
-          rebase: repo.allow_rebase ?? true,
+          merge: repo.allow_merge_commits === true,
+          squash: repo.allow_squash_merge === true,
+          rebase: repo.allow_rebase === true,
         },
         updateMethods: [
-          ...(repo.allow_merge_update !== false ? (["merge"] as const) : []),
-          ...(repo.allow_rebase_update !== false ? (["rebase"] as const) : []),
+          ...(repo.allow_merge_update === true ? (["merge"] as const) : []),
+          ...(repo.allow_rebase_update === true ? (["rebase"] as const) : []),
         ],
       };
     },
@@ -1264,7 +1282,8 @@ export const make = Effect.gen(function* () {
     }
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
-    const commentsTruncated = reviewsTruncated;
+    let commentsTruncated = reviewsTruncated;
+    let remainingReviewCommentRows = PAGE_SIZE * CONVERSATION_PAGES;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -1281,11 +1300,22 @@ export const make = Effect.gen(function* () {
           reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
         });
       }
-      const codeRows = yield* readUnknownArray({
+      if (remainingReviewCommentRows === 0) {
+        commentsTruncated = true;
+        continue;
+      }
+      const codeRows = yield* readUnknownSlice({
         operation: "listReviewComments",
         ...input,
-        path: `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+        path: query(
+          `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+          { page: 1, limit: PAGE_SIZE },
+        ),
+        limit: remainingReviewCommentRows,
+        requirePaginationEvidence: true,
       });
+      remainingReviewCommentRows -= codeRows.rows.length;
+      commentsTruncated ||= codeRows.truncated;
       const grouped = new Map<
         string,
         Array<{
@@ -1297,7 +1327,7 @@ export const make = Effect.gen(function* () {
           readonly comment: PullRequestReviewThread["comments"][number];
         }>
       >();
-      for (const codeRow of codeRows) {
+      for (const codeRow of codeRows.rows) {
         const decoded = decodeReviewComment(codeRow);
         if (Option.isNone(decoded)) continue;
         const mapped = decoded.value;
@@ -1460,7 +1490,7 @@ export const make = Effect.gen(function* () {
                   ? "success"
                   : state === "pending"
                     ? "pending"
-                    : state === "failure" || state === "error"
+                    : state === "failure" || state === "error" || state === "warning"
                       ? "failure"
                       : state === "skipped"
                         ? "skipped"
@@ -1527,7 +1557,9 @@ export const make = Effect.gen(function* () {
 
   const getAutoMergeEnabled = Effect.fn("GiteaPullRequestApi.getAutoMergeEnabled")(
     function* (input: { host: string; repository: string; number: number }) {
-      const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+      const features = yield* getFeatures.pipe(
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      );
       if (features.includes("pull-auto-merge-state")) {
         return (yield* getPullRequest(input)).autoMergeEnabled;
       }
@@ -1551,13 +1583,11 @@ export const make = Effect.gen(function* () {
           response,
         );
         events.push(...pageEvents);
-        const next = nextPagePath({
-          path,
-          page,
-          pageRows: pageEvents.length,
-          rowsSeen: events.length,
-          headers: response.headers,
-        });
+        // Gitea's timeline route reports the current page length in X-Total-Count rather than the
+        // total number of events, so that header cannot prove the timeline is complete.
+        const next =
+          nextLink(response.headers) ??
+          (pageEvents.length >= PAGE_SIZE ? pathAtPage(path, page + 1) : null);
         if (next === null) return GiteaLifecycle.autoMergeEnabled(events);
         path = next;
       }
@@ -1575,7 +1605,7 @@ export const make = Effect.gen(function* () {
     number: number;
     action: Extract<PullRequestAction, "draft" | "ready">;
   }) {
-    const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+    const features = yield* getFeatures.pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
     if (features.includes("pull-draft")) {
       return yield* write({
         operation: "runAction",
@@ -1645,7 +1675,7 @@ export const make = Effect.gen(function* () {
       subjectIds: ReadonlyArray<string>;
     }) {
       const supportsReviewReactions = (yield* getFeatures.pipe(
-        Effect.orElseSucceed(() => []),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
       )).includes("pull-review-reactions");
       const targets: Array<{
         readonly subjectId: string | undefined;
@@ -1681,6 +1711,7 @@ export const make = Effect.gen(function* () {
                       },
                     ),
             limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
+            nullAsEmpty: true,
           }).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
@@ -2118,9 +2149,9 @@ export const make = Effect.gen(function* () {
       return Effect.gen(function* () {
         if (
           target.kind === "review" &&
-          !(yield* getFeatures.pipe(Effect.orElseSucceed(() => []))).includes(
-            "pull-review-reactions",
-          )
+          !(yield* getFeatures.pipe(
+            Effect.orElseSucceed((): ReadonlyArray<string> => []),
+          )).includes("pull-review-reactions")
         ) {
           return yield* new GiteaPullRequestApiError({
             operation: "setReaction",
