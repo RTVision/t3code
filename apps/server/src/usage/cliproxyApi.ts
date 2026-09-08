@@ -159,7 +159,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             "Content-Type": "application/json",
             "OpenAI-Beta": "codex-1",
             Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
+            ...(account.id_token?.chatgpt_account_id?.trim()
               ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
               : {}),
           }
@@ -206,8 +206,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id
-        ? { accountId: account.id_token.chatgpt_account_id }
+      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id?.trim()
+        ? { accountId: account.id_token.chatgpt_account_id.trim() }
         : {}),
     };
     const read = Effect.gen(function* () {

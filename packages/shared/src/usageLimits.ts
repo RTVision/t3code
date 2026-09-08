@@ -99,6 +99,7 @@ export function collectLimitSources(
     readonly hiddenAccountCount: number;
   }
 > {
+  const accountKey = makeAccountKey(Array.from(presentations.values(), (p) => p.serverConfig));
   const nativeAccounts = new Set<string>();
   for (const presentation of presentations.values()) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
@@ -145,14 +146,42 @@ export function collectLimitSources(
   );
 }
 
-function accountKey(
-  driver: ServerProvider["driver"],
-  email: string | undefined,
-  accountId?: string,
-): string | null {
-  if (accountId) return `${driver}:account:${accountId}`;
-  const normalizedEmail = email?.trim().toLowerCase();
-  return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
+function makeAccountKey(
+  configs: Iterable<{
+    readonly providers?: readonly ServerProvider[] | undefined;
+    readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+  } | null>,
+) {
+  const idsByEmail = new Map<string, Set<string>>();
+  const emailKey = (driver: ServerProvider["driver"], email: string | undefined) => {
+    const normalized = email?.trim().toLowerCase();
+    return normalized ? `${driver}:${normalized}` : null;
+  };
+  for (const config of configs) {
+    const identities = [
+      ...(config?.providers ?? []).map((provider) => ({
+        driver: provider.driver,
+        ...provider.auth,
+      })),
+      ...(config?.usageLimitSources ?? []).flatMap((source) => source.accounts),
+    ];
+    for (const identity of identities) {
+      const key = emailKey(identity.driver, identity.email);
+      const id = identity.accountId?.trim();
+      if (!key || !id) continue;
+      const ids = idsByEmail.get(key) ?? new Set<string>();
+      ids.add(id);
+      idsByEmail.set(key, ids);
+    }
+  }
+  return (driver: ServerProvider["driver"], email: string | undefined, accountId?: string) => {
+    const id = accountId?.trim();
+    if (id) return `${driver}:account:${id}`;
+    const key = emailKey(driver, email);
+    const ids = key ? idsByEmail.get(key) : undefined;
+    // Legacy reports can join a known workspace only when the email is unambiguous.
+    return ids?.size === 1 ? `${driver}:account:${ids.values().next().value}` : key;
+  };
 }
 
 /**
@@ -191,6 +220,7 @@ export interface LimitAccount {
 export function collectLimitAccounts(
   presentations: Parameters<typeof collectLimitSources>[0],
 ): readonly LimitAccount[] {
+  const accountKey = makeAccountKey(Array.from(presentations.values(), (p) => p.serverConfig));
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -636,6 +666,7 @@ export function collectProviderUsageLimits(
   sources: UsageLimitSourceSnapshots,
   now: number,
 ): UsageLimitsReport | null {
+  const accountKey = makeAccountKey([{ providers, usageLimitSources: sources }]);
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
   const native = providersWithLimits(providers).filter(

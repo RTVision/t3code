@@ -299,7 +299,7 @@ function makeCodexProbeSnapshot(
         email: "test@example.com",
         planType: "pro",
       },
-      requiresOpenaiAuth: false,
+      requiresOpenaiAuth: true,
     },
     models: [
       {
@@ -391,6 +391,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Effect.succeed(
               makeCodexProbeSnapshot({
                 accountId: "workspace-a",
+                rateLimits: {
+                  snapshot: {
+                    primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1789436313 },
+                  },
+                  rateLimitsByLimitId: null,
+                  resetCredits: null,
+                },
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -411,6 +418,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
           assert.strictEqual(status.auth.accountId, "workspace-a");
+          assert.strictEqual(status.usageLimits?.unavailable, undefined);
+          assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 42);
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",

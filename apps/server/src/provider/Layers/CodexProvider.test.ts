@@ -8,7 +8,29 @@ import {
   applyPreferredCodexDefaultModel,
   mapCodexModelCapabilities,
   readCodexAccountId,
+  resolveCodexAuthHome,
 } from "./CodexProvider.ts";
+
+it("resolves the selected or shadow home ahead of inherited credentials", () => {
+  const inherited = { CODEX_HOME: "/shared", HOME: "/user" };
+  assert.strictEqual(
+    resolveCodexAuthHome(
+      { homePath: "/shadow", environment: { CODEX_HOME: "/instance" } },
+      inherited,
+    ),
+    "/shadow",
+  );
+  assert.strictEqual(
+    resolveCodexAuthHome({ environment: { CODEX_HOME: "/instance" } }, inherited),
+    "/instance",
+  );
+  assert.strictEqual(resolveCodexAuthHome({}, inherited), "/shared");
+  assert.strictEqual(
+    resolveCodexAuthHome({ environment: { HOME: "/instance-user" } }, { HOME: "/user" }),
+    "/instance-user/.codex",
+  );
+  assert.strictEqual(resolveCodexAuthHome({}, { HOME: "/user" }), "/user/.codex");
+});
 
 it.effect(
   "reads workspace identity from the selected home without treating API keys as subscriptions",
@@ -38,6 +60,22 @@ it.effect(
           );
           assert.strictEqual(yield* readCodexAccountId(root), undefined);
           assert.strictEqual(yield* readCodexAccountId(NodePath.join(root, "missing")), undefined);
+          const payload = Buffer.from(
+            JSON.stringify({
+              "https://api.openai.com/auth": { chatgpt_account_id: "token-workspace" },
+            }),
+          ).toString("base64url");
+          for (const [tokens, expected] of [
+            [{ id_token: `header.${payload}.signature` }, "token-workspace"],
+            [{ account_id: null, id_token: `header.${payload}.signature` }, "token-workspace"],
+            [{ account_id: "explicit", id_token: `header.${payload}.signature` }, "explicit"],
+            [{ id_token: "malformed" }, undefined],
+          ] as const) {
+            yield* Effect.promise(() =>
+              NodeFSP.writeFile(NodePath.join(root, "auth.json"), JSON.stringify({ tokens })),
+            );
+            assert.strictEqual(yield* readCodexAccountId(root), expected);
+          }
         }),
       (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
     ),

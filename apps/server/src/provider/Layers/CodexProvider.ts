@@ -408,15 +408,60 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
 });
 
 const decodeCodexAccountIdentity = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ tokens: Schema.Struct({ account_id: Schema.String }) })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      tokens: Schema.Struct({
+        account_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        id_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+    }),
+  ),
 );
+
+const decodeCodexIdTokenIdentity = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      "https://api.openai.com/auth": Schema.Struct({
+        chatgpt_account_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+    }),
+  ),
+);
+
+export function resolveCodexAuthHome(
+  input: {
+    readonly homePath?: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  },
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+) {
+  return expandHomePath(
+    input.homePath?.trim() ||
+      input.environment?.CODEX_HOME ||
+      inheritedEnvironment.CODEX_HOME ||
+      NodePath.join(
+        input.environment?.HOME || inheritedEnvironment.HOME || NodeOS.homedir(),
+        ".codex",
+      ),
+  );
+}
 
 export const readCodexAccountId = Effect.fn("readCodexAccountId")(function* (homePath: string) {
   return yield* Effect.tryPromise(() =>
     NodeFSP.readFile(NodePath.join(homePath, "auth.json"), "utf8"),
   ).pipe(
     Effect.flatMap(decodeCodexAccountIdentity),
-    Effect.map((auth) => auth.tokens.account_id.trim() || undefined),
+    Effect.flatMap((auth) => {
+      const accountId = auth.tokens.account_id?.trim();
+      if (accountId) return Effect.succeed(accountId);
+      const payload = auth.tokens.id_token?.split(".")[1];
+      if (!payload) return Effect.succeed(undefined);
+      return decodeCodexIdTokenIdentity(Buffer.from(payload, "base64url").toString("utf8")).pipe(
+        Effect.map(
+          (claims) => claims["https://api.openai.com/auth"].chatgpt_account_id?.trim() || undefined,
+        ),
+      );
+    }),
     Effect.orElseSucceed(() => undefined),
   );
 });
@@ -440,14 +485,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // the credentials in the same home used by this app-server instance.
   const accountId =
     accountResponse.account?.type === "chatgpt"
-      ? yield* readCodexAccountId(
-          expandHomePath(
-            input.homePath?.trim() ||
-              input.environment?.CODEX_HOME ||
-              process.env.CODEX_HOME ||
-              NodePath.join(input.environment?.HOME || NodeOS.homedir(), ".codex"),
-          ),
-        )
+      ? yield* readCodexAccountId(resolveCodexAuthHome(input))
       : undefined;
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
