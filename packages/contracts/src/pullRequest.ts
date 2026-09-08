@@ -825,6 +825,16 @@ export const PullRequestInvalidateInput = Schema.Struct({
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
+/** A reference change stays local; account and turn refreshes cover the environment. */
+export const PullRequestRefresh = Schema.Struct({
+  revision: NonNegativeInt,
+  reference: Schema.optional(PullRequestRef),
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
+  host: Schema.optional(TrimmedNonEmptyString),
+  listings: Schema.Boolean,
+});
+export type PullRequestRefresh = typeof PullRequestRefresh.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,

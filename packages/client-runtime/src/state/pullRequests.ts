@@ -3,13 +3,17 @@ import {
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestSummary,
+  type PullRequestRef,
+  type PullRequestRefresh,
+  type EnvironmentId,
+  type ProjectId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -35,13 +39,73 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 
 export const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
+type PullRequestRefreshScope =
+  | { readonly kind?: undefined }
+  | { readonly kind: "reference" | "repository"; readonly reference: PullRequestRef }
+  | {
+      readonly kind: "list";
+      readonly projectIds?: ReadonlyArray<ProjectId>;
+      readonly host?: string;
+    };
+
+function matchesRefresh(scope: PullRequestRefreshScope, event: PullRequestRefresh): boolean {
+  if (event.reference === undefined) return true;
+  if (scope.kind === undefined) return false;
+  const projectIds = event.projectIds ?? [event.reference.projectId];
+  if (scope.kind === "list") {
+    return (
+      event.listings &&
+      (scope.host === undefined ||
+        event.host === undefined ||
+        scope.host.toLowerCase() === event.host) &&
+      (scope.projectIds === undefined ||
+        scope.projectIds.some((projectId) => projectIds.includes(projectId)))
+    );
+  }
+  return (
+    projectIds.includes(scope.reference.projectId) &&
+    scope.reference.repository.trim().toLowerCase() ===
+      event.reference.repository.trim().toLowerCase() &&
+    (scope.kind === "repository" || scope.reference.number === event.reference.number)
+  );
+}
+
 function createPullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "environment-data:pull-requests:turn-refreshes",
+  const events = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:pull-requests:refreshes",
     tag: WS_METHODS.pullRequestsSubscribeRefreshes,
   });
+  const scoped = Atom.family((key: string) => {
+    const { environmentId, input } = JSON.parse(key) as {
+      environmentId: EnvironmentId;
+      input: PullRequestRefreshScope;
+    };
+    return Atom.make((get): AsyncResult.AsyncResult<number, unknown> => {
+      const result = get(events({ environmentId, input: { scoped: true } }));
+      // Numeric revisions are from servers predating scoped refreshes.
+      if (AsyncResult.isSuccess(result)) {
+        const event =
+          typeof result.value === "number"
+            ? { revision: result.value, listings: true }
+            : result.value;
+        if (matchesRefresh(input, event)) {
+          const previous = Option.getOrUndefined(get.self());
+          return previous !== undefined &&
+            AsyncResult.isSuccess(previous) &&
+            previous.value === event.revision
+            ? previous
+            : AsyncResult.success(event.revision);
+        }
+      }
+      return Option.getOrElse(get.self(), () => AsyncResult.initial<number>());
+    });
+  });
+  return (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRefreshScope;
+  }) => scoped(JSON.stringify(target));
 }
 
 /** Refresh only the live fields a linked thread renders. */
@@ -55,7 +119,8 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     staleTimeMs: 60_000,
     refreshIntervalMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
-    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "reference", reference: input } }),
   });
 }
 
@@ -92,7 +157,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     label: "environment-data:pull-requests:activity",
     tag: WS_METHODS.pullRequestsActivity,
     staleTimeMs: 15_000,
-    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "reference", reference: input } }),
   });
   return {
     refreshes,
@@ -101,7 +167,20 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsList,
       staleTimeMs: 30_000,
       refreshTrigger: ({ environmentId, input }) =>
-        input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+        input.cursors === undefined
+          ? refreshes({
+              environmentId,
+              input: {
+                kind: "list",
+                ...(input.host === undefined ? {} : { host: input.host }),
+                ...(input.projectId !== undefined
+                  ? { projectIds: [input.projectId] }
+                  : input.projectIds !== undefined
+                    ? { projectIds: input.projectIds }
+                    : {}),
+              },
+            })
+          : undefined,
     }),
     /**
      * The line counts for rows the listing has already handed over. Its own query because the
@@ -113,20 +192,26 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:list-stats",
       tag: WS_METHODS.pullRequestsListStats,
       staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({
+          environmentId,
+          input: { kind: "list", projectIds: input.refs.map((ref) => ref.projectId) },
+        }),
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
       tag: WS_METHODS.pullRequestsDetail,
       staleTimeMs: 15_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
     }),
     /** One bounded repository relationship read for the open PR panel, never for list rows. */
     dependencyContext: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:dependency-context",
       tag: WS_METHODS.pullRequestsDependencyContext,
       staleTimeMs: 30_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "repository", reference: input } }),
     }),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
