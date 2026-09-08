@@ -1116,7 +1116,7 @@ export const make = Effect.gen(function* () {
       sort: relationshipOnly ? "oldest" : "recentupdate",
       page,
       limit: PAGE_SIZE,
-      include_tracking: input.includeTracking === true ? "true" : undefined,
+      include_tracking: !relationshipOnly && input.includeTracking === true ? "true" : undefined,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
     });
     let rowsSeen = 0;
@@ -2129,11 +2129,12 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
-          readUnknownArray({
+          readUnknownPage({
             operation: "listTeamReviewerCandidates",
             ...input,
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
+            Effect.map((page) => page.rows),
             Effect.catch((error) =>
               isGiteaApiError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
