@@ -53,6 +53,7 @@ import {
   parsePullRequestQuery,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
+  mergePullRequestListErrors,
   partitionPullRequestsWithPriority,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
@@ -931,6 +932,18 @@ function PullRequestsRouteView() {
               current.scope === scopeKey
             ? current.partitions
             : undefined;
+      const partitionWarnings = partitionsWanted
+        ? (reviewingQuery.data?.errors.filter((error) => error.partial) ??
+          (current?.scope === scopeKey ? current.data.errors.filter((error) => error.partial) : []))
+        : [];
+      const retainedData = {
+        ...data,
+        errors: mergePullRequestListErrors(
+          baselineQuery.data?.errors,
+          data.errors,
+          partitionWarnings,
+        ),
+      };
       // A search's answer is the search's, not the workspace's, so only unsearched lists
       // persist. Written here where the held partitions are in reach, so a feed settling
       // ahead of them cannot overwrite a stored snapshot that already had both groups.
@@ -948,7 +961,7 @@ function PullRequestsRouteView() {
           {
             scope: scopeKey,
             data: {
-              ...data,
+              ...retainedData,
               entries: accumulatedEntries,
               viewers: baselineQuery.data?.viewers ?? data.viewers,
               providers: baselineQuery.data?.providers ?? data.providers,
@@ -961,7 +974,7 @@ function PullRequestsRouteView() {
         environmentKey,
         scope: scopeKey,
         query: sentQuery,
-        data,
+        data: retainedData,
         ...(partitions === undefined ? {} : { partitions }),
       };
     });
@@ -1131,7 +1144,20 @@ function PullRequestsRouteView() {
   );
 
   const viewers = baselineQuery.data?.viewers ?? listData?.viewers ?? EMPTY_VIEWERS;
-  const listErrors = baselineQuery.data?.errors ?? listData?.errors ?? [];
+  const listErrors = useMemo(
+    () => mergePullRequestListErrors(baselineQuery.data?.errors, listData?.errors),
+    [baselineQuery.data?.errors, listData?.errors],
+  );
+  const coverageWarnings = [
+    ...new Set([
+      ...listErrors.filter((error) => error.partial).map((error) => error.message),
+      ...(partitionsWanted
+        ? (reviewingQuery.data?.errors ?? (loaded?.scope === scopeKey ? loaded.data.errors : []))
+            .filter((error) => error.partial)
+            .map((error) => error.message)
+        : []),
+    ]),
+  ];
   const facets = useMemo(
     () =>
       collectPullRequestListFacets(
@@ -1560,13 +1586,15 @@ function PullRequestsRouteView() {
   const unavailableProjects = useMemo(
     () =>
       new Map(
-        listErrors.map(
-          (error) =>
-            [
-              pullRequestProjectKey({ id: error.projectId, environmentId: error.environmentId }),
-              error.message,
-            ] as const,
-        ),
+        listErrors
+          .filter((error) => !error.partial)
+          .map(
+            (error) =>
+              [
+                pullRequestProjectKey({ id: error.projectId, environmentId: error.environmentId }),
+                error.message,
+              ] as const,
+          ),
       ),
     [listErrors],
   );
@@ -1630,6 +1658,16 @@ function PullRequestsRouteView() {
     showingCarried && listQuery.isPending && entries.length === 0 && typedQuery.length === 0;
   const listBody = (
     <>
+      {coverageWarnings.length > 0 ? (
+        <div
+          role="status"
+          className="mb-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-muted-foreground"
+        >
+          {coverageWarnings.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+        </div>
+      ) : null}
       {!capabilityKnown ? (
         <PullRequestListGhost rows={7} />
       ) : !pullRequestsSupported ? (

@@ -1088,7 +1088,17 @@ export const make = Effect.gen(function* () {
                   entries: items
                     .filter((item) => matchesRowFilters(item, input.filters, viewer))
                     .map((item) => toEntry({ project, item, viewer })),
-                  errors: [],
+                  errors:
+                    page.coverageWarning === undefined
+                      ? []
+                      : [
+                          {
+                            projectId: project.project.id,
+                            projectTitle: project.project.title,
+                            message: page.coverageWarning,
+                            partial: true,
+                          },
+                        ],
                   truncated: page.truncated,
                   nextCursor:
                     page.continues && page.truncated

@@ -742,6 +742,19 @@ export function mergePullRequestLists(
   };
 }
 
+/** A continuation omits exhausted repositories; their retained rows still carry coverage errors. */
+export function mergePullRequestListErrors(
+  ...pages: ReadonlyArray<ReadonlyArray<EnvironmentPullRequestError> | undefined>
+): ReadonlyArray<EnvironmentPullRequestError> {
+  const errors = new Map<string, EnvironmentPullRequestError>();
+  for (const page of pages) {
+    for (const error of page ?? []) {
+      errors.set(JSON.stringify([error.environmentId, error.projectId, error.message]), error);
+    }
+  }
+  return [...errors.values()];
+}
+
 /** One page is what the list itself starts with, and all a cold start needs to look warm. */
 const SNAPSHOT_MAX_ENTRIES = 99;
 
@@ -845,9 +858,9 @@ export function writePullRequestListSnapshot(
         data: {
           ...snapshot.data,
           entries: snapshot.data.entries.slice(0, SNAPSHOT_MAX_ENTRIES),
-          // A failure is never cached and yesterday's is not this morning's; a cursor names a
-          // position in a listing the host has long since forgotten.
-          errors: [],
+          // Coverage warnings belong to the retained rows. Drop transient failures and cursors
+          // whose positions may no longer exist on the host.
+          errors: snapshot.data.errors.filter((error) => error.partial),
           nextCursors: {},
           // Where a listing stopped is as stale as the cursor that named it.
           truncatedEnvironments: [],

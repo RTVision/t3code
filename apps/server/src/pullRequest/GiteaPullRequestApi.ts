@@ -520,6 +520,7 @@ export class GiteaPullRequestApi extends Context.Service<
         items: ReadonlyArray<GiteaPullRequest>;
         truncated: boolean;
         consumed: number;
+        coverageWarning?: string;
       },
       GiteaPullRequestApiError
     >;
@@ -910,8 +911,16 @@ export const make = Effect.gen(function* () {
       let rowsSkipped = 0;
       let consumed = 0;
       const collected: Array<GiteaPullRequest> = [];
-      const viewerTeamIDs =
-        input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
+      const viewerTeams =
+        input.involvement === "reviewing"
+          ? yield* getViewerTeams
+          : { ids: new Set<number>(), available: true };
+      const coverage = viewerTeams.available
+        ? {}
+        : {
+            coverageWarning:
+              "Some team review requests may be missing because Gitea team membership could not be read.",
+          };
 
       while (page <= MAX_PAGINATION_PAGES) {
         const result = yield* readUnknownPage({
@@ -956,7 +965,7 @@ export const make = Effect.gen(function* () {
               input.state,
               input.involvement,
               input.viewer,
-              viewerTeamIDs,
+              viewerTeams.ids,
             )
           )
             continue;
@@ -971,6 +980,7 @@ export const make = Effect.gen(function* () {
             }
             return {
               items: collected,
+              ...coverage,
               truncated: index < pageRows.length - 1 || next !== null,
               consumed,
             };
@@ -989,6 +999,7 @@ export const make = Effect.gen(function* () {
       }
       return {
         items: collected,
+        ...coverage,
         truncated: false,
         consumed,
       };
@@ -1017,7 +1028,7 @@ export const make = Effect.gen(function* () {
     "1 minute",
   );
 
-  const getViewerTeamIDs = yield* Effect.cachedWithTTL(
+  const getViewerTeams = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       Effect.gen(function* () {
         const teamIDs = new Set<number>();
@@ -1037,7 +1048,7 @@ export const make = Effect.gen(function* () {
             rowsSeen,
             headers: response.headers,
           });
-          if (next === null) return teamIDs;
+          if (next === null) return { ids: teamIDs, available: true };
           path = next;
         }
         return yield* new GiteaPullRequestApiError({
@@ -1049,7 +1060,7 @@ export const make = Effect.gen(function* () {
     ).pipe(
       // Public-only tokens can read pull requests while Gitea rejects their team lookup.
       // Team membership enriches individual review requests and must not hide those matches.
-      Effect.orElseSucceed(() => new Set<number>()),
+      Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
     ),
     "1 minute",
   );
@@ -1137,8 +1148,16 @@ export const make = Effect.gen(function* () {
     const repositoryIdsByName = new Map<string, number>();
     const expectedRepository = input.repository.trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
-    const viewerTeamIDs =
-      input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
+    const viewerTeams =
+      input.involvement === "reviewing"
+        ? yield* getViewerTeams
+        : { ids: new Set<number>(), available: true };
+    const coverage = viewerTeams.available
+      ? {}
+      : {
+          coverageWarning:
+            "Some team review requests may be missing because Gitea team membership could not be read.",
+        };
     const maxPages = relationshipOnly ? DEPENDENCY_PAGINATION_PAGES : MAX_PAGINATION_PAGES;
     let pagesRead = 0;
     let prefetchedPage: UnknownPage | null = null;
@@ -1234,7 +1253,9 @@ export const make = Effect.gen(function* () {
             else if (observed !== id) relationshipEvidenceIncomplete = true;
           }
         }
-        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeamIDs)) {
+        if (
+          !matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeams.ids)
+        ) {
           relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
           continue;
         }
@@ -1249,6 +1270,7 @@ export const make = Effect.gen(function* () {
           }
           return {
             items: collected,
+            ...coverage,
             truncated:
               relationshipEvidenceIncomplete || index < pageRows.length - 1 || next !== null,
             consumed,
@@ -1268,6 +1290,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       items: collected,
+      ...coverage,
       truncated: relationshipOnly && (relationshipEvidenceIncomplete || next !== null),
       consumed,
     };

@@ -935,6 +935,41 @@ it.effect("keeps healthy repositories when one of them cannot be read", () =>
   }),
 );
 
+it.effect(
+  "returns partial listing coverage with readable rows and no fabricated continuation",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                coverageWarning: "Team review requests may be missing.",
+                truncated: false,
+                continues: true,
+              }),
+          }),
+        ],
+      });
+      const result = yield* service.list({ state: "open", involvement: "reviewing" });
+      assert.strictEqual(result.entries.length, 1);
+      assert.deepStrictEqual(result.errors, [
+        {
+          projectId: "p1" as ProjectId,
+          projectTitle: "web",
+          message: "Team review requests may be missing.",
+          partial: true,
+        },
+      ]);
+      assert.isFalse(result.truncated);
+      assert.deepStrictEqual(result.nextCursors, {});
+    }),
+);
+
 it.effect("tries another workspace on the same host for the viewer", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

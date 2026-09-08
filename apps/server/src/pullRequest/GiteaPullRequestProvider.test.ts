@@ -150,6 +150,60 @@ describe("GiteaPullRequestProvider", () => {
       expect("autoMergeEnabled" in detail).toBe(false);
     }),
   );
+  it.effect.each([undefined, "fix"])(
+    "retains Reviewing coverage warnings in provider listings (%s)",
+    (query) =>
+      Effect.gen(function* () {
+        const pull = { ...rawPullRequest(), requested_reviewers: [{ login: "reader" }] };
+        const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+          if (input.path.startsWith("/user/teams?"))
+            return Effect.fail(
+              new GiteaApi.GiteaApiError({
+                operation: "getViewerTeams",
+                reason: "failed",
+                status: 403,
+                detail: "Teams unavailable",
+              }),
+            );
+          if (input.path.startsWith("/repos/acme/web/pulls?"))
+            return Effect.succeed(response([pull]));
+          if (input.path.startsWith("/repos/acme/web/issues?"))
+            return Effect.succeed(response([{ number: 7 }]));
+          if (input.path.startsWith("/repos/acme/web/pulls/7"))
+            return Effect.succeed(response(pull));
+          return Effect.die(`Unexpected Gitea request: ${input.path}`);
+        });
+        const apiLayer = GiteaPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              GiteaApi.GiteaApi,
+              GiteaApi.GiteaApi.of({
+                baseUrl: Option.some("https://forge.example.test/gitea"),
+                sshHosts: [],
+                request,
+                probeAuth: Effect.die("not used"),
+              }),
+            ),
+          ),
+        );
+        const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
+        const page = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "reader",
+          limit: 10,
+          ...(query === undefined ? {} : { query }),
+        });
+        expect(page.items.map((item) => item.number)).toEqual([7]);
+        expect(page.coverageWarning).toBe(
+          "Some team review requests may be missing because Gitea team membership could not be read.",
+        );
+        expect(page.truncated).toBe(false);
+      }),
+  );
   for (const discovery of ["failed", "incomplete"] as const) {
     it.effect(
       `keeps workflow approval state unknown when supported discovery is ${discovery}`,

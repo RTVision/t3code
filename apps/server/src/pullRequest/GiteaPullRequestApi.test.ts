@@ -1569,6 +1569,49 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("limits later reviews to the remaining shared inline-comment budget", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([
+            { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
+            { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
+          ]),
+        ),
+      );
+      for (const [offset, length] of [
+        [0, 150],
+        [150, 100],
+      ] as const) {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length }, (_, index) => ({
+                id: offset + index + 31,
+                body: "Comment",
+                path: "src/a.ts",
+                position: 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      }
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      const inlineComments = result.comments.filter((comment) => comment.kind === "review-comment");
+      expect(inlineComments).toHaveLength(200);
+      expect(inlineComments.at(-1)?.id).toBe("review-comment:230");
+      expect(result.truncated).toBe(true);
+      expect(mockedRequest).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("follows pagination links when Gitea caps comment pages below the limit", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -2557,54 +2600,58 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect.each([undefined, "fix"])(
-    "preserves individual reviewing matches when viewer teams are forbidden (query: %s)",
-    (query) =>
-      Effect.gen(function* () {
-        const pullRequests = [
-          rawPullRequest(7),
-          rawPullRequest(8, {
-            requested_reviewers: [],
-            requested_reviewers_teams: [{ id: 9, name: "maintainers" }],
-          }),
-        ];
-        mockedRequest.mockImplementation((input) => {
-          if (input.path.startsWith("/user/teams?"))
-            return Effect.fail(
-              new GiteaApi.GiteaApiError({
-                operation: "getViewerTeams",
-                reason: "failed",
-                detail: "Public-only tokens cannot access viewer teams.",
-                status: 403,
-              }),
-            );
-          if (input.path.startsWith("/repos/acme/web/pulls?"))
-            return Effect.succeed(response(pullRequests));
-          if (input.path.startsWith("/repos/acme/web/issues?"))
-            return Effect.succeed(response([{ number: 7 }, { number: 8 }]));
-          const pullRequest = pullRequests.find(
-            (pullRequest) => input.path === `/repos/acme/web/pulls/${pullRequest.number}`,
+  it.effect.each(
+    [undefined, "fix"].flatMap((query) => [403, 503].map((status) => ({ query, status }))),
+  )("preserves individual reviewing matches with partial team coverage (%j)", ({ query, status }) =>
+    Effect.gen(function* () {
+      const pullRequests = [
+        rawPullRequest(7),
+        rawPullRequest(8, {
+          requested_reviewers: [],
+          requested_reviewers_teams: [{ id: 9, name: "maintainers" }],
+        }),
+      ];
+      mockedRequest.mockImplementation((input) => {
+        if (input.path.startsWith("/user/teams?"))
+          return Effect.fail(
+            new GiteaApi.GiteaApiError({
+              operation: "getViewerTeams",
+              reason: "failed",
+              detail: "Viewer teams could not be read.",
+              status,
+            }),
           );
-          if (pullRequest !== undefined) return Effect.succeed(response(pullRequest));
-          return Effect.die(`unexpected request: ${input.path}`);
-        });
-        const api = yield* GiteaPullRequestApi.make;
-        const page = yield* api.listPullRequests({
-          host: "forge.example.test",
-          repository: "acme/web",
-          state: "open",
-          involvement: "reviewing",
-          viewer: "reviewer",
-          limit: 10,
-          ...(query === undefined ? {} : { query }),
-        });
+        if (input.path.startsWith("/repos/acme/web/pulls?"))
+          return Effect.succeed(response(pullRequests));
+        if (input.path.startsWith("/repos/acme/web/issues?"))
+          return Effect.succeed(response([{ number: 7 }, { number: 8 }]));
+        const pullRequest = pullRequests.find(
+          (pullRequest) => input.path === `/repos/acme/web/pulls/${pullRequest.number}`,
+        );
+        if (pullRequest !== undefined) return Effect.succeed(response(pullRequest));
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const page = yield* api.listPullRequests({
+        host: "forge.example.test",
+        repository: "acme/web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "reviewer",
+        limit: 10,
+        ...(query === undefined ? {} : { query }),
+      });
 
-        expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([7]);
-        expect(page.consumed).toBe(2);
-        expect(
-          mockedRequest.mock.calls.filter(([input]) => input.path.startsWith("/user/teams?")),
-        ).toHaveLength(1);
-      }),
+      expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([7]);
+      expect(page.consumed).toBe(2);
+      expect(page.truncated).toBe(false);
+      expect(page.coverageWarning).toBe(
+        "Some team review requests may be missing because Gitea team membership could not be read.",
+      );
+      expect(
+        mockedRequest.mock.calls.filter(([input]) => input.path.startsWith("/user/teams?")),
+      ).toHaveLength(1);
+    }),
   );
 
   it.effect("includes pull requests requested from a viewer team in reviewing listings", () =>
