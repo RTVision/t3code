@@ -98,13 +98,15 @@ export function giteaBaseComparison(
 
 export function giteaToChangeRequest(
   pullRequest: GiteaPullRequestApi.GiteaPullRequest,
+  relationshipOnly = false,
 ): ProviderChangeRequest {
   return {
     number: pullRequest.number,
     title: pullRequest.title,
     url: pullRequest.url,
     author: pullRequest.author,
-    headBranch: pullRequest.headBranch,
+    headBranch: relationshipOnly ? pullRequest.relationshipHeadBranch : pullRequest.headBranch,
+    ...(relationshipOnly ? { headBranchAvailable: pullRequest.headBranchAvailable } : {}),
     headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner,
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
@@ -174,11 +176,16 @@ export const make = Effect.gen(function* () {
           includeTracking: true,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          ...(input.relationshipOnly === undefined
+            ? {}
+            : { relationshipOnly: input.relationshipOnly }),
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((page) => ({
-            items: page.items.map(giteaToChangeRequest),
+            items: page.items.map((pullRequest) =>
+              giteaToChangeRequest(pullRequest, input.relationshipOnly === true),
+            ),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,
@@ -191,7 +198,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest({ ...input, includeTracking: true }),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
