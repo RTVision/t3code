@@ -2128,12 +2128,13 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
-          readUnknownArray({
+          readUnknownPage({
             operation: "listTeamReviewerCandidates",
             ...input,
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
-            Effect.catchTag("GiteaPullRequestApiError", (error: GiteaPullRequestApiError) =>
+            Effect.map((page) => page.rows),
+            Effect.catch((error) =>
               isGiteaApiError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
                 : Effect.fail(error),
