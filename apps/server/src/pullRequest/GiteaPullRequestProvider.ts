@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
