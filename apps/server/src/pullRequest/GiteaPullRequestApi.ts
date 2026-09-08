@@ -1045,7 +1045,7 @@ export const make = Effect.gen(function* () {
       sort: relationshipOnly ? "oldest" : "recentupdate",
       page,
       limit: PAGE_SIZE,
-      include_tracking: input.includeTracking === true ? "true" : undefined,
+      include_tracking: !relationshipOnly && input.includeTracking === true ? "true" : undefined,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
     });
     let rowsSeen = 0;
