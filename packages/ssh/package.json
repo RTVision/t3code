@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./runner": {
+      "types": "./src/runner.ts",
+      "import": "./src/runner.ts"
+    },
     "./auth": {
       "types": "./src/auth.ts",
       "import": "./src/auth.ts"

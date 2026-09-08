@@ -25,6 +25,7 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
   createdAt: "2026-04-09T00:00:00.000Z",
   lastConnectedAt: "2026-04-09T01:00:00.000Z",
   desktopSsh: {
+    runner: { kind: "wsl", distro: "Debian" },
     alias: "devbox",
     hostname: "devbox.example.com",
     username: "julius",
@@ -190,6 +191,7 @@ describe("DesktopSavedEnvironments", () => {
                 "createdAt": "2026-04-09T00:00:00.000Z",
                 "lastConnectedAt": "2026-04-09T01:00:00.000Z",
                 "desktopSsh": {
+                  "runner": { "kind": "wsl", "distro": "Debian" },
                   "alias": "devbox",
                   "hostname": "devbox.example.com",
                   "username": "julius",

@@ -44,8 +44,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
  * nothing, which is what every listing did before there were any. Optional as a whole so a page
  * and a server of different ages still speak to each other.
  *
- * `checks` is host-side only: no row carries its own check state, so a host that cannot match it
- * answers unnarrowed rather than the page pretending to know.
+ * `checks` is host-side where supported, and is also judged from a row's own state when the
+ * provider carries one. A host that cannot match it answers unnarrowed rather than the page
+ * pretending to know.
  */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
