@@ -1367,7 +1367,9 @@ export const make = Effect.gen(function* () {
 
   const getAutoMergeEnabled = Effect.fn("GiteaPullRequestApi.getAutoMergeEnabled")(
     function* (input: { host: string; repository: string; number: number }) {
-      const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+      const features = yield* getFeatures.pipe(
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      );
       if (features.includes("pull-auto-merge-state")) {
         return (yield* getPullRequest(input)).autoMergeEnabled;
       }
@@ -1415,7 +1417,7 @@ export const make = Effect.gen(function* () {
     number: number;
     action: Extract<PullRequestAction, "draft" | "ready">;
   }) {
-    const features = yield* getFeatures.pipe(Effect.orElseSucceed(() => []));
+    const features = yield* getFeatures.pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
     if (features.includes("pull-draft")) {
       return yield* write({
         operation: "runAction",
@@ -1485,7 +1487,7 @@ export const make = Effect.gen(function* () {
       subjectIds: ReadonlyArray<string>;
     }) {
       const supportsReviewReactions = (yield* getFeatures.pipe(
-        Effect.orElseSucceed(() => []),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
       )).includes("pull-review-reactions");
       const targets: Array<{
         readonly subjectId: string | undefined;
@@ -1954,7 +1956,12 @@ export const make = Effect.gen(function* () {
         );
       }
       return Effect.gen(function* () {
-        if (target.kind === "review" && !(yield* getFeatures.pipe(Effect.orElseSucceed(() => []))).includes("pull-review-reactions")) {
+        if (
+          target.kind === "review" &&
+          !(yield* getFeatures.pipe(
+            Effect.orElseSucceed((): ReadonlyArray<string> => []),
+          )).includes("pull-review-reactions")
+        ) {
           return yield* new GiteaPullRequestApiError({
             operation: "setReaction",
             reason: "failed",
