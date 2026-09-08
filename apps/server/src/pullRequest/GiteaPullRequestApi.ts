@@ -4,6 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import {
+  PullRequestChecksState as PullRequestChecksStateSchema,
+  PullRequestReviewDecision as PullRequestReviewDecisionSchema,
+} from "@t3tools/contracts";
 import type {
   PullRequestAction,
   PullRequestActor,
@@ -19,7 +23,9 @@ import type {
   PullRequestMergeability,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestChecksState,
   PullRequestReviewCommentDraft,
+  PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
@@ -28,6 +34,7 @@ import type {
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
+import * as GiteaWorkflows from "./GiteaWorkflows.ts";
 import {
   editableCommentId,
   type GiteaConversationReactionTarget,
@@ -42,6 +49,7 @@ import { dedupeChecks } from "./pullRequestChecks.ts";
 
 const PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 4;
+const DEPENDENCY_PAGINATION_PAGES = 4;
 const MAX_PAGINATION_PAGES = 100;
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 // Issue search rows do not carry branches or full state, so hydrate them without opening an
@@ -55,6 +63,7 @@ const RawUser = Schema.Struct({
   avatar_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const RawRepository = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
   full_name: Schema.optional(Schema.String),
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
@@ -73,7 +82,9 @@ const RawRepository = Schema.Struct({
 });
 const RawBranch = Schema.Struct({
   ref: Schema.optional(Schema.String),
+  label: Schema.optional(Schema.NullOr(Schema.String)),
   sha: Schema.optional(Schema.String),
+  repo_id: Schema.optional(Schema.Int),
   repo: Schema.optional(Schema.NullOr(RawRepository)),
 });
 const RawLabel = Schema.Struct({
@@ -81,6 +92,13 @@ const RawLabel = Schema.Struct({
   name: Schema.optional(Schema.String),
   color: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const RawTeam = Schema.Struct({
+  id: Schema.optional(Schema.Int),
+  name: Schema.optional(Schema.String),
+  organization: Schema.optional(
+    Schema.NullOr(Schema.Struct({ username: Schema.optional(Schema.String) })),
+  ),
 });
 const RawPullRequest = Schema.Struct({
   number: Schema.Int,
@@ -90,6 +108,8 @@ const RawPullRequest = Schema.Struct({
   merged: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.Boolean)),
   draft: Schema.optional(Schema.Boolean),
+  review_decision: Schema.optional(Schema.NullOr(PullRequestReviewDecisionSchema)),
+  checks_state: Schema.optional(Schema.NullOr(PullRequestChecksStateSchema)),
   auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
   auto_merge_method: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.String,
@@ -106,6 +126,7 @@ const RawPullRequest = Schema.Struct({
   base: RawBranch,
   head: RawBranch,
   requested_reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUser))),
+  requested_reviewers_teams: Schema.optional(Schema.NullOr(Schema.Array(RawTeam))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabel))),
   merge_base: Schema.optional(Schema.String),
 });
@@ -197,12 +218,14 @@ type RawCommitStatus = NonNullable<(typeof RawCombinedStatus.Type)["statuses"]>[
 
 const decodeRow = Schema.decodeUnknownOption(RawPullRequest);
 const decodeUser = Schema.decodeUnknownOption(RawUser);
+const decodeTeam = Schema.decodeUnknownOption(RawTeam);
 const decodeComment = Schema.decodeUnknownOption(RawComment);
 const decodeReview = Schema.decodeUnknownOption(RawReview);
 const decodeReviewComment = Schema.decodeUnknownOption(RawReviewComment);
 const decodeCommit = Schema.decodeUnknownOption(RawCommit);
 const decodeLabel = Schema.decodeUnknownOption(RawLabel);
 const decodeReaction = Schema.decodeUnknownOption(RawGiteaReaction);
+const isGiteaApiError = Schema.is(GiteaApi.GiteaApiError);
 const encodeObject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -214,9 +237,14 @@ export interface GiteaPullRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly relationshipHeadBranch: string;
+  readonly headBranchAvailable: boolean;
   readonly headSha: string;
   readonly headRepositoryNameWithOwner: string | null;
+  readonly headRepositoryId: number | null;
   readonly baseBranch: string;
+  readonly baseRepositoryNameWithOwner: string | null;
+  readonly baseRepositoryId: number | null;
   readonly baseSha: string;
   readonly mergeBaseSha: string;
   readonly state: "open" | "closed" | "merged";
@@ -230,11 +258,15 @@ export interface GiteaPullRequest {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly reviewRequestLogins: ReadonlyArray<string>;
+  readonly reviewRequestTeamIDs: ReadonlyArray<number>;
+  readonly reviewRequestTeamNames: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly commentCount: number;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly reviewDecision?: PullRequestReviewDecision | null;
+  readonly checksState?: PullRequestChecksState | null;
 }
 
 export interface GiteaRepositoryAccess {
@@ -279,6 +311,7 @@ function actor(value: typeof RawUser.Type | null | undefined): PullRequestActor 
 function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
   const title = value.title.trim();
   const headBranch = value.head.ref?.trim();
+  const headLabel = value.head.label?.trim();
   const baseBranch = value.base.ref?.trim();
   const createdAt = iso(value.created_at);
   const updatedAt = iso(value.updated_at);
@@ -295,9 +328,14 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     url: value.html_url,
     author: actor(value.user),
     headBranch,
+    relationshipHeadBranch: headLabel || headBranch,
+    headBranchAvailable: !headBranch.startsWith("refs/pull/"),
     headSha: value.head.sha?.trim() ?? "",
     headRepositoryNameWithOwner: value.head.repo?.full_name?.trim() || null,
+    headRepositoryId: value.head.repo?.id ?? value.head.repo_id ?? null,
     baseBranch,
+    baseRepositoryNameWithOwner: value.base.repo?.full_name?.trim() || null,
+    baseRepositoryId: value.base.repo?.id ?? value.base.repo_id ?? null,
     baseSha: value.base.sha?.trim() ?? "",
     mergeBaseSha: value.merge_base?.trim() ?? "",
     state: value.merged === true ? "merged" : value.state === "closed" ? "closed" : "open",
@@ -316,6 +354,13 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     mergedAt: iso(value.merged_at),
     closedAt: iso(value.closed_at),
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
+    reviewRequestTeamIDs: (value.requested_reviewers_teams ?? []).flatMap((team) =>
+      team.id === undefined ? [] : [team.id],
+    ),
+    reviewRequestTeamNames: (value.requested_reviewers_teams ?? []).flatMap((team) => {
+      const name = team.name?.trim();
+      return name ? [name] : [];
+    }),
     reviewers,
     labels: (value.labels ?? []).flatMap((label) => {
       const name = label.name?.trim();
@@ -328,6 +373,8 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     ...(["merge", "squash", "rebase"].includes(value.auto_merge_method ?? "")
       ? { autoMergeMethod: value.auto_merge_method as PullRequestMergeMethod }
       : {}),
+    ...(value.review_decision === undefined ? {} : { reviewDecision: value.review_decision }),
+    ...(value.checks_state === undefined ? {} : { checksState: value.checks_state }),
   };
 }
 
@@ -336,13 +383,15 @@ function matchesPullRequest(
   state: PullRequestListState,
   involvement: PullRequestInvolvement,
   viewer: string,
+  viewerTeamIDs: ReadonlySet<number> = new Set(),
 ): boolean {
   if (state !== "all" && value.state !== state) return false;
   if (involvement === "authored" && value.author?.login.toLowerCase() !== viewer.toLowerCase())
     return false;
   if (
     involvement === "reviewing" &&
-    !value.reviewRequestLogins.some((login) => login.toLowerCase() === viewer.toLowerCase())
+    !value.reviewRequestLogins.some((login) => login.toLowerCase() === viewer.toLowerCase()) &&
+    !value.reviewRequestTeamIDs.some((id) => viewerTeamIDs.has(id))
   )
     return false;
   return true;
@@ -445,6 +494,14 @@ function nextPagePath(input: {
 export class GiteaPullRequestApi extends Context.Service<
   GiteaPullRequestApi,
   {
+    readonly getWorkflowApprovals: (input: {
+      host: string;
+      repository: string;
+      number: number;
+    }) => Effect.Effect<
+      { supported: boolean; runs: ReadonlyArray<GiteaWorkflows.GiteaWorkflowRun> },
+      GiteaPullRequestApiError
+    >;
     readonly getViewer: () => Effect.Effect<string, GiteaPullRequestApiError>;
     readonly getFeatures: () => Effect.Effect<ReadonlyArray<string>, GiteaPullRequestApiError>;
     readonly listPullRequests: (input: {
@@ -456,6 +513,8 @@ export class GiteaPullRequestApi extends Context.Service<
       readonly limit: number;
       readonly query?: string;
       readonly cursor?: ProviderListCursor;
+      readonly includeTracking?: boolean;
+      readonly relationshipOnly?: boolean;
     }) => Effect.Effect<
       {
         items: ReadonlyArray<GiteaPullRequest>;
@@ -468,6 +527,7 @@ export class GiteaPullRequestApi extends Context.Service<
       host: string;
       repository: string;
       number: number;
+      includeTracking?: boolean;
     }) => Effect.Effect<GiteaPullRequest, GiteaPullRequestApiError>;
     readonly getRepositoryAccess: (input: {
       host: string;
@@ -697,6 +757,7 @@ export const make = Effect.gen(function* () {
     host: string;
     repository: string;
     number: number;
+    includeTracking?: boolean;
   }) {
     const operation = "getPullRequest";
     const response = yield* request({
@@ -704,7 +765,9 @@ export const make = Effect.gen(function* () {
       host: input.host,
       repository: input.repository,
       method: "GET",
-      path: `${basePath(input.repository)}/pulls/${input.number}`,
+      path: query(`${basePath(input.repository)}/pulls/${input.number}`, {
+        include_tracking: input.includeTracking === true ? "true" : undefined,
+      }),
     });
     const raw = yield* decode(operation, RawPullRequest, response);
     const mapped = pullRequest(raw);
@@ -741,6 +804,58 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const getWorkflowApprovals = Effect.fn("GiteaPullRequestApi.getWorkflowApprovals")(
+    function* (input: { host: string; repository: string; number: number }) {
+      yield* validateHost(input.host);
+      if (!(yield* getFeatures).includes("actions-run-approve"))
+        return { supported: false, runs: [] };
+      const pull = yield* getPullRequest(input);
+      if (pull.state !== "open") return { supported: true, runs: [] };
+      const runs = yield* GiteaWorkflows.list(gitea, { ...input, headSha: pull.headSha }).pipe(
+        Effect.mapError((error) => failure("getWorkflowApprovals", error)),
+      );
+      return { supported: true, runs };
+    },
+  );
+
+  const approveWorkflows = Effect.fn("GiteaPullRequestApi.approveWorkflows")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+  }) {
+    const before = yield* getPullRequest(input);
+    const approvals = yield* getWorkflowApprovals(input);
+    if (!approvals.supported)
+      return yield* new GiteaPullRequestApiError({
+        operation: "approveWorkflows",
+        reason: "failed",
+        detail: "This Gitea server does not expose workflow approval metadata.",
+      });
+    for (const run of approvals.runs) {
+      const current = yield* getPullRequest(input);
+      if (
+        current.state !== "open" ||
+        current.headSha !== before.headSha ||
+        !GiteaWorkflows.isCurrentPullWorkflow(run, {
+          number: input.number,
+          headSha: current.headSha,
+        })
+      ) {
+        return yield* new GiteaPullRequestApiError({
+          operation: "approveWorkflows",
+          reason: "failed",
+          detail: "The pull request head changed; refresh before approving workflows.",
+        });
+      }
+      yield* request({
+        operation: "approveWorkflows",
+        ...input,
+        method: "POST",
+        path: `${basePath(input.repository)}/actions/runs/${run.id}/approve`,
+      });
+    }
+  });
+
   const readUnknownPage = Effect.fn("GiteaPullRequestApi.readUnknownPage")(function* (input: {
     operation: string;
     host: string;
@@ -776,6 +891,7 @@ export const make = Effect.gen(function* () {
       readonly limit: number;
       readonly query: string;
       readonly cursor?: ProviderListCursor;
+      readonly includeTracking?: boolean;
     }) {
       const wanted = Math.max(1, input.limit);
       const delivered = input.cursor?.delivered ?? 0;
@@ -788,11 +904,14 @@ export const make = Effect.gen(function* () {
         viewer: input.viewer,
         page,
         limit: PAGE_SIZE,
+        includeTracking: input.includeTracking === true,
       });
       let rowsSeen = 0;
       let rowsSkipped = 0;
       let consumed = 0;
       const collected: Array<GiteaPullRequest> = [];
+      const viewerTeamIDs =
+        input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
 
       while (page <= MAX_PAGINATION_PAGES) {
         const result = yield* readUnknownPage({
@@ -822,6 +941,7 @@ export const make = Effect.gen(function* () {
                   host: input.host,
                   repository: input.repository,
                   number,
+                  includeTracking: input.includeTracking === true,
                 });
           },
           { concurrency: SEARCH_HYDRATION_CONCURRENCY },
@@ -830,12 +950,25 @@ export const make = Effect.gen(function* () {
         for (const [index, pullRequest] of hydrated.entries()) {
           consumed += 1;
           if (pullRequest === null) continue;
-          if (!matchesPullRequest(pullRequest, input.state, input.involvement, input.viewer))
+          if (
+            !matchesPullRequest(
+              pullRequest,
+              input.state,
+              input.involvement,
+              input.viewer,
+              viewerTeamIDs,
+            )
+          )
             continue;
           collected.push(pullRequest);
           if (collected.length === wanted) {
-            // A raw-row offset can safely continue even when this is the last allowed page; a
-            // search that cannot fill its requested slice reaches the bounded failure below.
+            if (page === MAX_PAGINATION_PAGES && next !== null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listPullRequests",
+                reason: "failed",
+                detail: "Gitea pull request pagination exceeded the safe page limit.",
+              });
+            }
             return {
               items: collected,
               truncated: index < pageRows.length - 1 || next !== null,
@@ -862,6 +995,11 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
+    (input: { operation: string; host: string; repository: string; path: string }) =>
+      readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
+  );
+
   const getFeatures = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }),
@@ -879,6 +1017,39 @@ export const make = Effect.gen(function* () {
     "1 minute",
   );
 
+  const getViewerTeamIDs = yield* Effect.cachedWithTTL(
+    Effect.suspend(() =>
+      Effect.gen(function* () {
+        const teamIDs = new Set<number>();
+        let path = query("/user/teams", { page: 1, limit: PAGE_SIZE });
+        let rowsSeen = 0;
+        for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+          const response = yield* gitea
+            .request({ operation: "getViewerTeams", method: "GET", path })
+            .pipe(Effect.mapError((error) => failure("getViewerTeams", error)));
+          const teams = yield* decode("getViewerTeams", Schema.Array(RawTeam), response);
+          for (const team of teams) if (team.id !== undefined) teamIDs.add(team.id);
+          rowsSeen += teams.length;
+          const next = nextPagePath({
+            path,
+            page,
+            pageRows: teams.length,
+            rowsSeen,
+            headers: response.headers,
+          });
+          if (next === null) return teamIDs;
+          path = next;
+        }
+        return yield* new GiteaPullRequestApiError({
+          operation: "getViewerTeams",
+          reason: "failed",
+          detail: "Gitea viewer team pagination exceeded the safe page limit.",
+        });
+      }),
+    ),
+    "1 minute",
+  );
+
   const readUnknownSlice = Effect.fn("GiteaPullRequestApi.readUnknownSlice")(function* (input: {
     operation: string;
     host: string;
@@ -887,6 +1058,7 @@ export const make = Effect.gen(function* () {
     limit: number;
     nullAsEmpty?: boolean;
     requirePaginationEvidence?: boolean;
+    nullAsEmpty?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -935,8 +1107,9 @@ export const make = Effect.gen(function* () {
   const listPullRequests: GiteaPullRequestApi["Service"]["listPullRequests"] = Effect.fn(
     "GiteaPullRequestApi.listPullRequests",
   )(function* (input) {
+    const relationshipOnly = input.relationshipOnly === true;
     const search = input.query?.trim();
-    if (search !== undefined && search !== "") {
+    if (!relationshipOnly && search !== undefined && search !== "") {
       return yield* listSearchPullRequests({ ...input, query: search });
     }
     const wanted = Math.max(1, input.limit);
@@ -946,43 +1119,125 @@ export const make = Effect.gen(function* () {
     let page = 1;
     let path = query(`${basePath(input.repository)}/pulls`, {
       state: endpointState,
-      sort: "recentupdate",
+      sort: relationshipOnly ? "oldest" : "recentupdate",
       page,
       limit: PAGE_SIZE,
+      include_tracking: !relationshipOnly && input.includeTracking === true ? "true" : undefined,
       ...(input.involvement === "authored" ? { poster: input.viewer } : {}),
     });
     let rowsSeen = 0;
     let rowsSkipped = 0;
     let consumed = 0;
+    let relationshipEvidenceIncomplete = false;
+    let reportedRelationshipTotal: number | null = null;
+    const relationshipNumbers = new Set<number>();
+    const repositoryIdsByName = new Map<string, number>();
+    const expectedRepository = input.repository.trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
-    while (page <= MAX_PAGINATION_PAGES) {
-      const result = yield* readUnknownPage({
+    const viewerTeamIDs =
+      input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
+    const maxPages = relationshipOnly ? DEPENDENCY_PAGINATION_PAGES : MAX_PAGINATION_PAGES;
+    let pagesRead = 0;
+    let prefetchedPage: UnknownPage | null = null;
+    let next: string | null = null;
+    if (relationshipOnly && delivered > 0) {
+      prefetchedPage = yield* readUnknownPage({
         operation: "listPullRequests",
         host: input.host,
         repository: input.repository,
         path,
       });
+      pagesRead = 1;
+      const pageSize = prefetchedPage.rows.length;
+      if (pageSize > 0 && delivered >= pageSize) {
+        page = Math.floor(delivered / pageSize) + 1;
+        rowsSeen = (page - 1) * pageSize;
+        rowsSkipped = rowsSeen;
+        path = pathAtPage(path, page);
+        const pageTotal = totalCount(prefetchedPage.headers);
+        if (pageTotal === null) relationshipEvidenceIncomplete = true;
+        else reportedRelationshipTotal = pageTotal;
+        prefetchedPage = null;
+      }
+    }
+    while (pagesRead < maxPages || prefetchedPage !== null) {
+      const prefetched = prefetchedPage;
+      const result =
+        prefetched ??
+        (yield* readUnknownPage({
+          operation: "listPullRequests",
+          host: input.host,
+          repository: input.repository,
+          path,
+        }));
+      prefetchedPage = null;
+      if (prefetched === null) pagesRead += 1;
       rowsSeen += result.rows.length;
+      if (relationshipOnly) {
+        const pageTotal = totalCount(result.headers);
+        if (pageTotal === null) relationshipEvidenceIncomplete = true;
+        else if (reportedRelationshipTotal === null) reportedRelationshipTotal = pageTotal;
+        else if (pageTotal !== reportedRelationshipTotal) relationshipEvidenceIncomplete = true;
+      }
       const toSkip = Math.min(Math.max(0, delivered - rowsSkipped), result.rows.length);
       rowsSkipped += toSkip;
       const pageRows = result.rows.slice(toSkip);
-      const next = nextPagePath({
+      next = nextPagePath({
         path,
         page,
         pageRows: result.rows.length,
         rowsSeen,
         headers: result.headers,
       });
+      if (
+        relationshipOnly &&
+        reportedRelationshipTotal !== null &&
+        (rowsSeen > reportedRelationshipTotal ||
+          (next === null && rowsSeen !== reportedRelationshipTotal))
+      ) {
+        relationshipEvidenceIncomplete = true;
+      }
       for (const [index, row] of pageRows.entries()) {
         consumed += 1;
         const decoded = decodeRow(row);
-        if (Option.isNone(decoded)) continue;
+        if (Option.isNone(decoded)) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
         const pr = pullRequest(decoded.value);
-        if (pr === null) continue;
-        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer)) continue;
+        if (pr === null) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
+        if (relationshipOnly) {
+          const targetRepository = pr.baseRepositoryNameWithOwner?.toLowerCase();
+          if (targetRepository === undefined || targetRepository !== expectedRepository) {
+            relationshipEvidenceIncomplete = true;
+            continue;
+          }
+          if (relationshipNumbers.has(pr.number)) {
+            relationshipEvidenceIncomplete = true;
+            continue;
+          }
+          relationshipNumbers.add(pr.number);
+          for (const [name, id] of [
+            [pr.baseRepositoryNameWithOwner, pr.baseRepositoryId],
+            [pr.headRepositoryNameWithOwner, pr.headRepositoryId],
+          ] as const) {
+            if (name === null || id === null || id < 0) continue;
+            const key = name.toLowerCase();
+            const observed = repositoryIdsByName.get(key);
+            if (observed === undefined) repositoryIdsByName.set(key, id);
+            else if (observed !== id) relationshipEvidenceIncomplete = true;
+          }
+        }
+        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeamIDs)) {
+          relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
+          continue;
+        }
         collected.push(pr);
         if (collected.length === wanted) {
-          if (page === MAX_PAGINATION_PAGES && next !== null) {
+          if (pagesRead === maxPages && next !== null && !relationshipOnly) {
             return yield* new GiteaPullRequestApiError({
               operation: "listPullRequests",
               reason: "failed",
@@ -991,7 +1246,8 @@ export const make = Effect.gen(function* () {
           }
           return {
             items: collected,
-            truncated: index < pageRows.length - 1 || next !== null,
+            truncated:
+              relationshipEvidenceIncomplete || index < pageRows.length - 1 || next !== null,
             consumed,
           };
         }
@@ -1000,7 +1256,7 @@ export const make = Effect.gen(function* () {
       path = next;
       page += 1;
     }
-    if (page > MAX_PAGINATION_PAGES) {
+    if (next !== null && !relationshipOnly) {
       return yield* new GiteaPullRequestApiError({
         operation: "listPullRequests",
         reason: "failed",
@@ -1009,7 +1265,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       items: collected,
-      truncated: false,
+      truncated: relationshipOnly && (relationshipEvidenceIncomplete || next !== null),
       consumed,
     };
   });
@@ -1287,6 +1543,7 @@ export const make = Effect.gen(function* () {
     sha: string;
   }) {
     const operation = "listChecks";
+    if (input.sha.trim() === "") return [];
     const statuses: Array<RawCommitStatus> = [];
     let path = query(
       `${basePath(input.repository)}/commits/${encodeURIComponent(input.sha)}/status`,
@@ -1530,31 +1787,30 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownSlice({
-            operation: "listConversationReactions",
-            host: input.host,
-            repository: input.repository,
-            path:
-              entry.target.kind === "pull-request"
-                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
-                    page: 1,
-                    limit: PAGE_SIZE,
-                  })
-                : entry.target.kind === "review"
-                  ? query(
-                      `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`,
-                      { page: 1, limit: PAGE_SIZE },
-                    )
-                  : query(
-                      `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
-                      {
-                        page: 1,
-                        limit: PAGE_SIZE,
-                      },
-                    ),
-            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
-            nullAsEmpty: true,
-          }).pipe(
+          (entry.target.kind === "comment"
+            ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
+              readUnknownPage({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                nullAsEmpty: true,
+              }).pipe(Effect.map(({ rows }) => ({ rows, truncated: false })))
+            : readUnknownSlice({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: query(
+                  entry.target.kind === "review"
+                    ? `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`
+                    : `${basePath(input.repository)}/issues/${input.number}/reactions`,
+                  { page: 1, limit: PAGE_SIZE },
+                ),
+                limit: PAGE_SIZE * CONVERSATION_PAGES,
+                requirePaginationEvidence: true,
+                nullAsEmpty: true,
+              })
+          ).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
               reactions: result.truncated
@@ -1582,15 +1838,29 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const unsupportedAction = (action: string) =>
-    new GiteaPullRequestApiError({
-      operation: "runAction",
-      reason: "failed",
-      detail: `Gitea does not expose a reliable ${action} operation through this API.`,
+  const revertPullRequest = Effect.fn("GiteaPullRequestApi.revertPullRequest")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+  }) {
+    yield* validateHost(input.host);
+    if (!(yield* getFeatures).includes("pull-revert"))
+      return yield* new GiteaPullRequestApiError({
+        operation: "revertPullRequest",
+        reason: "failed",
+        detail: "This Gitea server does not expose native pull request reverts.",
+      });
+    return yield* write({
+      operation: "revertPullRequest",
+      ...input,
+      method: "POST",
+      path: `${basePath(input.repository)}/pulls/${input.number}/revert`,
     });
+  });
 
   return GiteaPullRequestApi.of({
     getFeatures: () => getFeatures,
+    getWorkflowApprovals,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {
       const response = yield* gitea
         .request({
@@ -1780,9 +2050,10 @@ export const make = Effect.gen(function* () {
             number: input.number,
             action: input.action,
           });
-        case "revert":
         case "approve-workflows":
-          return Effect.fail(unsupportedAction(input.action));
+          return approveWorkflows(input);
+        case "revert":
+          return revertPullRequest(input);
       }
     },
     updatePullRequest: (input) =>
@@ -1863,26 +2134,62 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
+          readUnknownArray({
+            operation: "listTeamReviewerCandidates",
+            ...input,
+            path: `${basePath(input.repository)}/teams`,
+          }).pipe(
+            Effect.catch((error) =>
+              isGiteaApiError(error.cause) && error.cause.status === 405
+                ? Effect.succeed([])
+                : Effect.fail(error),
+            ),
+          ),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(
-        Effect.map(([pr, result]) => {
+        Effect.map(([pr, result, teamRows]) => {
           const requested = new Set(pr.reviewRequestLogins.map((login) => login.toLowerCase()));
+          const requestedTeams = new Set(
+            pr.reviewRequestTeamNames.map((name) => name.toLowerCase()),
+          );
           return {
-            candidates: result.rows.flatMap((row) => {
-              const raw = decodeUser(row);
-              if (Option.isNone(raw)) return [];
-              const mapped = actor(raw.value);
-              if (mapped === null || mapped.login === pr.author?.login) return [];
-              return [
-                {
-                  ...mapped,
-                  id: mapped.login,
-                  kind: "user" as const,
-                  isRequested: requested.has(mapped.login.toLowerCase()),
-                },
-              ];
-            }),
+            candidates: [
+              ...result.rows.flatMap((row) => {
+                const raw = decodeUser(row);
+                if (Option.isNone(raw)) return [];
+                const mapped = actor(raw.value);
+                if (
+                  mapped === null ||
+                  mapped.login.toLowerCase() === pr.author?.login.toLowerCase()
+                )
+                  return [];
+                return [
+                  {
+                    ...mapped,
+                    id: mapped.login,
+                    kind: "user" as const,
+                    isRequested: requested.has(mapped.login.toLowerCase()),
+                  },
+                ];
+              }),
+              ...teamRows.flatMap((row) => {
+                const raw = decodeTeam(row);
+                if (Option.isNone(raw)) return [];
+                const name = raw.value.name?.trim();
+                if (!name) return [];
+                return [
+                  {
+                    id: name,
+                    kind: "team" as const,
+                    login: name,
+                    name: raw.value.organization?.username?.trim() || null,
+                    avatarUrl: null,
+                    isRequested: requestedTeams.has(name.toLowerCase()),
+                  },
+                ];
+              }),
+            ],
             truncated: result.truncated,
           };
         }),

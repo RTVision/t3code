@@ -83,6 +83,32 @@ afterEach(() => {
 });
 
 layer("BitbucketPullRequestApi.layer", (it) => {
+  it.effect("bounds dependency discovery and retains omissions from earlier pages", () =>
+    Effect.gen(function* () {
+      const next = "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests?page=2";
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(response(valuePage([{ id: "invalid" }], next))),
+      );
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(1, 7))));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const input = {
+        repository: "acme/web",
+        state: "open" as const,
+        limit: 200,
+        relationshipOnly: true,
+      };
+      const batch = yield* api.listPullRequests(input);
+      expect(batch.items).toHaveLength(1);
+      expect(batch.truncated).toBe(true);
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+      mockedRequest.mockClear();
+      mockedRequest.mockReturnValue(Effect.succeed(response(valuePage([{ id: "invalid" }], next))));
+      const bounded = yield* api.listPullRequests(input);
+      expect(mockedRequest).toHaveBeenCalledTimes(4);
+      expect(bounded.truncated).toBe(true);
+    }),
+  );
+
   it.effect("asks for reviewers, newest first, at Bitbucket's page ceiling", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(3, 1))));
@@ -141,6 +167,41 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       assert.strictEqual(batch.items.length, 50);
       assert.isTrue(batch.truncated);
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("marks a page with a skipped row incomplete even without a next cursor", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            valuePage([
+              { id: "not a number" },
+              {
+                id: 7,
+                title: "Usable row",
+                state: "OPEN",
+                created_on: "2026-06-16T05:04:32+00:00",
+                updated_on: "2026-06-16T05:04:33+00:00",
+                source: { branch: { name: "feat/page" } },
+                destination: { branch: { name: "master" } },
+                links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/7" } },
+              },
+            ]),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const batch = yield* api.listPullRequests({
+        repository: "acme/web",
+        state: "open",
+        limit: 50,
+        relationshipOnly: true,
+      });
+
+      assert.strictEqual(batch.items.length, 1);
+      assert.isTrue(batch.truncated);
     }),
   );
 
