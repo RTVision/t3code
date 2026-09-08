@@ -24,6 +24,7 @@ import {
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  WINDOWS_NEOVIM_HELPER_RESOURCES,
   LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
@@ -545,6 +546,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     for (const resource of [
       ...WSL_RUNTIME_EXTRA_RESOURCES,
       ...LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
+      ...WINDOWS_NEOVIM_HELPER_RESOURCES,
     ]) {
       assert.include(
         DESKTOP_FILE_EXCLUSIONS,
@@ -563,6 +565,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+      "!apps/desktop/scripts/neovim-terminal",
+      "!apps/desktop/scripts/neovim-terminal/**/*",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
@@ -632,6 +636,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           to: "resource-monitor",
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
+        ...WINDOWS_NEOVIM_HELPER_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
       ]);
       // No Linux prebuild means the sidecar staging never writes the archive,
@@ -642,6 +647,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           to: "resource-monitor",
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
+        ...WINDOWS_NEOVIM_HELPER_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
       // Native binaries and helper executables cannot load from inside an

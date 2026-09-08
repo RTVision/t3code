@@ -27,6 +27,7 @@ export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
+export * from "./terminalEditor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";
 export * from "./assets.ts";
