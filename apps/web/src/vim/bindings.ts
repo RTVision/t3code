@@ -206,3 +206,20 @@ export function bindingWarnings(binding: VimBinding, bindings: readonly VimBindi
   }
   return [...new Set(warnings)];
 }
+
+/** Let editable widgets cancel first, without trapping Insert mode after they unmount. */
+export function normalModePhase({
+  mode,
+  editable,
+  composer,
+  help,
+}: {
+  mode: VimMode;
+  editable: boolean;
+  composer: boolean;
+  help: boolean;
+}): "capture" | "bubble" | "pass" {
+  if (mode === "insert" && editable && !composer) return "bubble";
+  if (mode === "normal" && !help) return "pass";
+  return "capture";
+}

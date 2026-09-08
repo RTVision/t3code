@@ -4,6 +4,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { dispatchAppCommand } from "./commandBus";
 import {
   advanceSequence,
+  normalModePhase,
   EMPTY_SEQUENCE,
   parseSequence,
   resolveVimBindings,
@@ -97,6 +98,14 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
   }, [settings, bindings, isOnSettings, help]);
   useLayoutEffect(() => {
     const suppressedReleases = new Set<string>();
+    const deferredNormal = new WeakSet<KeyboardEvent>();
+    function bubbleKeydown(event: KeyboardEvent) {
+      if (!deferredNormal.has(event) || event.defaultPrevented) return;
+      consume(event);
+      clear();
+      setHelp(false);
+      focusVimNormal(vimPane(event.target instanceof Element ? event.target : null));
+    }
     function consume(event: KeyboardEvent) {
       suppressedReleases.add(event.code || event.key);
       event.preventDefault();
@@ -201,10 +210,17 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       if (!result.consumed) return;
       if (result.command === "mode.normal") {
         if (stroke === "ctrl+c" && selectionPresent()) return;
-        // Rename, search and comment inputs own cancellation, including blur side effects.
-        if (currentMode === "insert" && !target?.closest('[data-testid="composer-editor"]')) return;
-        // Preserve application Escape actions such as clearing sidebar selection.
-        if (currentMode === "normal" && !help) return;
+        const phase = normalModePhase({
+          mode: currentMode,
+          editable: Boolean(target?.matches(inputSelector)),
+          composer: Boolean(target?.closest('[data-testid="composer-editor"]')),
+          help,
+        });
+        if (phase === "bubble") {
+          deferredNormal.add(event);
+          return;
+        }
+        if (phase === "pass") return;
       }
       consume(event);
       sequence.current = result.state;
@@ -261,12 +277,14 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       }
     }
     window.addEventListener("keydown", keydown, true);
+    window.addEventListener("keydown", bubbleKeydown);
     window.addEventListener("keyup", keyup, true);
     window.addEventListener("pointerdown", clear, true);
     document.addEventListener("focusin", focus);
     window.addEventListener("blur", clear);
     return () => {
       window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("keydown", bubbleKeydown);
       window.removeEventListener("keyup", keyup, true);
       window.removeEventListener("pointerdown", clear, true);
       document.removeEventListener("focusin", focus);

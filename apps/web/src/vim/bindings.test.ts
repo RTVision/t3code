@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { DEFAULT_VIM_SETTINGS } from "@t3tools/contracts/settings";
 import {
   advanceSequence,
+  normalModePhase,
   EMPTY_SEQUENCE,
   resolveVimBindings,
   strokeFromEvent,
@@ -88,5 +89,29 @@ describe("Vim sequences", () => {
     const warnings = bindingWarnings(binding, defaults);
     expect(warnings.some((warning) => warning.includes("reserve"))).toBe(true);
     expect(warnings.some((warning) => warning.includes("Find files"))).toBe(true);
+  });
+});
+
+describe("Normal-mode cancellation ownership", () => {
+  it("can leave Insert after an editor unmounts and focus lands on body", () => {
+    expect(normalModePhase({ mode: "insert", editable: false, composer: false, help: false })).toBe(
+      "capture",
+    );
+  });
+  it("lets rename and search inputs handle cancellation before app navigation", () => {
+    expect(normalModePhase({ mode: "insert", editable: true, composer: false, help: false })).toBe(
+      "bubble",
+    );
+    expect(normalModePhase({ mode: "insert", editable: true, composer: true, help: false })).toBe(
+      "capture",
+    );
+  });
+  it("preserves application Escape actions unless closing shortcut help", () => {
+    expect(normalModePhase({ mode: "normal", editable: false, composer: false, help: false })).toBe(
+      "pass",
+    );
+    expect(normalModePhase({ mode: "normal", editable: false, composer: false, help: true })).toBe(
+      "capture",
+    );
   });
 });
