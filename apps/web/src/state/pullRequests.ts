@@ -150,22 +150,38 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   pullRequestEnvironment.listStats,
 );
 
+type PullRequestListRefreshScope = Pick<PullRequestListInput, "projectId" | "projectIds" | "host">;
+
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
-  ({ environmentId }: EnvironmentQueryTarget<Readonly<Record<string, never>>>) =>
-    pullRequestEnvironment.refreshes({ environmentId, input: {} }),
+  ({ environmentId, input }: EnvironmentQueryTarget<PullRequestListRefreshScope>) =>
+    pullRequestEnvironment.refreshes({
+      environmentId,
+      input: {
+        kind: "list",
+        ...(input.host === undefined ? {} : { host: input.host }),
+        ...(input.projectId !== undefined
+          ? { projectIds: [input.projectId] }
+          : input.projectIds === undefined
+            ? {}
+            : { projectIds: input.projectIds }),
+      },
+    }),
 );
 
 export function usePullRequestTurnRefreshes(
-  environmentIds: ReadonlyArray<EnvironmentId>,
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListRefreshScope>>,
 ): ReadonlyArray<readonly [EnvironmentId, number]> {
-  return usePullRequestTurnRefreshQuery(
-    environmentIds.map((environmentId) => ({ environmentId, input: {} })),
-  ).values;
+  return usePullRequestTurnRefreshQuery(targets).values;
 }
 
-export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
-  const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
+export function usePullRequestTurnRefresh(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): number | null {
+  const result = useAtomValue(
+    pullRequestEnvironment.refreshes({ environmentId, input: { kind: "reference", reference } }),
+  );
   return Option.getOrNull(AsyncResult.value(result));
 }
 
