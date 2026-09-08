@@ -1,3 +1,6 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -66,6 +69,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly accountId?: string;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -403,6 +407,20 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   return { client, initialize };
 });
 
+const decodeCodexAccountIdentity = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ tokens: Schema.Struct({ account_id: Schema.String }) })),
+);
+
+export const readCodexAccountId = Effect.fn("readCodexAccountId")(function* (homePath: string) {
+  return yield* Effect.tryPromise(() =>
+    NodeFSP.readFile(NodePath.join(homePath, "auth.json"), "utf8"),
+  ).pipe(
+    Effect.flatMap(decodeCodexAccountIdentity),
+    Effect.map((auth) => auth.tokens.account_id.trim() || undefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -418,6 +436,19 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const version = versionMatch ? versionMatch[1] : undefined;
 
   const accountResponse = yield* client.request("account/read", {});
+  // account/read omits workspace identity. File-backed logins keep it beside
+  // the credentials in the same home used by this app-server instance.
+  const accountId =
+    accountResponse.account?.type === "chatgpt"
+      ? yield* readCodexAccountId(
+          expandHomePath(
+            input.homePath?.trim() ||
+              input.environment?.CODEX_HOME ||
+              process.env.CODEX_HOME ||
+              NodePath.join(input.environment?.HOME || NodeOS.homedir(), ".codex"),
+          ),
+        )
+      : undefined;
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,
@@ -459,6 +490,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   return {
     account: accountResponse,
+    ...(accountId ? { accountId } : {}),
     rateLimits,
     version,
     models: applyPreferredCodexDefaultModel(
@@ -523,7 +555,10 @@ const makePendingCodexProvider = (
     });
   });
 
-function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
+function accountProbeStatus(
+  account: CodexAppServerProviderSnapshot["account"],
+  accountId?: string,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -535,6 +570,7 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
     ...(account.account?.type ? { type: account.account?.type } : {}),
     ...(authLabel ? { label: authLabel } : {}),
     ...(authEmail ? { email: authEmail } : {}),
+    ...(accountId ? { accountId } : {}),
   } satisfies ServerProvider["auth"];
 
   if (account.account) {
@@ -645,9 +681,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
-  const accountStatus = accountProbeStatus(snapshot.account);
+  const accountStatus = accountProbeStatus(snapshot.account, snapshot.accountId);
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    snapshot.account.account?.type === "apiKey" || !snapshot.account.requiresOpenaiAuth
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({

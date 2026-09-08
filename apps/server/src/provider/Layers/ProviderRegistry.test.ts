@@ -365,11 +365,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
+      it.effect("does not count proxy rate limits as a native subscription", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: { account: null, requiresOpenaiAuth: false },
+                rateLimits: {
+                  snapshot: {
+                    primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 },
+                  },
+                  rateLimitsByLimitId: null,
+                  resetCredits: null,
+                },
+              }),
+            ),
+          );
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+          assert.deepStrictEqual(status.usageLimits?.windows, []);
+        }),
+      );
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
+                accountId: "workspace-a",
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -389,6 +410,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
+          assert.strictEqual(status.auth.accountId, "workspace-a");
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",

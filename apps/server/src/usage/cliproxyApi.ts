@@ -27,6 +27,7 @@ const AuthFile = Schema.Struct({
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
       chatgpt_plan_type: Schema.optional(Schema.String),
+      plan_type: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -205,6 +206,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id
+        ? { accountId: account.id_token.chatgpt_account_id }
+        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
@@ -254,7 +258,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const next = available?.[0];
       return {
         ...base,
-        plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
+        plan: codexPlanLabel(
+          usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type,
+        ),
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
