@@ -139,7 +139,7 @@ describe("GiteaPullRequestProvider", () => {
       const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
 
       const detail = yield* provider.getChangeRequest({
-        cwd: "/workspace",
+        cwd: "/repo",
         host: "forge.example.test",
         repository: "acme/web",
         number: 7,
