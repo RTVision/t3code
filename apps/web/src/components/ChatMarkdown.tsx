@@ -107,11 +107,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useEditorDispatch } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
@@ -2039,9 +2035,11 @@ function useChatMarkdownState({
   );
   const projects = useProjects();
   const availableEditors = serverConfig?.availableEditors ?? [];
-  const [preferredEditor] = usePreferredEditor(availableEditors);
-  const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const editorDispatch = useEditorDispatch(environmentId, availableEditors, cwd);
+  const preferredEditorMenuLabel = openInEditorMenuLabel(editorDispatch.choice?.editor ?? null);
+  const openInPreferredEditor = editorDispatch.open;
+  const canOpenPreferredEditor =
+    canUseShellActions || (environmentId !== null && editorDispatch.choice !== null);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -2312,7 +2310,7 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canOpenPreferredEditor ? { onOpen: openInPreferredEditor } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2339,6 +2337,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOpenPreferredEditor,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
