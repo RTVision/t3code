@@ -301,7 +301,9 @@ export function findProjectForChangeRequest(
     // remotes cannot establish a web root and continue through the ordinary identity match.
     if (identity.provider === "gitea" || identity.provider === "unknown") {
       const remoteMatch = giteaHttpRemoteMatchesLink(identity, link);
-      if (remoteMatch !== null) return remoteMatch;
+      if (remoteMatch !== null && (identity.provider === "gitea" || remoteMatch)) {
+        return remoteMatch;
+      }
     }
     const repository =
       identity.displayName ??
