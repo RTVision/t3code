@@ -28,16 +28,38 @@ export interface PullRequestDependencyTopologyInput {
   readonly provider: SourceControlProviderKind;
   readonly host: string;
   readonly repository: string;
+  /** Stored project path, including Azure project scope; separate from its CLI repository selector. */
+  readonly repositoryPath?: string | null;
   readonly focus: number;
   readonly rows: ReadonlyArray<ProviderDependencyNode>;
   /** Whether the unfiltered relationship listing reached the end of the host's collection. */
   readonly complete: boolean;
 }
 
-// GitHub repository names are case-insensitive. Preserve case elsewhere because a generic helper
-// cannot assume the same of every self-hosted provider; adapters own any further canonicalization.
+// GitHub, Gitea, and Azure repository identities are case-insensitive. Preserve case elsewhere;
+// their adapters own any further canonicalization.
 const normalizedRepository = (provider: SourceControlProviderKind, repository: string) =>
-  provider === "github" ? repository.trim().toLowerCase() : repository.trim();
+  provider === "github" || provider === "gitea" || provider === "azure-devops"
+    ? repository.trim().toLowerCase()
+    : repository.trim();
+
+/** Azure CLI selectors omit the project that qualifies source repository identities. */
+function azureRepositoryIdentity(repository: string, repositoryPath: string | null | undefined) {
+  if (repositoryPath == null) return null;
+  try {
+    const parts = repositoryPath.split("/").filter((part) => part && part !== "_git");
+    const project = parts.at(-2);
+    const name = parts.at(-1);
+    if (project === undefined || name === undefined) return null;
+    if (
+      decodeURIComponent(name).toLowerCase() !== decodeURIComponent(repository.trim()).toLowerCase()
+    )
+      return null;
+    return `${decodeURIComponent(project)}/${decodeURIComponent(name)}`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Relates ordinary pull requests using only repository-qualified branch identities. The result is
@@ -47,7 +69,10 @@ const normalizedRepository = (provider: SourceControlProviderKind, repository: s
 export function buildPullRequestDependencyContext(
   input: PullRequestDependencyTopologyInput,
 ): PullRequestDependencyContext {
-  const repository = normalizedRepository(input.provider, input.repository);
+  const repository =
+    input.provider === "azure-devops"
+      ? azureRepositoryIdentity(input.repository, input.repositoryPath)
+      : normalizedRepository(input.provider, input.repository);
   const byNumber = new Map<number, ProviderDependencyNode>();
   for (const row of input.rows) {
     if (!byNumber.has(row.number)) byNumber.set(row.number, row);
@@ -61,6 +86,7 @@ export function buildPullRequestDependencyContext(
     issueKeys.add(key);
     issues.push(issue);
   };
+  if (repository === null) addIssue({ reason: "identity-unknown" });
   for (const row of byNumber.values()) {
     if (row.headBranchAvailable === false)
       addIssue({ number: row.number, reason: "source-unavailable" });
@@ -297,6 +323,7 @@ export function buildPullRequestDependencyContext(
     edges: componentEdges,
     coverage:
       input.complete &&
+      repository !== null &&
       byNumber.has(input.focus) &&
       !hasUnknownIdentity &&
       !hasUnavailableSource &&

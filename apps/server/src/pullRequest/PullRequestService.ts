@@ -42,6 +42,7 @@ import {
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
   type PullRequestRef,
+  type PullRequestRefresh,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerRequestInput,
@@ -55,7 +56,7 @@ import {
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
   type SourceControlProviderInfo,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
@@ -143,6 +144,8 @@ const NATIVE_DEPENDENCY_MEMBER_LIMIT = 100;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
 
+const isSourceControlProviderKind = Schema.is(SourceControlProviderKind);
+
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
@@ -161,7 +164,7 @@ export class PullRequestService extends Context.Service<
       never,
       Scope.Scope
     >;
-    readonly subscribeRefreshes: Stream.Stream<number>;
+    readonly subscribeRefreshes: Stream.Stream<PullRequestRefresh>;
     readonly refreshAfterTurn: Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
     readonly dependencyContext: (
@@ -560,7 +563,10 @@ export function repositoryIdentityOf(project: OrchestrationProjectShell): string
 
 export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
-  const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const pullRequestRefreshes = yield* SubscriptionRef.make<PullRequestRefresh>({
+    revision: 0,
+    listings: true,
+  });
   const registry = yield* PullRequestProviderRegistry;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
@@ -1525,6 +1531,7 @@ export const make = Effect.gen(function* () {
             provider: project.api.kind,
             host: project.host,
             repository: project.repository,
+            repositoryPath: project.project.repositoryIdentity?.displayName ?? null,
             focus: input.number,
             rows,
             complete: branchComplete,
@@ -2392,11 +2399,13 @@ export const make = Effect.gen(function* () {
   let epochCounter = 0;
   let listingsEpoch = 0;
   let turnRefreshEpoch = 0;
+  const projectListingEpochs = new Map<string, { revision: number; host: string | undefined }>();
   const refEpochs = new Map<string, number>();
   const repositoryEpochs = new Map<string, number>();
   const REF_EPOCH_CAPACITY = 2_048;
   const REPOSITORY_EPOCH_CAPACITY = 512;
-  const refScope = (ref: PullRequestRef) => `${ref.projectId} ${ref.repository} ${ref.number}`;
+  const refScope = (ref: PullRequestRef) =>
+    `${ref.projectId} ${ref.repository.trim().toLowerCase()} ${ref.number}`;
   const refEpoch = (ref: PullRequestRef) =>
     Math.max(turnRefreshEpoch, refEpochs.get(refScope(ref)) ?? 0);
   const refCacheKey = (ref: PullRequestRef) =>
@@ -2421,6 +2430,82 @@ export const make = Effect.gen(function* () {
     }
     repositoryEpochs.set(scope, ++epochCounter);
   };
+
+  const listingEpoch = (projectIds?: ReadonlyArray<string>, host?: string) => {
+    let epoch = listingsEpoch;
+    for (const [projectId, entry] of projectListingEpochs) {
+      if (
+        (projectIds === undefined || projectIds.includes(projectId)) &&
+        (host === undefined || entry.host === undefined || entry.host === host.toLowerCase())
+      )
+        epoch = Math.max(epoch, entry.revision);
+    }
+    return epoch;
+  };
+  const bumpListingEpoch = (ref: PullRequestRef, host: string | undefined) => {
+    if (
+      !projectListingEpochs.has(ref.projectId) &&
+      projectListingEpochs.size >= REPOSITORY_EPOCH_CAPACITY
+    ) {
+      listingsEpoch = ++epochCounter;
+      projectListingEpochs.clear();
+    }
+    projectListingEpochs.set(ref.projectId, { revision: ++epochCounter, host });
+  };
+  const publishRefresh = (
+    reference?: PullRequestRef,
+    listings = true,
+    projectIds?: ReadonlyArray<PullRequestRef["projectId"]>,
+    host?: string,
+  ) =>
+    SubscriptionRef.set(pullRequestRefreshes, {
+      revision: epochCounter,
+      ...(reference === undefined
+        ? {}
+        : {
+            reference: {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+            },
+          }),
+      ...(projectIds === undefined ? {} : { projectIds }),
+      ...(host === undefined ? {} : { host }),
+      listings,
+    });
+
+  // Sibling checkouts share host data even when a client addresses them through another project.
+  const invalidateReference = Effect.fn("PullRequestService.invalidateReference")(function* (
+    reference: PullRequestRef,
+    listings: boolean,
+  ) {
+    const snapshot = yield* projections.getShellSnapshot().pipe(Effect.orElseSucceed(() => null));
+    const source = snapshot?.projects.find((project) => project.id === reference.projectId);
+    const identity = source?.repositoryIdentity;
+    const provider = identity?.provider;
+    const kind = isSourceControlProviderKind(provider) ? provider : "unknown";
+    const host = identity == null ? undefined : pullRequestHostOf(identity, kind);
+    const projectIds = new Set([reference.projectId]);
+    if (identity !== undefined && identity !== null) {
+      for (const project of snapshot?.projects ?? []) {
+        if (
+          project.repositoryIdentity?.provider === identity.provider &&
+          pullRequestHostOf(project.repositoryIdentity, kind) === host &&
+          repositoryIdentityOf(project)?.trim().toLowerCase() ===
+            reference.repository.trim().toLowerCase()
+        ) {
+          projectIds.add(project.id);
+        }
+      }
+    }
+    for (const projectId of projectIds) {
+      const ref = { ...reference, projectId };
+      bumpRefEpoch(ref);
+      bumpRepositoryEpoch(ref);
+      if (listings) bumpListingEpoch(ref, host);
+    }
+    yield* publishRefresh(reference, listings, [...projectIds], host);
+  });
 
   /** The positional filter slot of a cache key, back as the record `listUncached` takes. */
   const filtersOfKey = (
@@ -2511,7 +2596,10 @@ export const make = Effect.gen(function* () {
   );
   const list: PullRequestService["Service"]["list"] = (input) => {
     const key = JSON.stringify([
-      listingsEpoch,
+      listingEpoch(
+        input.projectId === undefined ? input.projectIds : [input.projectId],
+        input.host,
+      ),
       input.state,
       input.involvement ?? null,
       // Positional so two identical filter sets key alike however their record was assembled.
@@ -2710,7 +2798,7 @@ export const make = Effect.gen(function* () {
   const listStats: PullRequestService["Service"]["listStats"] = (input) => {
     if (input.refs.length === 0) return Effect.succeed({ stats: [] });
     const key = JSON.stringify([
-      listingsEpoch,
+      listingEpoch(input.refs.map((ref) => ref.projectId)),
       input.refs
         .map((ref) => [ref.projectId, ref.repository, ref.number] as const)
         .toSorted((left, right) =>
@@ -2723,23 +2811,20 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return Effect.sync(() => {
-        bumpRefEpoch(reference);
-        bumpRepositoryEpoch(reference);
-      }).pipe(Effect.andThen(() => SubscriptionRef.set(pullRequestRefreshes, epochCounter)));
+      return invalidateReference(reference, false);
     }
     return Effect.sync(() => {
       listingsEpoch = ++epochCounter;
       viewersByHost.clear();
     }).pipe(
       Effect.andThen(Cache.invalidateAll(viewerFlights)),
-      Effect.andThen(() => SubscriptionRef.set(pullRequestRefreshes, epochCounter)),
+      Effect.andThen(() => publishRefresh()),
     );
   };
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.suspend(() => {
     turnRefreshEpoch = listingsEpoch = ++epochCounter;
-    return SubscriptionRef.set(pullRequestRefreshes, turnRefreshEpoch);
+    return publishRefresh();
   });
 
   // A mutation's own client re-reads right after it, and every other client's next read must
@@ -2748,25 +2833,15 @@ export const make = Effect.gen(function* () {
   const invalidatedByMutation =
     <I extends PullRequestRef>(
       method: (input: I) => Effect.Effect<void, PullRequestError>,
+      listings = true,
     ): ((input: I) => Effect.Effect<void, PullRequestError>) =>
     (input) =>
-      method(input).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            bumpRefEpoch(input);
-            bumpRepositoryEpoch(input);
-            listingsEpoch = ++epochCounter;
-          }).pipe(Effect.andThen(() => SubscriptionRef.set(pullRequestRefreshes, epochCounter))),
-        ),
-      );
+      method(input).pipe(Effect.tap(() => invalidateReference(input, listings)));
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
     const repository = yield* runAction(input);
-    bumpRefEpoch({ ...input, repository });
-    bumpRepositoryEpoch({ ...input, repository });
-    listingsEpoch = ++epochCounter;
-    yield* SubscriptionRef.set(pullRequestRefreshes, epochCounter);
+    yield* invalidateReference({ ...input, repository }, true);
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
       const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
@@ -2794,7 +2869,7 @@ export const make = Effect.gen(function* () {
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),
     subscribeRefreshes: SubscriptionRef.changes(pullRequestRefreshes).pipe(
-      Stream.filter((revision) => revision > 0),
+      Stream.filter((event) => event.revision > 0),
     ),
     refreshAfterTurn,
     detail,
@@ -2810,7 +2885,7 @@ export const make = Effect.gen(function* () {
     submitReview: invalidatedByMutation(submitReview),
     replyToThread: invalidatedByMutation(replyToThread),
     setThreadResolution: invalidatedByMutation(setThreadResolution),
-    setReaction: invalidatedByMutation(setReaction),
+    setReaction: invalidatedByMutation(setReaction, false),
     // The candidate list is deliberately read fresh per menu-open, so it stays uncached.
     reviewerCandidates,
     requestReviewers: invalidatedByMutation(requestReviewers),

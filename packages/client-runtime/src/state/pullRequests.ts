@@ -3,13 +3,19 @@ import {
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestSummary,
+  type PullRequestRef,
+  type PullRequestRefresh,
+  type EnvironmentId,
+  type ProjectId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
+import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -35,13 +41,124 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 
 export const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
+type PullRequestRefreshScope =
+  | { readonly kind?: undefined }
+  | { readonly kind: "reference" | "repository"; readonly reference: PullRequestRef }
+  | {
+      readonly kind: "list";
+      readonly projectIds?: ReadonlyArray<ProjectId>;
+      readonly host?: string;
+    };
+
+const emptyRefreshRevisions = (global = 0) => ({
+  global,
+  references: HashMap.empty<string, number>(),
+  repositories: HashMap.empty<string, number>(),
+  listings: HashMap.empty<ProjectId, { revision: number; host: string | undefined }>(),
+});
+type RefreshRevisions = ReturnType<typeof emptyRefreshRevisions>;
+
+const repositoryRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
+  JSON.stringify([projectId, reference.repository.trim().toLowerCase()]);
+const referenceRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
+  JSON.stringify([projectId, reference.repository.trim().toLowerCase(), reference.number]);
+
+/** Accumulate before the atom keeps only the last value of a stream chunk. */
+function accumulateRefresh(
+  previous: RefreshRevisions,
+  value: number | PullRequestRefresh,
+): RefreshRevisions {
+  // Numeric revisions are from servers predating scoped refreshes.
+  const event: PullRequestRefresh =
+    typeof value === "number" ? { revision: value, listings: true } : value;
+  if (event.reference === undefined) return emptyRefreshRevisions(event.revision);
+  let { references, repositories, listings } = previous;
+  for (const projectId of event.projectIds ?? [event.reference.projectId]) {
+    references = HashMap.set(
+      references,
+      referenceRefreshKey(event.reference, projectId),
+      event.revision,
+    );
+    repositories = HashMap.set(
+      repositories,
+      repositoryRefreshKey(event.reference, projectId),
+      event.revision,
+    );
+    if (event.listings) {
+      listings = HashMap.set(listings, projectId, { revision: event.revision, host: event.host });
+    }
+  }
+  // A long-lived connection must not retain every PR ever visited. Eviction refreshes all
+  // scopes once so a forgotten revision cannot leave an already mounted query stale.
+  if (
+    HashMap.size(references) > 2_048 ||
+    HashMap.size(repositories) > 2_048 ||
+    HashMap.size(listings) > 2_048
+  ) {
+    return emptyRefreshRevisions(event.revision);
+  }
+  return { global: previous.global, references, repositories, listings };
+}
+
+function refreshRevision(scope: PullRequestRefreshScope, revisions: RefreshRevisions): number {
+  if (scope.kind === undefined) return revisions.global;
+  if (scope.kind === "list") {
+    let revision = revisions.global;
+    for (const [projectId, listing] of revisions.listings) {
+      if (
+        (scope.projectIds === undefined || scope.projectIds.includes(projectId)) &&
+        (scope.host === undefined ||
+          listing.host === undefined ||
+          scope.host.toLowerCase() === listing.host)
+      ) {
+        revision = Math.max(revision, listing.revision);
+      }
+    }
+    return revision;
+  }
+  const revision =
+    scope.kind === "reference"
+      ? HashMap.get(revisions.references, referenceRefreshKey(scope.reference))
+      : HashMap.get(revisions.repositories, repositoryRefreshKey(scope.reference));
+  return Math.max(
+    revisions.global,
+    Option.getOrElse(revision, () => 0),
+  );
+}
+
 function createPullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "environment-data:pull-requests:turn-refreshes",
+  const events = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:pull-requests:refreshes",
     tag: WS_METHODS.pullRequestsSubscribeRefreshes,
+    transform: (stream) => stream.pipe(Stream.scan(emptyRefreshRevisions(), accumulateRefresh)),
   });
+  const scoped = Atom.family((key: string) => {
+    const { environmentId, input } = JSON.parse(key) as {
+      environmentId: EnvironmentId;
+      input: PullRequestRefreshScope;
+    };
+    return Atom.make<AsyncResult.AsyncResult<number, unknown>>((get) => {
+      const result = get(events({ environmentId, input: { scoped: true } }));
+      const previous = Option.getOrUndefined(get.self<AsyncResult.AsyncResult<number, unknown>>());
+      if (AsyncResult.isSuccess(result)) {
+        const revision = refreshRevision(input, result.value);
+        if (revision > 0) {
+          return previous !== undefined &&
+            AsyncResult.isSuccess(previous) &&
+            previous.value === revision
+            ? previous
+            : AsyncResult.success(revision);
+        }
+      }
+      return previous ?? AsyncResult.initial<number>();
+    });
+  });
+  return (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRefreshScope;
+  }) => scoped(JSON.stringify(target));
 }
 
 /** Refresh only the live fields a linked thread renders. */
@@ -55,7 +172,8 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     staleTimeMs: 60_000,
     refreshIntervalMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
-    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "reference", reference: input } }),
   });
 }
 
@@ -92,7 +210,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     label: "environment-data:pull-requests:activity",
     tag: WS_METHODS.pullRequestsActivity,
     staleTimeMs: 15_000,
-    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "reference", reference: input } }),
   });
   return {
     refreshes,
@@ -101,7 +220,20 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsList,
       staleTimeMs: 30_000,
       refreshTrigger: ({ environmentId, input }) =>
-        input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+        input.cursors === undefined
+          ? refreshes({
+              environmentId,
+              input: {
+                kind: "list",
+                ...(input.host === undefined ? {} : { host: input.host }),
+                ...(input.projectId !== undefined
+                  ? { projectIds: [input.projectId] }
+                  : input.projectIds !== undefined
+                    ? { projectIds: input.projectIds }
+                    : {}),
+              },
+            })
+          : undefined,
     }),
     /**
      * The line counts for rows the listing has already handed over. Its own query because the
@@ -113,20 +245,26 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:list-stats",
       tag: WS_METHODS.pullRequestsListStats,
       staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({
+          environmentId,
+          input: { kind: "list", projectIds: input.refs.map((ref) => ref.projectId) },
+        }),
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
       tag: WS_METHODS.pullRequestsDetail,
       staleTimeMs: 15_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
     }),
     /** One bounded repository relationship read for the open PR panel, never for list rows. */
     dependencyContext: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:dependency-context",
       tag: WS_METHODS.pullRequestsDependencyContext,
       staleTimeMs: 30_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "repository", reference: input } }),
     }),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {

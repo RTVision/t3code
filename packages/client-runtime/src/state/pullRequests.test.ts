@@ -1,4 +1,10 @@
-import { EnvironmentId, ProjectId, WS_METHODS } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  WS_METHODS,
+  type PullRequestRefresh,
+  type PullRequestRef,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
@@ -41,6 +47,48 @@ function session(client: WsRpcProtocolClient): RpcSession {
   };
 }
 
+const makeAtoms = Effect.fn("makeAtoms")(function* (client: WsRpcProtocolClient) {
+  const connectionState: SupervisorConnectionState = {
+    ...AVAILABLE_CONNECTION_STATE,
+    desired: true,
+    network: "online",
+    phase: "connected",
+    attempt: 1,
+    generation: 1,
+  };
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target: TARGET,
+    state: yield* SubscriptionRef.make(connectionState),
+    session: yield* SubscriptionRef.make(Option.some(session(client))),
+    prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+  const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+    run: (_environmentId, effect) =>
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    runStream: (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    followStream: (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+  } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+  const runtime = Atom.runtime(
+    Layer.merge(
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      Layer.succeed(
+        PullRequestDiffLoader,
+        PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
+      ),
+    ),
+  );
+  const atoms = createPullRequestEnvironmentAtoms(runtime);
+  const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+    Effect.sync(() => registry.dispose()),
+  );
+  return { atoms, registry };
+});
+
 it.effect("refreshes pull request activity after a comment is updated", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -76,44 +124,7 @@ it.effect("refreshes pull request activity after a comment is updated", () =>
             commentBody = input.body;
           }),
       } as unknown as WsRpcProtocolClient;
-      const connectionState: SupervisorConnectionState = {
-        ...AVAILABLE_CONNECTION_STATE,
-        desired: true,
-        network: "online",
-        phase: "connected",
-        attempt: 1,
-        generation: 1,
-      };
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target: TARGET,
-        state: yield* SubscriptionRef.make(connectionState),
-        session: yield* SubscriptionRef.make(Option.some(session(client))),
-        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
-        run: (_environmentId, effect) =>
-          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        runStream: (_environmentId, stream) =>
-          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        followStream: (_environmentId, stream) =>
-          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-      const runtime = Atom.runtime(
-        Layer.merge(
-          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Layer.succeed(
-            PullRequestDiffLoader,
-            PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
-          ),
-        ),
-      );
-      const atoms = createPullRequestEnvironmentAtoms(runtime);
-      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
-        Effect.sync(() => registry.dispose()),
-      );
+      const { atoms, registry } = yield* makeAtoms(client);
       const reference = {
         projectId: ProjectId.make("project-1"),
         repository: "acme/web",
@@ -160,4 +171,162 @@ it.effect("refreshes pull request activity after a comment is updated", () =>
       ).toBe("after turn");
     }),
   ),
+);
+
+it.effect(
+  "scoped refreshes update matching clients without re-fetching unrelated active repositories",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshEvents = yield* PubSub.unbounded<PullRequestRefresh>();
+        const subscribed = Latch.makeUnsafe();
+        let revision = 0;
+        const activityReads = new Map<string, number>();
+        const listReads = new Map<string, number>();
+        const reference = {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/web",
+          number: 1,
+        };
+        const sibling = {
+          ...reference,
+          projectId: ProjectId.make("sibling"),
+          repository: "Acme/Web",
+        };
+        const unrelated = {
+          ...reference,
+          projectId: ProjectId.make("project-2"),
+          repository: "acme/api",
+        };
+        const client = {
+          [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(refreshEvents);
+                subscribed.openUnsafe();
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          [WS_METHODS.pullRequestsActivity]: (input: PullRequestRef) =>
+            Effect.sync(() => {
+              activityReads.set(input.projectId, (activityReads.get(input.projectId) ?? 0) + 1);
+              return {
+                author: null,
+                reviewers: [],
+                comments: [],
+                commentCount: revision,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+                reactions: [],
+              };
+            }),
+          [WS_METHODS.pullRequestsList]: (input: { projectId: string }) =>
+            Effect.sync(() => {
+              listReads.set(input.projectId, (listReads.get(input.projectId) ?? 0) + 1);
+              return {
+                entries: [],
+                providers: [],
+                viewers: {},
+                errors: [],
+                truncated: false,
+                nextCursors: {},
+              };
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const { atoms, registry } = yield* makeAtoms(client);
+        const activityAtoms = [reference, sibling, unrelated].map((input) =>
+          atoms.activity({ environmentId: TARGET.environmentId, input }),
+        );
+        const listAtoms = [reference, unrelated].map((input) =>
+          atoms.list({
+            environmentId: TARGET.environmentId,
+            input: { state: "open", projectId: input.projectId },
+          }),
+        );
+        for (const atom of [...activityAtoms, ...listAtoms]) {
+          const unmount = registry.mount<unknown>(atom);
+          yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        }
+        for (const atom of activityAtoms)
+          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        for (const atom of listAtoms)
+          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        yield* subscribed.await;
+        const beforeActivity = new Map(activityReads);
+        const beforeLists = new Map(listReads);
+        const updated = [Latch.makeUnsafe(), Latch.makeUnsafe()];
+        for (const [index, atom] of activityAtoms.slice(0, 2).entries()) {
+          const stop = registry.subscribe(atom, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.commentCount === 1)
+              updated[index]!.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stop));
+        }
+        revision = 1;
+        yield* PubSub.publish(refreshEvents, {
+          revision,
+          reference,
+          projectIds: [reference.projectId, sibling.projectId],
+          listings: false,
+        });
+        for (const latch of updated) yield* latch.await;
+        expect(activityReads.get(reference.projectId)).toBe(
+          beforeActivity.get(reference.projectId)! + 1,
+        );
+        expect(activityReads.get(sibling.projectId)).toBe(
+          beforeActivity.get(sibling.projectId)! + 1,
+        );
+        expect(activityReads.get(unrelated.projectId)).toBe(
+          beforeActivity.get(unrelated.projectId),
+        );
+        expect(listReads).toEqual(beforeLists);
+
+        const listed = Latch.makeUnsafe();
+        const stop = registry.subscribe(listAtoms[0]!, (result) => {
+          if (
+            AsyncResult.isSuccess(result) &&
+            listReads.get(reference.projectId) === beforeLists.get(reference.projectId)! + 1
+          )
+            listed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(stop));
+        const burstUpdated = [Latch.makeUnsafe(), Latch.makeUnsafe()];
+        for (const [index, atom] of [activityAtoms[0]!, activityAtoms[2]!].entries()) {
+          const stopActivity = registry.subscribe(atom, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.commentCount === 2) {
+              burstUpdated[index]!.openUnsafe();
+            }
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stopActivity));
+        }
+        revision = 2;
+        // One chunk must retain both repositories and the earlier listing invalidation even
+        // when a later reaction on that reference does not affect listings.
+        yield* PubSub.publishAll(refreshEvents, [
+          {
+            revision: 2,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: true,
+          },
+          {
+            revision: 3,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: false,
+          },
+          { revision: 4, reference: unrelated, listings: false },
+        ]);
+        yield* listed.await;
+        for (const latch of burstUpdated) yield* latch.await;
+        expect(listReads.get(unrelated.projectId)).toBe(beforeLists.get(unrelated.projectId));
+        expect(activityReads.get(reference.projectId)).toBe(
+          beforeActivity.get(reference.projectId)! + 2,
+        );
+        expect(activityReads.get(unrelated.projectId)).toBe(
+          beforeActivity.get(unrelated.projectId)! + 1,
+        );
+      }),
+    ),
 );

@@ -2030,6 +2030,105 @@ it.effect("invalidates the cached activity after reacting, like the other mutati
   }),
 );
 
+it.effect("a reaction preserves unrelated repository reads and every cached listing", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const activity = {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: [],
+    };
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const unrelated = { projectId: "p2" as ProjectId, repository: "acme/api", number: 1 };
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: (input) =>
+            Effect.sync(() => {
+              reads.push(`list:${input.repository}`);
+              return { items: [], truncated: false, continues: false };
+            }),
+          getChangeRequestActivity: (input) =>
+            Effect.sync(() => {
+              reads.push(`activity:${input.repository}`);
+              return activity;
+            }),
+        }),
+      ],
+    });
+    yield* service.list({ state: "open" });
+    yield* service.list({ state: "open", projectId: unrelated.projectId });
+    yield* service.activity(reference);
+    yield* service.activity(unrelated);
+    const before = [...reads];
+
+    yield* service.setReaction({ ...reference, content: "heart", reacted: true });
+    yield* service.list({ state: "open" });
+    yield* service.list({ state: "open", projectId: unrelated.projectId });
+    yield* service.activity(unrelated);
+    assert.deepStrictEqual(reads, before);
+    yield* service.activity(reference);
+    assert.deepStrictEqual(reads, [...before, "activity:acme/web"]);
+    const event = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+    assert.deepStrictEqual(event.reference, reference);
+    assert.isFalse(event.listings);
+  }),
+);
+
+it.effect(
+  "state changes invalidate sibling checkouts but preserve other repositories and hosts",
+  () =>
+    Effect.gen(function* () {
+      const reads: string[] = [];
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          project({ id: "sibling", title: "sibling", workspaceRoot: "/b", repository: "Acme/Web" }),
+          project({ id: "other", title: "other", workspaceRoot: "/c", repository: "acme/api" }),
+          project({
+            id: "enterprise",
+            title: "enterprise",
+            workspaceRoot: "/d",
+            repository: "acme/web",
+            host: "github.example.com",
+          }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            listChangeRequests: (input) =>
+              Effect.sync(() => {
+                reads.push(`${input.host}:${input.repository}`);
+                return { items: [], truncated: false, continues: false };
+              }),
+          }),
+        ],
+      });
+      const sibling = { state: "open", projectId: "sibling" as ProjectId } as const;
+      const other = { state: "open", projectIds: ["other" as ProjectId] } as const;
+      const enterprise = { state: "open", host: "github.example.com" } as const;
+      yield* service.list(sibling);
+      yield* service.list(other);
+      yield* service.list(enterprise);
+      const before = [...reads];
+      yield* service.runAction({ ...reference, action: "close" });
+      yield* service.list(other);
+      yield* service.list(enterprise);
+      assert.deepStrictEqual(reads, before);
+      yield* service.list(sibling);
+      assert.deepStrictEqual(reads, [...before, "github.com:Acme/Web"]);
+      const event = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+      assert.deepStrictEqual(event.projectIds, ["p1" as ProjectId, "sibling" as ProjectId]);
+      assert.isTrue(event.listings);
+    }),
+);
+
 it.effect("refuses an empty reply before it reaches the host", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -2791,7 +2890,7 @@ it.effect("explicit and turn invalidations make the next listing ask the host ag
     yield* service.refreshAfterTurn;
     const refresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
     yield* service.list({ state: "open" });
-    assert.isAbove(refresh, 0);
+    assert.isAbove(refresh.revision, 0);
     assert.strictEqual(hostCalls, 3);
   }),
 );
@@ -2809,7 +2908,7 @@ it.effect("publishes the first reference invalidation to an existing subscriber"
     // waiting: the reference invalidation itself must still be the first observed revision.
     yield* service.refreshAfterTurn;
 
-    assert.strictEqual(Option.getOrThrow(yield* Fiber.join(firstRefresh)), 2);
+    assert.strictEqual(Option.getOrThrow(yield* Fiber.join(firstRefresh)).revision, 2);
   }),
 );
 
@@ -2838,6 +2937,66 @@ it.effect("a mutation makes the next listing ask the host again, with no client 
     yield* service.list({ state: "open" });
     assert.strictEqual(hostCalls, 2);
   }),
+);
+
+it.effect(
+  "matches Azure dependencies within the stored project while keeping CLI selectors short",
+  () =>
+    Effect.gen(function* () {
+      const parent = {
+        ...changeRequest(1, "2026-07-02T00:00:00Z"),
+        headBranch: "migration",
+        headRepositoryNameWithOwner: "Project/web",
+      };
+      const child = {
+        ...changeRequest(2, "2026-07-03T00:00:00Z"),
+        headBranch: "api",
+        headRepositoryNameWithOwner: "Project/web",
+        baseBranch: "migration",
+      };
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "azure-project",
+            title: "web",
+            workspaceRoot: "/azure",
+            repository: "contoso/Project/_git/web",
+            provider: "azure-devops",
+            host: "dev.azure.com",
+          }),
+        ],
+        providers: [
+          fakeProvider("azure-devops", {
+            listChangeRequests: (input) => {
+              assert.strictEqual(input.repository, "web");
+              assert.strictEqual(input.cwd, "/azure");
+              return Effect.succeed({
+                items: [
+                  parent,
+                  child,
+                  { ...parent, number: 3, headRepositoryNameWithOwner: "Other/web" },
+                ],
+                truncated: false,
+                continues: false,
+              });
+            },
+          }),
+        ],
+      });
+
+      const result = yield* service.dependencyContext({
+        projectId: "azure-project" as ProjectId,
+        repository: "web",
+        number: 2,
+      });
+      assert.deepStrictEqual(result.edges, [{ child: 2, parent: 1, certainty: "confirmed" }]);
+      assert.deepStrictEqual(
+        result.nodes.map((node) => node.ref.number),
+        [1, 2],
+      );
+      assert.strictEqual(result.focus.repository, "web");
+      assert.strictEqual(result.coverage, "complete");
+    }),
 );
 
 it.effect("coalesces bounded dependency reads and invalidates them by repository", () =>
@@ -2901,7 +3060,10 @@ it.effect("coalesces bounded dependency reads and invalidates them by repository
     yield* service.dependencyContext(reference);
     assert.strictEqual(relationshipReads, 3);
     assert.strictEqual(nativeReads, 4);
-    assert.isAbove(Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)), 0);
+    assert.isAbove(
+      Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)).revision,
+      0,
+    );
   }),
 );
 

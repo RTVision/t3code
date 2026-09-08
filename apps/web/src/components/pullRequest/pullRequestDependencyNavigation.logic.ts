@@ -88,7 +88,10 @@ export function pullRequestDependencyNavigation(input: {
   const confirmedParents = incoming.get(focus) ?? [];
   const parent = unique(confirmedParents);
   const child = unique(outgoing.get(focus) ?? []);
-  const parentAmbiguous = context.issues.some((issue) => issue.reason === "ambiguous-parent");
+  const parentAmbiguous = context.issues.some(
+    (issue) =>
+      issue.reason === "ambiguous-parent" && (issue.number === undefined || issue.number === focus),
+  );
   const possibleParents = toChips([
     ...new Set([
       ...(confirmedParents.length > 1 ? confirmedParents : []),
@@ -147,6 +150,11 @@ export function pullRequestDependencyNavigation(input: {
   const unresolvedRoot =
     truncatedBefore ||
     cycleBefore ||
+    context.issues.some(
+      (issue) =>
+        issue.reason === "ambiguous-parent" &&
+        (issue.number === undefined || beforeSeen.has(issue.number)),
+    ) ||
     (candidateIncoming.get(path[0]?.number ?? focus)?.length ?? 0) > 0 ||
     (incoming.get(path[0]?.number ?? focus)?.length ?? 0) > 1 ||
     context.coverage === "unavailable";
@@ -164,9 +172,17 @@ export function pullRequestDependencyNavigation(input: {
       : context.native?.status === "unavailable"
         ? { status: "unavailable" as const }
         : { status: "hidden" as const };
-  // The transport intentionally records only that a cycle was found, not an invented direction.
-  // When traversal did not encounter it itself, place the stop after the known path.
-  if (context.issues.some((issue) => issue.reason === "cycle") && !cycleBefore && !cycleAfter) {
+  // Numbered diagnostics can describe another retained branch. Only mark this path for its own
+  // cycle (or an unscoped host warning); traversal already locates cycles it encounters directly.
+  const pathNumbers = new Set(path.map((node) => node.number));
+  if (
+    context.issues.some(
+      (issue) =>
+        issue.reason === "cycle" && (issue.number === undefined || pathNumbers.has(issue.number)),
+    ) &&
+    !cycleBefore &&
+    !cycleAfter
+  ) {
     cycleAfter = true;
   }
   const hasGraph =

@@ -635,7 +635,13 @@ function PullRequestsRouteView() {
     [environmentQueries],
   );
   const turnRefreshes = usePullRequestTurnRefreshes(
-    environmentQueries.map(({ environmentId }) => environmentId),
+    environmentQueries.map(({ environmentId, projectIds }) => ({
+      environmentId,
+      input: {
+        ...(projectIds === undefined ? {} : { projectIds }),
+        ...(search.host === undefined ? {} : { host: search.host }),
+      },
+    })),
   );
   const turnRefreshToken = turnRefreshes
     .map(([environmentId, revision]) => `${environmentId}:${revision}`)
