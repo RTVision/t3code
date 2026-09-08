@@ -16,7 +16,6 @@ import {
   type PullRequestState,
   type PullRequestUpdateMethod,
   type SourceControlProviderKind,
-  type VcsRef,
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
@@ -174,20 +173,6 @@ export function pullRequestActionMenuHasGroup(
   showsMergeMethods: boolean,
 ): boolean {
   return showsDraftToggle || showsAutoMerge || showsMergeMethods;
-}
-
-export function isStackedPullRequestBase(
-  baseBranch: string,
-  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "isRemote" | "remoteName">>,
-): boolean {
-  const defaultRef = refs.find((refName) => refName.isDefault);
-  if (!defaultRef) return false;
-  if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
-  const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
-  const defaultBranch = defaultRef.name.startsWith(remotePrefix)
-    ? defaultRef.name.slice(remotePrefix.length)
-    : defaultRef.name;
-  return defaultBranch !== baseBranch;
 }
 
 /** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */

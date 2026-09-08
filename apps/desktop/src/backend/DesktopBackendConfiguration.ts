@@ -213,6 +213,7 @@ interface SharedBootstrapInput {
 interface WslPreflightSuccess {
   readonly _tag: "Ready";
   readonly runningDistro: string;
+  readonly runningUser?: string;
   readonly windowsEntryPath: string;
   readonly linuxEntryPath: string;
   // Absolute path to the node binary the preflight validated after the shared
@@ -375,6 +376,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           windowsEntryPath: environment.backendEntryPath,
           linuxEntryPath: `${runtime.linuxAppRoot}/apps/server/dist/bin.mjs`,
           nodePath: stagedNodePty.nodePath,
+          ...(stagedNodePty.runningUser ? { runningUser: stagedNodePty.runningUser } : {}),
           resolvedPath: stagedNodePty.resolvedPath,
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
@@ -431,6 +433,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     windowsEntryPath: mounted.windowsEntryPath,
     linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
     nodePath: nodePtyResult.nodePath,
+    ...(nodePtyResult.runningUser ? { runningUser: nodePtyResult.runningUser } : {}),
     resolvedPath: nodePtyResult.resolvedPath,
   } as const;
 });
@@ -639,7 +642,11 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
 
-  const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
+  const runningUser = preflight._tag === "Ready" ? preflight.runningUser : undefined;
+  const distroArgs = [
+    ...(distroForConfig ? ["-d", distroForConfig] : []),
+    ...(runningUser ? ["--user", runningUser] : []),
+  ];
   const forwardedEnv: Record<string, string> = {};
   const forwardedEnvNames: string[] = [];
   for (const name of WSL_FORWARDED_ENV_NAMES) {
@@ -681,6 +688,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     httpBaseUrl,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
+    ...(runningUser ? { runningUser } : {}),
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
@@ -721,6 +729,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   return {
     ...baseConfig,
+    wslNodePath: preflight.nodePath,
     args: [
       ...distroArgs,
       "--exec",

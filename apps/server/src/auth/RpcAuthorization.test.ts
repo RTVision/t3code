@@ -54,6 +54,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("reads dependency context under the same scope as pull request detail", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsDependencyContext)).toBe(
+      requiredScopeForRpcMethod(WS_METHODS.pullRequestsDetail),
+    );
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

@@ -91,6 +91,7 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
+import { makeGitHubNativeStackRead } from "./gitHubNativeStack.ts";
 import type { ProviderListCursor } from "./PullRequestProvider.ts";
 
 /**
@@ -355,6 +356,7 @@ const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 /** A search-free fallback may scan older rows for local filters, but never the whole repository. */
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
+const RELATIONSHIP_ONLY_MAX_ROWS = 201;
 
 /** What the files API serves at most in one response, which is what one slice is made of. */
 const DIFF_FILES_PAGE_SIZE = 100;
@@ -406,11 +408,14 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
+    readonly getNativeDependencyMembership: ReturnType<typeof makeGitHubNativeStackRead>;
+
     readonly getViewerLogin: (input: {
       readonly cwd: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
+      readonly relationshipOnly?: boolean | undefined;
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
@@ -1458,6 +1463,7 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
+    getNativeDependencyMembership: makeGitHubNativeStackRead(github.execute),
     getViewerLogin: (input) =>
       github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
         Effect.flatMap((result) => {
@@ -1504,6 +1510,7 @@ export const make = Effect.gen(function* () {
                   : decoded.success.items.filter((item) => matchesUnsortedListing(item, input));
                 if (
                   !continues &&
+                  input.relationshipOnly !== true &&
                   items.length < input.limit &&
                   decoded.success.rawCount >= requestedRows &&
                   requestedRows < fallbackMaxRows
@@ -1515,9 +1522,13 @@ export const make = Effect.gen(function* () {
                   items: items.slice(0, input.limit),
                   // One row over the page size is the probe for a next page, and it is
                   // counted before decoding: a skipped malformed row must not end paging.
-                  truncated: continues
-                    ? decoded.success.rawCount > input.limit
-                    : items.length > input.limit || decoded.success.rawCount >= requestedRows,
+                  truncated:
+                    input.relationshipOnly === true
+                      ? decoded.success.rawCount >= requestedRows ||
+                        decoded.success.rawCount !== items.length
+                      : continues
+                        ? decoded.success.rawCount > input.limit
+                        : items.length > input.limit || decoded.success.rawCount >= requestedRows,
                   continues,
                 });
               }
@@ -1548,6 +1559,11 @@ export const make = Effect.gen(function* () {
       // the same read rather than a wider one. Free text is the one thing the fallback cannot
       // judge locally — it lists rows, it does not search their text — so a query still rules
       // the fallback out: an empty answer under one is already the answer.
+      // Relationship discovery needs the repository collection, not its eventually indexed search.
+      // A single bounded CLI listing uses at most three 100-row underlying pages.
+      if (input.relationshipOnly === true) {
+        return read(false, Math.min(input.limit + 1, RELATIONSHIP_ONLY_MAX_ROWS));
+      }
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
       return read(true).pipe(
         Effect.flatMap((batch) =>

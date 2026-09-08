@@ -15,7 +15,9 @@ const response = (value: unknown) => ({
   headers: {},
 });
 const failure = () =>
-  Effect.fail(new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }));
+  Effect.fail(
+    new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }),
+  );
 
 const pull = {
   number: 7,

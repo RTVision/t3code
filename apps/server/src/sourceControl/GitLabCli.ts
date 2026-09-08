@@ -275,6 +275,10 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly headSelector: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      /** Qualified path used to recover same-project identity when GitLab omits project paths. */
+      readonly repository?: string;
+      /** Sanitized repository URL used to keep glab on the same GitLab host. */
+      readonly repositoryUrl?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
@@ -282,6 +286,10 @@ export class GitLabCli extends Context.Service<
     readonly getMergeRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      /** Qualified path used to recover same-project identity when GitLab omits project paths. */
+      readonly repository?: string;
+      /** Sanitized repository URL used to keep glab on the same GitLab host. */
+      readonly repositoryUrl?: string;
     }) => Effect.Effect<GitLabMergeRequestSummary, GitLabCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
@@ -382,6 +390,28 @@ function sourceProjectIdentifier(
   return source?.repository ?? source?.owner ?? null;
 }
 
+function repositoryForMergeRequest(input: {
+  readonly reference?: string;
+  readonly repository?: string;
+}): string | null {
+  // An explicit URL selects its own repository rather than the workspace remote.
+  if (input.reference !== undefined && URL.canParse(input.reference.trim())) return null;
+  const repository = input.repository?.trim();
+  return repository?.includes("/") ? repository : null;
+}
+
+function repositoryArgs(input: {
+  readonly reference?: string;
+  readonly repository?: string;
+  readonly repositoryUrl?: string;
+}): ReadonlyArray<string> {
+  if (repositoryForMergeRequest(input) === null) {
+    return [];
+  }
+  const selector = input.repositoryUrl?.trim() || input.repository?.trim();
+  return selector === undefined || selector.length === 0 ? [] : ["--repo", selector];
+}
+
 function toSummaryWithOptionalUpdatedAt(
   record: GitLabMergeRequestSummary & {
     readonly updatedAt: Option.Option<DateTime.Utc>;
@@ -464,6 +494,7 @@ export const make = Effect.gen(function* () {
           ...stateArgs(input.state),
           "--per-page",
           String(input.limit ?? 20),
+          ...repositoryArgs(input),
           "--output",
           "json",
         ],
@@ -472,7 +503,12 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((raw) =>
           raw.length === 0
             ? Effect.succeed([])
-            : Effect.sync(() => decodeGitLabMergeRequestListJson(raw)).pipe(
+            : Effect.sync(() =>
+                decodeGitLabMergeRequestListJson(
+                  raw,
+                  repositoryForMergeRequest(input) ?? undefined,
+                ),
+              ).pipe(
                 Effect.flatMap((decoded) => {
                   if (!Result.isSuccess(decoded)) {
                     return Effect.fail(
@@ -494,11 +530,13 @@ export const make = Effect.gen(function* () {
       executeMergeRequest({
         cwd: input.cwd,
         reference: input.reference,
-        args: ["mr", "view", input.reference, "--output", "json"],
+        args: ["mr", "view", input.reference, ...repositoryArgs(input), "--output", "json"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
-          Effect.sync(() => decodeGitLabMergeRequestJson(raw)).pipe(
+          Effect.sync(() =>
+            decodeGitLabMergeRequestJson(raw, repositoryForMergeRequest(input) ?? undefined),
+          ).pipe(
             Effect.flatMap((decoded) => {
               if (!Result.isSuccess(decoded)) {
                 return Effect.fail(
