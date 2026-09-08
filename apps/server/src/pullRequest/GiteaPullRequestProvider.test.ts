@@ -97,6 +97,85 @@ describe("GiteaPullRequestProvider", () => {
       expect("autoMergeEnabled" in detail).toBe(false);
     }),
   );
+  for (const discovery of ["failed", "incomplete"] as const) {
+    it.effect(
+      `keeps workflow approval state unknown when supported discovery is ${discovery}`,
+      () =>
+        Effect.gen(function* () {
+          const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+            switch (input.path) {
+              case "/settings/api":
+                return Effect.succeed(response({ features: ["actions-run-approve"] }));
+              case "/repos/acme/web/pulls/7":
+                return Effect.succeed(response(rawPullRequest()));
+              case "/repos/acme/web":
+                return Effect.succeed(response({ permissions: { push: true } }));
+              case "/user":
+                return Effect.succeed(response({ login: "reader" }));
+              case "/repos/acme/web/issues/7/timeline?page=1&limit=50":
+                return Effect.succeed(response([]));
+              case "/repos/acme/web/commits/head-sha/status?page=1&limit=50":
+                return Effect.succeed(
+                  response({
+                    statuses: [
+                      {
+                        context: "build",
+                        status: "success",
+                        target_url: null,
+                        description: "Passed",
+                      },
+                    ],
+                    total_count: 1,
+                  }),
+                );
+              case "/repos/acme/web/actions/runs?event=pull_request&page=1&limit=50":
+                return discovery === "incomplete"
+                  ? Effect.succeed(response({ total_count: 1, workflow_runs: [] }))
+                  : Effect.fail(
+                      new GiteaApi.GiteaApiError({
+                        operation: "listWorkflowApprovals",
+                        reason: "failed",
+                        detail: "workflow lookup unavailable",
+                      }),
+                    );
+              default:
+                return Effect.die(`Unexpected Gitea request: ${input.path}`);
+            }
+          });
+          const apiLayer = GiteaPullRequestApi.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                GiteaApi.GiteaApi,
+                GiteaApi.GiteaApi.of({
+                  baseUrl: Option.some("https://forge.example.test/gitea"),
+                  sshHosts: [],
+                  request,
+                  probeAuth: Effect.die("not used"),
+                }),
+              ),
+            ),
+          );
+          const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
+          const detail = yield* provider.getChangeRequest({
+            cwd: "/repo",
+            host: "forge.example.test",
+            repository: "acme/web",
+            number: 7,
+          });
+          expect(detail.checks).toEqual([
+            { name: "build", status: "success", description: "Passed", url: null },
+            {
+              name: "Workflow approval status",
+              status: "action-required",
+              description: "Gitea could not determine whether workflows are awaiting approval.",
+              url: null,
+            },
+          ]);
+          expect(detail.workflowApprovalsRequired).toBeUndefined();
+          expect(detail.viewerPermissions.actions).not.toContain("approve-workflows");
+        }),
+    );
+  }
 });
 
 describe("giteaViewerPermissions", () => {
