@@ -167,7 +167,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
         ],
         { concurrency: 4 },
       ).pipe(
@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
               checks,
               mergeCapabilities: access.mergeCapabilities,
               baseComparison: giteaBaseComparison(pullRequest),
-              autoMergeEnabled,
+              ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
               viewerPermissions: permissions({
                 access,
                 viewer,
