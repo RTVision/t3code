@@ -93,6 +93,13 @@ const RawLabel = Schema.Struct({
   color: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
+const RawTeam = Schema.Struct({
+  id: Schema.optional(Schema.Int),
+  name: Schema.optional(Schema.String),
+  organization: Schema.optional(
+    Schema.NullOr(Schema.Struct({ username: Schema.optional(Schema.String) })),
+  ),
+});
 const RawPullRequest = Schema.Struct({
   number: Schema.Int,
   title: Schema.String,
@@ -119,6 +126,7 @@ const RawPullRequest = Schema.Struct({
   base: RawBranch,
   head: RawBranch,
   requested_reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUser))),
+  requested_reviewers_teams: Schema.optional(Schema.NullOr(Schema.Array(RawTeam))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabel))),
   merge_base: Schema.optional(Schema.String),
 });
@@ -210,12 +218,14 @@ type RawCommitStatus = NonNullable<(typeof RawCombinedStatus.Type)["statuses"]>[
 
 const decodeRow = Schema.decodeUnknownOption(RawPullRequest);
 const decodeUser = Schema.decodeUnknownOption(RawUser);
+const decodeTeam = Schema.decodeUnknownOption(RawTeam);
 const decodeComment = Schema.decodeUnknownOption(RawComment);
 const decodeReview = Schema.decodeUnknownOption(RawReview);
 const decodeReviewComment = Schema.decodeUnknownOption(RawReviewComment);
 const decodeCommit = Schema.decodeUnknownOption(RawCommit);
 const decodeLabel = Schema.decodeUnknownOption(RawLabel);
 const decodeReaction = Schema.decodeUnknownOption(RawGiteaReaction);
+const isGiteaApiError = Schema.is(GiteaApi.GiteaApiError);
 const encodeObject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -248,6 +258,8 @@ export interface GiteaPullRequest {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly reviewRequestLogins: ReadonlyArray<string>;
+  readonly reviewRequestTeamIDs: ReadonlyArray<number>;
+  readonly reviewRequestTeamNames: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly commentCount: number;
@@ -342,6 +354,13 @@ function pullRequest(value: RawPullRequest): GiteaPullRequest | null {
     mergedAt: iso(value.merged_at),
     closedAt: iso(value.closed_at),
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
+    reviewRequestTeamIDs: (value.requested_reviewers_teams ?? []).flatMap((team) =>
+      team.id === undefined ? [] : [team.id],
+    ),
+    reviewRequestTeamNames: (value.requested_reviewers_teams ?? []).flatMap((team) => {
+      const name = team.name?.trim();
+      return name ? [name] : [];
+    }),
     reviewers,
     labels: (value.labels ?? []).flatMap((label) => {
       const name = label.name?.trim();
@@ -364,13 +383,15 @@ function matchesPullRequest(
   state: PullRequestListState,
   involvement: PullRequestInvolvement,
   viewer: string,
+  viewerTeamIDs: ReadonlySet<number> = new Set(),
 ): boolean {
   if (state !== "all" && value.state !== state) return false;
   if (involvement === "authored" && value.author?.login.toLowerCase() !== viewer.toLowerCase())
     return false;
   if (
     involvement === "reviewing" &&
-    !value.reviewRequestLogins.some((login) => login.toLowerCase() === viewer.toLowerCase())
+    !value.reviewRequestLogins.some((login) => login.toLowerCase() === viewer.toLowerCase()) &&
+    !value.reviewRequestTeamIDs.some((id) => viewerTeamIDs.has(id))
   )
     return false;
   return true;
@@ -889,6 +910,8 @@ export const make = Effect.gen(function* () {
       let rowsSkipped = 0;
       let consumed = 0;
       const collected: Array<GiteaPullRequest> = [];
+      const viewerTeamIDs =
+        input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
 
       while (page <= MAX_PAGINATION_PAGES) {
         const result = yield* readUnknownPage({
@@ -927,12 +950,25 @@ export const make = Effect.gen(function* () {
         for (const [index, pullRequest] of hydrated.entries()) {
           consumed += 1;
           if (pullRequest === null) continue;
-          if (!matchesPullRequest(pullRequest, input.state, input.involvement, input.viewer))
+          if (
+            !matchesPullRequest(
+              pullRequest,
+              input.state,
+              input.involvement,
+              input.viewer,
+              viewerTeamIDs,
+            )
+          )
             continue;
           collected.push(pullRequest);
           if (collected.length === wanted) {
-            // A raw-row offset can safely continue even when this is the last allowed page; a
-            // search that cannot fill its requested slice reaches the bounded failure below.
+            if (page === MAX_PAGINATION_PAGES && next !== null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listPullRequests",
+                reason: "failed",
+                detail: "Gitea pull request pagination exceeded the safe page limit.",
+              });
+            }
             return {
               items: collected,
               truncated: index < pageRows.length - 1 || next !== null,
@@ -959,6 +995,11 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
+    (input: { operation: string; host: string; repository: string; path: string }) =>
+      readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
+  );
+
   const getFeatures = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }),
@@ -972,6 +1013,39 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.map((settings) => settings.features ?? []),
+    ),
+    "1 minute",
+  );
+
+  const getViewerTeamIDs = yield* Effect.cachedWithTTL(
+    Effect.suspend(() =>
+      Effect.gen(function* () {
+        const teamIDs = new Set<number>();
+        let path = query("/user/teams", { page: 1, limit: PAGE_SIZE });
+        let rowsSeen = 0;
+        for (let page = 1; page <= MAX_PAGINATION_PAGES; page += 1) {
+          const response = yield* gitea
+            .request({ operation: "getViewerTeams", method: "GET", path })
+            .pipe(Effect.mapError((error) => failure("getViewerTeams", error)));
+          const teams = yield* decode("getViewerTeams", Schema.Array(RawTeam), response);
+          for (const team of teams) if (team.id !== undefined) teamIDs.add(team.id);
+          rowsSeen += teams.length;
+          const next = nextPagePath({
+            path,
+            page,
+            pageRows: teams.length,
+            rowsSeen,
+            headers: response.headers,
+          });
+          if (next === null) return teamIDs;
+          path = next;
+        }
+        return yield* new GiteaPullRequestApiError({
+          operation: "getViewerTeams",
+          reason: "failed",
+          detail: "Gitea viewer team pagination exceeded the safe page limit.",
+        });
+      }),
     ),
     "1 minute",
   );
@@ -1059,6 +1133,8 @@ export const make = Effect.gen(function* () {
     const repositoryIdsByName = new Map<string, number>();
     const expectedRepository = input.repository.trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
+    const viewerTeamIDs =
+      input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
     const maxPages = relationshipOnly ? DEPENDENCY_PAGINATION_PAGES : MAX_PAGINATION_PAGES;
     let pagesRead = 0;
     let prefetchedPage: UnknownPage | null = null;
@@ -1154,7 +1230,7 @@ export const make = Effect.gen(function* () {
             else if (observed !== id) relationshipEvidenceIncomplete = true;
           }
         }
-        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer)) {
+        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeamIDs)) {
           relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
           continue;
         }
@@ -1710,31 +1786,30 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownSlice({
-            operation: "listConversationReactions",
-            host: input.host,
-            repository: input.repository,
-            path:
-              entry.target.kind === "pull-request"
-                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
-                    page: 1,
-                    limit: PAGE_SIZE,
-                  })
-                : entry.target.kind === "review"
-                  ? query(
-                      `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`,
-                      { page: 1, limit: PAGE_SIZE },
-                    )
-                  : query(
-                      `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
-                      {
-                        page: 1,
-                        limit: PAGE_SIZE,
-                      },
-                    ),
-            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
-            nullAsEmpty: true,
-          }).pipe(
+          (entry.target.kind === "comment"
+            ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
+              readUnknownPage({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                nullAsEmpty: true,
+              }).pipe(Effect.map(({ rows }) => ({ rows, truncated: false })))
+            : readUnknownSlice({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: query(
+                  entry.target.kind === "review"
+                    ? `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`
+                    : `${basePath(input.repository)}/issues/${input.number}/reactions`,
+                  { page: 1, limit: PAGE_SIZE },
+                ),
+                limit: PAGE_SIZE * CONVERSATION_PAGES,
+                requirePaginationEvidence: true,
+                nullAsEmpty: true,
+              })
+          ).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
               reactions: result.truncated
@@ -2058,26 +2133,62 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
+          readUnknownArray({
+            operation: "listTeamReviewerCandidates",
+            ...input,
+            path: `${basePath(input.repository)}/teams`,
+          }).pipe(
+            Effect.catch((error) =>
+              isGiteaApiError(error.cause) && error.cause.status === 405
+                ? Effect.succeed([])
+                : Effect.fail(error),
+            ),
+          ),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(
-        Effect.map(([pr, result]) => {
+        Effect.map(([pr, result, teamRows]) => {
           const requested = new Set(pr.reviewRequestLogins.map((login) => login.toLowerCase()));
+          const requestedTeams = new Set(
+            pr.reviewRequestTeamNames.map((name) => name.toLowerCase()),
+          );
           return {
-            candidates: result.rows.flatMap((row) => {
-              const raw = decodeUser(row);
-              if (Option.isNone(raw)) return [];
-              const mapped = actor(raw.value);
-              if (mapped === null || mapped.login === pr.author?.login) return [];
-              return [
-                {
-                  ...mapped,
-                  id: mapped.login,
-                  kind: "user" as const,
-                  isRequested: requested.has(mapped.login.toLowerCase()),
-                },
-              ];
-            }),
+            candidates: [
+              ...result.rows.flatMap((row) => {
+                const raw = decodeUser(row);
+                if (Option.isNone(raw)) return [];
+                const mapped = actor(raw.value);
+                if (
+                  mapped === null ||
+                  mapped.login.toLowerCase() === pr.author?.login.toLowerCase()
+                )
+                  return [];
+                return [
+                  {
+                    ...mapped,
+                    id: mapped.login,
+                    kind: "user" as const,
+                    isRequested: requested.has(mapped.login.toLowerCase()),
+                  },
+                ];
+              }),
+              ...teamRows.flatMap((row) => {
+                const raw = decodeTeam(row);
+                if (Option.isNone(raw)) return [];
+                const name = raw.value.name?.trim();
+                if (!name) return [];
+                return [
+                  {
+                    id: name,
+                    kind: "team" as const,
+                    login: name,
+                    name: raw.value.organization?.username?.trim() || null,
+                    avatarUrl: null,
+                    isRequested: requestedTeams.has(name.toLowerCase()),
+                  },
+                ];
+              }),
+            ],
             truncated: result.truncated,
           };
         }),
