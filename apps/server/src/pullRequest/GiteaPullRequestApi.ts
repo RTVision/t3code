@@ -1011,6 +1011,10 @@ export const make = Effect.gen(function* () {
           detail: "Gitea viewer team pagination exceeded the safe page limit.",
         });
       }),
+    ).pipe(
+      // Public-only tokens can read pull requests while Gitea rejects their team lookup.
+      // Team membership enriches individual review requests and must not hide those matches.
+      Effect.orElseSucceed(() => new Set<number>()),
     ),
     "1 minute",
   );
