@@ -16,23 +16,35 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly updatedAt: Option.Option<DateTime.Utc>;
+  /** The qualified source repository; omitted when Azure did not expose fork metadata. */
+  readonly headRepositoryNameWithOwner?: string | null;
+  /** Derived only from two known repository identities. */
+  readonly isCrossRepository?: boolean;
 }
+
+const AzureDevOpsRepositorySchema = Schema.Struct({
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  webUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  project: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+
+const AzureDevOpsForkSourceSchema = Schema.Struct({
+  repository: Schema.optional(Schema.NullOr(AzureDevOpsRepositorySchema)),
+});
 
 const AzureDevOpsPullRequestSchema = Schema.Struct({
   pullRequestId: PositiveInt,
   title: TrimmedNonEmptyString,
   url: Schema.optional(Schema.String),
-  repository: Schema.optional(
-    Schema.Struct({
-      name: Schema.optional(Schema.String),
-      webUrl: Schema.optional(Schema.String),
-      project: Schema.optional(
-        Schema.Struct({
-          name: Schema.optional(Schema.String),
-        }),
-      ),
-    }),
-  ),
+  repository: Schema.optional(Schema.NullOr(AzureDevOpsRepositorySchema)),
+  /** Azure sets this only for a pull request whose source is a fork. */
+  forkSource: Schema.optional(Schema.NullOr(AzureDevOpsForkSourceSchema)),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   status: Schema.String,
@@ -53,6 +65,41 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
 function trimOptionalString(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+type AzureDevOpsRepositoryReference = {
+  readonly name?: string | null | undefined;
+  readonly project?: { readonly name?: string | null | undefined } | null | undefined;
+};
+
+/** Azure's stable repository identity is its project and repository name. */
+export function azureDevOpsRepositoryNameWithOwner(
+  repository: AzureDevOpsRepositoryReference | null | undefined,
+): string | null {
+  const project = trimOptionalString(repository?.project?.name);
+  const name = trimOptionalString(repository?.name);
+  return project !== null && name !== null ? `${project}/${name}` : null;
+}
+
+/**
+ * `forkSource` is Azure's explicit fork marker. An omitted marker is an unverified projection;
+ * only a JSON null marker certifies that the source is the target repository.
+ */
+export function azureDevOpsHeadRepositoryNameWithOwner(input: {
+  readonly repository?: AzureDevOpsRepositoryReference | null | undefined;
+  readonly forkSource?:
+    | { readonly repository?: AzureDevOpsRepositoryReference | null | undefined }
+    | null
+    | undefined;
+}): string | null | undefined {
+  if (input.forkSource === undefined) return undefined;
+  return azureDevOpsRepositoryNameWithOwner(
+    input.forkSource === null ? input.repository : input.forkSource.repository,
+  );
+}
+
+function normalizeRepositoryIdentity(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function normalizeRefName(refName: string): string {
@@ -163,6 +210,15 @@ function normalizeAzureDevOpsPullRequestUrl(
 function normalizeAzureDevOpsPullRequestRecord(
   raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
 ): NormalizedAzureDevOpsPullRequestRecord {
+  const headRepositoryNameWithOwner = azureDevOpsHeadRepositoryNameWithOwner(raw);
+  const targetRepositoryNameWithOwner = azureDevOpsRepositoryNameWithOwner(raw.repository);
+  const isCrossRepository =
+    headRepositoryNameWithOwner !== undefined &&
+    headRepositoryNameWithOwner !== null &&
+    targetRepositoryNameWithOwner !== null
+      ? normalizeRepositoryIdentity(headRepositoryNameWithOwner) !==
+        normalizeRepositoryIdentity(targetRepositoryNameWithOwner)
+      : undefined;
   return {
     number: raw.pullRequestId,
     title: raw.title,
@@ -171,6 +227,8 @@ function normalizeAzureDevOpsPullRequestRecord(
     headRefName: normalizeRefName(raw.sourceRefName),
     state: normalizeAzureDevOpsPullRequestState(raw.status),
     ...(raw.isDraft === true ? { isDraft: true } : {}),
+    ...(headRepositoryNameWithOwner === undefined ? {} : { headRepositoryNameWithOwner }),
+    ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
     updatedAt: (raw.closedDate ?? Option.none()).pipe(
       Option.orElse(() => raw.creationDate ?? Option.none()),
     ),
