@@ -7,6 +7,8 @@ import type { CitationHistoryPage } from "../components/chat/useAssistantCitatio
 import { focusVimNormal, useVimAction, vimEnabled } from "./runtime";
 import { nextMatchIndex, searchConversation } from "./search";
 
+const HISTORY_PAGE_BATCH = 5;
+
 export function VimTimeline({
   entries,
   rows,
@@ -34,6 +36,9 @@ export function VimTimeline({
   const [selected, setSelected] = useState<{ messageId: string; offset: number } | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [goToTop, setGoToTop] = useState(false);
+  const [historyBudget, setHistoryBudget] = useState(HISTORY_PAGE_BATCH);
+  const historyPaused =
+    historyBudget === 0 && Boolean(loadEarlier) && (searchingHistory || goToTop);
   const requestedPages = useRef(new Set<string>());
   const input = useRef<HTMLInputElement>(null);
   const messages = useMemo(
@@ -54,12 +59,13 @@ export function VimTimeline({
       if (goToTop) void listRef.current?.scrollToOffset({ offset: 0, animated: false });
       return;
     }
-    if (loadEarlier.loading) return;
+    if (loadEarlier.loading || historyBudget === 0) return;
     const cursor = loadEarlier.cursor ?? entries[0]?.id ?? "first";
     if (requestedPages.current.has(cursor)) return;
     requestedPages.current.add(cursor);
+    setHistoryBudget((remaining) => remaining - 1);
     loadEarlier.onLoadEarlier();
-  }, [entries, goToTop, historyError, listRef, loadEarlier, searchingHistory]);
+  }, [entries, goToTop, historyBudget, historyError, listRef, loadEarlier, searchingHistory]);
 
   useEffect(() => {
     if (query && selected === null && matches[0]) {
@@ -134,6 +140,7 @@ export function VimTimeline({
     const state = listRef.current?.getState();
     if (command === "move.top") {
       requestedPages.current.clear();
+      setHistoryBudget(HISTORY_PAGE_BATCH);
       setGoToTop(true);
       void listRef.current?.scrollToOffset({ offset: 0, animated: false });
       return true;
@@ -163,6 +170,7 @@ export function VimTimeline({
             setQuery(draft);
             setSelected(null);
             requestedPages.current.clear();
+            setHistoryBudget(HISTORY_PAGE_BATCH);
 
             setSearchingHistory(Boolean(draft));
             setOpen(false);
@@ -192,9 +200,14 @@ export function VimTimeline({
         <div className="flex items-center justify-between gap-2">
           <span role="status">
             {goToTop
-              ? "Loading the start of the conversation…"
-              : `${query}: ${selectedIndex + 1}/${matches.length} matches${searchingHistory && loadEarlier && !historyError ? " · searching earlier messages…" : ""}${historyError ? " · history unavailable; results are incomplete" : ""}`}
+              ? historyPaused
+                ? "Earlier history loading paused"
+                : "Loading the start of the conversation…"
+              : `${query}: ${selectedIndex + 1}/${matches.length} matches${historyPaused ? " · earlier messages not searched yet" : searchingHistory && loadEarlier && !historyError ? " · searching earlier messages…" : ""}${historyError ? " · history unavailable; results are incomplete" : ""}`}
           </span>
+          {historyPaused && !historyError && (
+            <button onClick={() => setHistoryBudget(HISTORY_PAGE_BATCH)}>Load more history</button>
+          )}
           <button
             aria-label="Close conversation search"
             onClick={() => {

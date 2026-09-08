@@ -14,6 +14,7 @@ export const VIM_COMMANDS = [
   ["terminal.escape", "Leave terminal input", ["ctrl+\\ ctrl+n"], ["terminal"]],
   ["terminal.toggle", "Show / hide terminal", ["ctrl+."], ["normal", "insert", "terminal"]],
   ["terminal.new", "New terminal", ["space t n"], ["normal"]],
+  // T3 names the layout axis: horizontal means columns, matching Vim :vsplit.
   ["terminal.split", "Split terminal vertically", ["space w v"], ["normal"]],
   ["terminal.splitVertical", "Split terminal horizontally", ["space w s"], ["normal"]],
   ["pane.close", "Close terminal or panel", ["space w c"], ["normal"]],
@@ -72,7 +73,7 @@ export function normalizeStroke(stroke: string): string {
     modifiers.add("shift");
     key = key.toLowerCase();
   }
-  if (/^[a-z]$/.test(key) && modifiers.has("shift") && !modified) {
+  if (/^[a-zA-Z]$/.test(key) && modifiers.has("shift") && !modified) {
     modifiers.delete("shift");
     key = key.toUpperCase();
   }
@@ -155,7 +156,13 @@ export function advanceSequence(
       }),
   );
   const exact = candidates.findLast((binding) =>
-    binding.keys.some((key) => parseSequence(key).length === strokes.length),
+    binding.keys.some((key) => {
+      const sequence = parseSequence(key);
+      return (
+        sequence.length === strokes.length &&
+        strokes.every((part, index) => sequence[index] === part)
+      );
+    }),
   );
   if (exact)
     return {

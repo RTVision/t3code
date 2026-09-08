@@ -1498,7 +1498,9 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <VimSettingsPanel />
+      <SettingsSection {...searchableSetting("vim-navigation")}>
+        <VimSettingsPanel />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={

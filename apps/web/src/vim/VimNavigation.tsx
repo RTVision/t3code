@@ -116,6 +116,10 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
+    function reset() {
+      suppressedReleases.clear();
+      clear();
+    }
     function clear() {
       cancelVimPaneFocus();
       sequence.current = EMPTY_SEQUENCE;
@@ -279,16 +283,16 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("keydown", bubbleKeydown);
     window.addEventListener("keyup", keyup, true);
-    window.addEventListener("pointerdown", clear, true);
+    window.addEventListener("pointerdown", reset, true);
     document.addEventListener("focusin", focus);
-    window.addEventListener("blur", clear);
+    window.addEventListener("blur", reset);
     return () => {
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("keydown", bubbleKeydown);
       window.removeEventListener("keyup", keyup, true);
-      window.removeEventListener("pointerdown", clear, true);
+      window.removeEventListener("pointerdown", reset, true);
       document.removeEventListener("focusin", focus);
-      window.removeEventListener("blur", clear);
+      window.removeEventListener("blur", reset);
       clearTimeout(timeout.current);
       clearTimeout(guideTimeout.current);
     };

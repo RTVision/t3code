@@ -31,8 +31,10 @@ and `c` closes a terminal or panel. `Space tn` creates a terminal.
 In conversations, `j/k` scroll, `Ctrl+D/U` move half a page, `gg/G` go to the
 start/end, and `]m/[m` move between messages. Counts such as `5j` work for
 movement. `/` searches user and assistant messages throughout the thread,
-loading older history as needed; `n/N` moves between matches. Close search to
-stop loading further history. Tool output and reasoning are excluded.
+loading older history in batches; `n/N` moves between matches. In long threads,
+choose **Load more history** to continue searching earlier messages. `gg` uses
+the same batches when loading the start of a thread. Close search to stop loading
+further history. Tool output and reasoning are excluded.
 
 `Space gd` opens the diff, where `]c/[c` moves between hunks. `Space ?` shows
 the active shortcuts. The pending-key guide reflects your custom mappings.

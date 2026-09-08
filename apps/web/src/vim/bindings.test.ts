@@ -3,6 +3,7 @@ import { DEFAULT_VIM_SETTINGS } from "@t3tools/contracts/settings";
 import {
   advanceSequence,
   normalModePhase,
+  normalizeStroke,
   EMPTY_SEQUENCE,
   resolveVimBindings,
   strokeFromEvent,
@@ -19,6 +20,28 @@ describe("Vim sequences", () => {
     expect(advanceSequence(group.state, "t", defaults, "normal", "chat").command).toBe(
       "threadPicker.open",
     );
+  });
+  it("matches the actual alternative before executing a command", () => {
+    const bindings = resolveVimBindings({
+      ...DEFAULT_VIM_SETTINGS,
+      bindings: [
+        { command: "threadPicker.open", keys: ["space p t", "ctrl+p"], modes: ["normal"] },
+      ],
+    });
+    const prefix = advanceSequence(EMPTY_SEQUENCE, "space", bindings, "normal", "chat");
+    expect(prefix.command).toBeUndefined();
+    const group = advanceSequence(prefix.state, "p", bindings, "normal", "chat");
+    expect(advanceSequence(group.state, "t", bindings, "normal", "chat").command).toBe(
+      "threadPicker.open",
+    );
+    expect(advanceSequence(EMPTY_SEQUENCE, "ctrl+p", bindings, "normal", "chat").command).toBe(
+      "threadPicker.open",
+    );
+  });
+  it("normalizes explicit Shift with either letter case", () => {
+    expect(normalizeStroke("shift+G")).toBe("G");
+    expect(normalizeStroke("shift+g")).toBe("G");
+    expect(normalizeStroke("ctrl+shift+G")).toBe("ctrl+shift+g");
   });
   it("never reinterprets a mistyped sequence suffix as a command", () => {
     const prefix = advanceSequence(EMPTY_SEQUENCE, "space", defaults, "normal", "chat");
