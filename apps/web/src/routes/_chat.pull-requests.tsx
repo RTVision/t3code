@@ -53,6 +53,7 @@ import {
   parsePullRequestQuery,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
+  mergePullRequestListErrors,
   partitionPullRequestsWithPriority,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
@@ -929,13 +930,14 @@ function PullRequestsRouteView() {
         ? (reviewingQuery.data?.errors.filter((error) => error.partial) ??
           (current?.scope === scopeKey ? current.data.errors.filter((error) => error.partial) : []))
         : [];
-      const retainedErrors = new Map(
-        [...data.errors, ...partitionWarnings].map(
-          (error) =>
-            [JSON.stringify([error.environmentId, error.projectId, error.message]), error] as const,
+      const retainedData = {
+        ...data,
+        errors: mergePullRequestListErrors(
+          baselineQuery.data?.errors,
+          data.errors,
+          partitionWarnings,
         ),
-      );
-      const retainedData = { ...data, errors: [...retainedErrors.values()] };
+      };
       // A search's answer is the search's, not the workspace's, so only unsearched lists
       // persist. Written here where the held partitions are in reach, so a feed settling
       // ahead of them cannot overwrite a stored snapshot that already had both groups.
@@ -1136,7 +1138,10 @@ function PullRequestsRouteView() {
   );
 
   const viewers = baselineQuery.data?.viewers ?? listData?.viewers ?? EMPTY_VIEWERS;
-  const listErrors = listData?.errors ?? baselineQuery.data?.errors ?? [];
+  const listErrors = useMemo(
+    () => mergePullRequestListErrors(baselineQuery.data?.errors, listData?.errors),
+    [baselineQuery.data?.errors, listData?.errors],
+  );
   const coverageWarnings = [
     ...new Set([
       ...listErrors.filter((error) => error.partial).map((error) => error.message),
