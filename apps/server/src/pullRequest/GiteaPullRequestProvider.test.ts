@@ -21,9 +21,14 @@ const trackedPullRequest: GiteaPullRequest = {
   url: "https://forge.example.test/acme/web/pulls/7",
   author: null,
   headBranch: "feature",
+  relationshipHeadBranch: "feature",
+  headBranchAvailable: true,
+  headRepositoryId: 1,
   headSha: "head-sha",
   headRepositoryNameWithOwner: "acme/web",
   baseBranch: "main",
+  baseRepositoryNameWithOwner: "acme/web",
+  baseRepositoryId: 1,
   baseSha: "base-sha",
   mergeBaseSha: "base-sha",
   state: "open",
@@ -131,6 +136,7 @@ describe("GiteaPullRequestProvider", () => {
       const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
 
       const detail = yield* provider.getChangeRequest({
+        cwd: "/repo",
         host: "forge.example.test",
         repository: "acme/web",
         number: 7,
