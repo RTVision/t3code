@@ -7624,6 +7624,7 @@ export default function ChatView(props: ChatViewProps) {
             : "page"
         }
         composerDraftTarget={composerDraftTarget}
+        onOpenPullRequest={openThreadPullRequest}
         {...(linkedThreadPullRequest === null
           ? { onStateChange: handlePullRequestTabStatusChange }
           : {})}

@@ -186,6 +186,9 @@ export const make = Effect.gen(function* () {
             items: page.items.map((pullRequest) =>
               giteaToChangeRequest(pullRequest, input.relationshipOnly === true),
             ),
+            ...(page.coverageWarning === undefined
+              ? {}
+              : { coverageWarning: page.coverageWarning }),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,
@@ -199,9 +202,10 @@ export const make = Effect.gen(function* () {
           api.getRepositoryAccess(input),
           api.getViewer(),
           api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
-          api
-            .getWorkflowApprovals(input)
-            .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
+          api.getWorkflowApprovals(input).pipe(
+            Effect.map((approvals) => ({ ...approvals, unavailable: false })),
+            Effect.orElseSucceed(() => ({ supported: false, runs: [], unavailable: true })),
+          ),
           api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         { concurrency: 4 },
@@ -218,6 +222,17 @@ export const make = Effect.gen(function* () {
               reviewers: pullRequest.reviewers,
               checks: [
                 ...checks,
+                ...(workflows.unavailable
+                  ? [
+                      {
+                        name: "Workflow approval status",
+                        status: "action-required" as const,
+                        description:
+                          "Gitea could not determine whether workflows are awaiting approval.",
+                        url: null,
+                      },
+                    ]
+                  : []),
                 ...workflows.runs.map((run) => ({
                   name: run.display_title?.trim() || `Workflow ${run.id}`,
                   status: "action-required" as const,

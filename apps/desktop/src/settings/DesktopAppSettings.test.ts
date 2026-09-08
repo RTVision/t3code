@@ -115,6 +115,7 @@ describe("DesktopSettings", () => {
         updateChannelConfiguredByUser: false,
         wslBackendEnabled: false,
         wslOnly: false,
+        sshRunner: "windows",
         wslDistro: null,
       } satisfies DesktopAppSettings.DesktopSettings,
     );
@@ -144,6 +145,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
+          sshRunner: "windows",
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
 
@@ -251,6 +253,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          sshRunner: "windows",
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -307,6 +310,7 @@ describe("DesktopSettings", () => {
             updateChannelConfiguredByUser: true,
             wslBackendEnabled: false,
             wslOnly: false,
+            sshRunner: "windows",
             wslDistro: null,
           } satisfies DesktopAppSettings.DesktopSettings);
         }),
@@ -355,6 +359,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          sshRunner: "windows",
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -383,6 +388,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
           wslOnly: false,
+          sshRunner: "windows",
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
@@ -410,6 +416,7 @@ describe("DesktopSettings", () => {
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
+          sshRunner: "windows",
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
