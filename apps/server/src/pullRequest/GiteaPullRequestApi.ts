@@ -851,7 +851,7 @@ export const make = Effect.gen(function* () {
         viewer: input.viewer,
         page,
         limit: PAGE_SIZE,
-        includeTracking: input.includeTracking,
+        includeTracking: input.includeTracking === true,
       });
       let rowsSeen = 0;
       let rowsSkipped = 0;
@@ -886,7 +886,7 @@ export const make = Effect.gen(function* () {
                   host: input.host,
                   repository: input.repository,
                   number,
-                  includeTracking: input.includeTracking,
+                  includeTracking: input.includeTracking === true,
                 });
           },
           { concurrency: SEARCH_HYDRATION_CONCURRENCY },
