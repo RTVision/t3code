@@ -439,7 +439,10 @@ fi
 # never becomes ready. Resolve the CLI once up front so that install failure is
 # reported here, with npm's own output on stderr.
 require_installed_t3_cli() {
-  T3_CLI_PATH="$("$@" -- sh -c 'command -v t3' || true)"
+  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v t3')"; then
+    printf 'Remote host could not install %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
+    return 1
+  fi
   if [ -n "$T3_CLI_PATH" ]; then
     return 0
   fi
@@ -645,6 +648,10 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  if kill -0 "$REMOTE_PID" 2>/dev/null; then
+    printf 'Remote T3 server with PID %s did not stop within 2 seconds. Its ownership files were kept.\\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
 fi
 rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
@@ -1172,7 +1179,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const remoteServerLeaseCounts = new Map<string, number>();
   const closingTunnelEntries = new Map<
     string,
-    { readonly entry: SshTunnelEntry; readonly done: Deferred.Deferred<void> }
+    {
+      readonly entry: SshTunnelEntry;
+      readonly done: Deferred.Deferred<void, SshEnvironmentEffectError>;
+    }
   >();
   const authSecrets = new Map<string, string>();
 
@@ -1214,7 +1224,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
       return;
     }
-    closingTunnelEntries.set(entry.key, { entry, done: Deferred.makeUnsafe<void>() });
+    const closing = { entry, done: Deferred.makeUnsafe<void, SshEnvironmentEffectError>() };
+    closingTunnelEntries.set(entry.key, closing);
     yield* Effect.logDebug("ssh.tunnel.close.start", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1222,6 +1233,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       remotePort: entry.remotePort,
     });
     yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    yield* Deferred.await(closing.done);
     yield* Effect.logInfo("ssh.tunnel.close.succeeded", {
       ...sshTargetLogFields(entry.target),
       key: entry.key,
@@ -1460,7 +1472,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         if (activeClose && activeClose.entry !== tunnelEntry) {
           return Effect.void;
         }
-        const closing = activeClose ?? { entry: tunnelEntry, done: Deferred.makeUnsafe<void>() };
+        const closing = activeClose ?? {
+          entry: tunnelEntry,
+          done: Deferred.makeUnsafe<void, SshEnvironmentEffectError>(),
+        };
         closingTunnelEntries.set(tunnelEntry.key, closing);
         return Effect.gen(function* () {
           yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
@@ -1470,6 +1485,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             remotePort: tunnelEntry.remotePort,
           });
           tunnels.delete(tunnelEntry.key);
+          // Close the forwarded connection before waiting on the remote server to stop.
+          yield* Scope.close(connection.scope, Exit.void).pipe(Effect.ignore);
           const shouldStopRemoteServer =
             !hasTunnelForRemoteServer(tunnelEntry.target) &&
             !hasOtherRemoteServerLease(input.remoteServerLease);
@@ -1492,6 +1509,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
               Effect.provideService(FileSystem.FileSystem, fileSystemService),
               Effect.provideService(Path.Path, pathService),
+              Effect.tapError((error) => Deferred.fail(closing.done, error)),
               Effect.ignore,
             );
           }

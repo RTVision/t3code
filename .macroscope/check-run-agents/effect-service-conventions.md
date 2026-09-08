@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: claude-opus-5
-effort: high
+model: gpt-5-6-sol
+effort: medium
 input: full_diff
 tools:
   - browse_code
@@ -14,8 +14,10 @@ exclude:
   - "**/*.test.ts"
 labels:
   - vouch:trusted
+  - macroscope-review
 requires:
   - Check
+maxBudgetPerRun: 5
 maxBudgetPerPR: 25
 conclusion: failure
 showToolCalls: true

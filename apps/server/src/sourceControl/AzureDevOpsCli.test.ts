@@ -174,6 +174,8 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result[0]?.state, "merged");
       assert.strictEqual(result[0]?.headRepositoryNameWithOwner, "fork-project/repo");
       assert.isTrue(result[0]?.isCrossRepository);
+      assert.strictEqual(result[0]?.mergedAt, "2026-01-03T00:00:00.000Z");
+      assert.strictEqual(result[0]?.closedAt, null);
       expect(mockRun).toHaveBeenCalledWith({
         operation: "AzureDevOpsCli.execute",
         command: "az",

@@ -15,6 +15,8 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   /** The qualified source repository; omitted when Azure did not expose fork metadata. */
   readonly headRepositoryNameWithOwner?: string | null;
@@ -219,16 +221,23 @@ function normalizeAzureDevOpsPullRequestRecord(
       ? normalizeRepositoryIdentity(headRepositoryNameWithOwner) !==
         normalizeRepositoryIdentity(targetRepositoryNameWithOwner)
       : undefined;
+  const state = normalizeAzureDevOpsPullRequestState(raw.status);
+  const terminalAt = Option.match(raw.closedDate ?? Option.none(), {
+    onNone: () => null,
+    onSome: DateTime.formatIso,
+  });
   return {
     number: raw.pullRequestId,
     title: raw.title,
     url: normalizeAzureDevOpsPullRequestUrl(raw),
     baseRefName: normalizeRefName(raw.targetRefName),
     headRefName: normalizeRefName(raw.sourceRefName),
-    state: normalizeAzureDevOpsPullRequestState(raw.status),
+    state,
     ...(raw.isDraft === true ? { isDraft: true } : {}),
     ...(headRepositoryNameWithOwner === undefined ? {} : { headRepositoryNameWithOwner }),
     ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
+    closedAt: state === "closed" ? terminalAt : null,
+    mergedAt: state === "merged" ? terminalAt : null,
     updatedAt: (raw.closedDate ?? Option.none()).pipe(
       Option.orElse(() => raw.creationDate ?? Option.none()),
     ),

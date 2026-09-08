@@ -16,6 +16,7 @@ import {
   type PullRequestState,
   type PullRequestUpdateMethod,
   type SourceControlProviderKind,
+  type VcsRef,
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
@@ -180,6 +181,20 @@ export function describePullRequestState(state: PullRequestState, isDraft: boole
   if (state === "merged") return "Merged";
   if (state === "closed") return "Closed";
   return isDraft ? "Draft" : "Ready for review";
+}
+
+export function isStackedPullRequestBase(
+  baseBranch: string,
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "isRemote" | "remoteName">>,
+): boolean {
+  const defaultRef = refs.find((refName) => refName.isDefault);
+  if (!defaultRef) return false;
+  if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
+  const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
+  const defaultBranch = defaultRef.name.startsWith(remotePrefix)
+    ? defaultRef.name.slice(remotePrefix.length)
+    : defaultRef.name;
+  return defaultBranch !== baseBranch;
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
