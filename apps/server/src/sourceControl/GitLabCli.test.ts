@@ -152,6 +152,199 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("uses matching project ids for same-repository MR source identity", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 44,
+              title: "Same repository MR",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/44",
+              target_branch: "main",
+              source_branch: "feature/same-repo",
+              source_project_id: 100,
+              target_project_id: 100,
+              target_project: { path_with_namespace: "acme/web" },
+              state: "opened",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getMergeRequest({ cwd: "/repo", reference: "44" });
+
+      assert.deepStrictEqual(result, {
+        number: 44,
+        title: "Same repository MR",
+        url: "https://gitlab.com/acme/web/-/merge_requests/44",
+        baseRefName: "main",
+        headRefName: "feature/same-repo",
+        state: "open",
+        isCrossRepository: false,
+        headRepositoryNameWithOwner: "acme/web",
+        headRepositoryOwnerLogin: "acme",
+      });
+    }),
+  );
+
+  it.effect("uses the requested repository for IDs-only same-repository MRs", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 46,
+              title: "IDs-only same repository MR",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/46",
+              target_branch: "main",
+              source_branch: "feature/ids-only",
+              source_project_id: 100,
+              target_project_id: 100,
+              state: "opened",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getMergeRequest({
+        cwd: "/repo",
+        reference: "46",
+        repository: "acme/web",
+      });
+
+      assert.deepStrictEqual(result, {
+        number: 46,
+        title: "IDs-only same repository MR",
+        url: "https://gitlab.com/acme/web/-/merge_requests/46",
+        baseRefName: "main",
+        headRefName: "feature/ids-only",
+        state: "open",
+        isCrossRepository: false,
+        headRepositoryNameWithOwner: "acme/web",
+        headRepositoryOwnerLogin: "acme",
+      });
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["mr", "view", "46", "--repo", "acme/web", "--output", "json"],
+        }),
+      );
+    }),
+  );
+
+  it.effect("does not reuse the target project after GitLab redacts a fork source", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                iid: 45,
+                title: "Deleted source",
+                web_url: "https://gitlab.com/acme/web/-/merge_requests/45",
+                target_branch: "main",
+                source_branch: "feature/deleted",
+                source_project_id: 101,
+                target_project_id: 100,
+                source_project: null,
+                target_project: { path_with_namespace: "acme/web" },
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.listMergeRequests({
+        cwd: "/repo",
+        headSelector: "feature/deleted",
+        state: "open",
+      });
+
+      assert.strictEqual(result[0]?.number, 45);
+      assert.isUndefined(result[0]?.headRepositoryNameWithOwner);
+      // Project ids still prove that this was cross-repository even after the source was deleted.
+      assert.isTrue(result[0]?.isCrossRepository);
+    }),
+  );
+
+  it.effect("binds IDs-only list identity to the requested self-hosted repository", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                iid: 47,
+                title: "Same project",
+                web_url: "https://forge.test/acme/web/-/merge_requests/47",
+                target_branch: "main",
+                source_branch: "feature/list",
+                source_project_id: 100,
+                target_project_id: 100,
+              },
+            ]),
+          ),
+        ),
+      );
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.listMergeRequests({
+        cwd: "/different-checkout",
+        headSelector: "feature/list",
+        state: "open",
+        repository: "acme/web",
+        repositoryUrl: "https://forge.test/acme/web",
+      });
+      assert.strictEqual(result[0]?.headRepositoryNameWithOwner, "acme/web");
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining(["--repo", "https://forge.test/acme/web"]),
+        }),
+      );
+    }),
+  );
+
+  it.effect("does not borrow workspace repository identity for an explicit MR URL", () =>
+    Effect.gen(function* () {
+      const reference = "https://another.test/other/project/-/merge_requests/48";
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 48,
+              title: "Explicit MR",
+              web_url: reference,
+              target_branch: "main",
+              source_branch: "feature/url",
+              source_project_id: 200,
+              target_project_id: 200,
+            }),
+          ),
+        ),
+      );
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getMergeRequest({
+        cwd: "/repo",
+        reference,
+        repository: "acme/web",
+        repositoryUrl: "https://forge.test/acme/web",
+      });
+      assert.isUndefined(result.headRepositoryNameWithOwner);
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({ args: ["mr", "view", reference, "--output", "json"] }),
+      );
+    }),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

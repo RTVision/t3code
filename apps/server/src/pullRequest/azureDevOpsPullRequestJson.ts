@@ -14,6 +14,8 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import {
   azureDevOpsOrganizationBaseFromRestApiUrl,
+  azureDevOpsHeadRepositoryNameWithOwner,
+  azureDevOpsRepositoryNameWithOwner,
   azureDevOpsPullRequestWebUrl,
 } from "../sourceControl/azureDevOpsPullRequests.ts";
 
@@ -28,6 +30,18 @@ const RawIdentitySchema = Schema.Struct({
   /** An email or UPN, which is what `az account show` reports for the signed-in user. */
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawRepositorySchema = Schema.Struct({
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  webUrl: Schema.optional(Schema.NullOr(Schema.String)),
+  project: Schema.optional(
+    Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const RawForkSourceSchema = Schema.Struct({
+  repository: Schema.optional(Schema.NullOr(RawRepositorySchema)),
 });
 
 const RawPullRequestSchema = Schema.Struct({
@@ -61,17 +75,9 @@ const RawPullRequestSchema = Schema.Struct({
   creationDate: TrimmedNonEmptyString,
   closedDate: Schema.optional(Schema.NullOr(Schema.String)),
   url: Schema.optional(Schema.NullOr(Schema.String)),
-  repository: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        name: Schema.optional(Schema.NullOr(Schema.String)),
-        webUrl: Schema.optional(Schema.NullOr(Schema.String)),
-        project: Schema.optional(
-          Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
-        ),
-      }),
-    ),
-  ),
+  repository: Schema.optional(Schema.NullOr(RawRepositorySchema)),
+  /** Non-null only when Azure identifies a pull request source fork. */
+  forkSource: Schema.optional(Schema.NullOr(RawForkSourceSchema)),
   _links: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -123,6 +129,10 @@ export interface AzureDevOpsPullRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  /** The qualified source repository, or null if Azure did not resolve it. */
+  readonly headRepositoryNameWithOwner: string | null;
+  /** Derived from the source and target repository identities when both are known. */
+  readonly isCrossRepository?: boolean;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -152,6 +162,10 @@ function trimmed(value: string | null | undefined): string | null {
 
 function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
+}
+
+function normalizeRepositoryIdentity(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 /** A login has to compare against `az account show`, which reports an email. */
@@ -224,6 +238,15 @@ function toAutoMergeMethod(
 function toPullRequest(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsPullRequest | null {
+  const headRepositoryNameWithOwner = azureDevOpsHeadRepositoryNameWithOwner(raw);
+  const targetRepositoryNameWithOwner = azureDevOpsRepositoryNameWithOwner(raw.repository);
+  const isCrossRepository =
+    headRepositoryNameWithOwner !== undefined &&
+    headRepositoryNameWithOwner !== null &&
+    targetRepositoryNameWithOwner !== null
+      ? normalizeRepositoryIdentity(headRepositoryNameWithOwner) !==
+        normalizeRepositoryIdentity(targetRepositoryNameWithOwner)
+      : undefined;
   const autoMergeMethod = toAutoMergeMethod(raw);
   const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
     const actor = toActor(reviewer);
@@ -249,6 +272,8 @@ function toPullRequest(
     url,
     author: toActor(raw.createdBy),
     headBranch,
+    headRepositoryNameWithOwner: headRepositoryNameWithOwner ?? null,
+    ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
     baseBranch,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
