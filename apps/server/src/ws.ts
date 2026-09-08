@@ -2164,7 +2164,6 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.pullRequestsSubscribeRefreshes,
             pullRequests.subscribeRefreshes.pipe(
-              Stream.filter((event) => input.scoped || event.reference === undefined),
               Stream.map((event) => (input.scoped ? event : event.revision)),
             ),
             { "rpc.aggregate": "pull-requests" },

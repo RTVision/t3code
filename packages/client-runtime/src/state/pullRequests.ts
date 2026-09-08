@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
+import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -48,25 +50,79 @@ type PullRequestRefreshScope =
       readonly host?: string;
     };
 
-function matchesRefresh(scope: PullRequestRefreshScope, event: PullRequestRefresh): boolean {
-  if (event.reference === undefined) return true;
-  if (scope.kind === undefined) return false;
-  const projectIds = event.projectIds ?? [event.reference.projectId];
-  if (scope.kind === "list") {
-    return (
-      event.listings &&
-      (scope.host === undefined ||
-        event.host === undefined ||
-        scope.host.toLowerCase() === event.host) &&
-      (scope.projectIds === undefined ||
-        scope.projectIds.some((projectId) => projectIds.includes(projectId)))
+const emptyRefreshRevisions = (global = 0) => ({
+  global,
+  references: HashMap.empty<string, number>(),
+  repositories: HashMap.empty<string, number>(),
+  listings: HashMap.empty<ProjectId, { revision: number; host: string | undefined }>(),
+});
+type RefreshRevisions = ReturnType<typeof emptyRefreshRevisions>;
+
+const repositoryRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
+  JSON.stringify([projectId, reference.repository.trim().toLowerCase()]);
+const referenceRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
+  JSON.stringify([projectId, reference.repository.trim().toLowerCase(), reference.number]);
+
+/** Accumulate before the atom keeps only the last value of a stream chunk. */
+function accumulateRefresh(
+  previous: RefreshRevisions,
+  value: number | PullRequestRefresh,
+): RefreshRevisions {
+  // Numeric revisions are from servers predating scoped refreshes.
+  const event: PullRequestRefresh =
+    typeof value === "number" ? { revision: value, listings: true } : value;
+  if (event.reference === undefined) return emptyRefreshRevisions(event.revision);
+  let { references, repositories, listings } = previous;
+  for (const projectId of event.projectIds ?? [event.reference.projectId]) {
+    references = HashMap.set(
+      references,
+      referenceRefreshKey(event.reference, projectId),
+      event.revision,
     );
+    repositories = HashMap.set(
+      repositories,
+      repositoryRefreshKey(event.reference, projectId),
+      event.revision,
+    );
+    if (event.listings) {
+      listings = HashMap.set(listings, projectId, { revision: event.revision, host: event.host });
+    }
   }
-  return (
-    projectIds.includes(scope.reference.projectId) &&
-    scope.reference.repository.trim().toLowerCase() ===
-      event.reference.repository.trim().toLowerCase() &&
-    (scope.kind === "repository" || scope.reference.number === event.reference.number)
+  // A long-lived connection must not retain every PR ever visited. Eviction refreshes all
+  // scopes once so a forgotten revision cannot leave an already mounted query stale.
+  if (
+    HashMap.size(references) > 2_048 ||
+    HashMap.size(repositories) > 2_048 ||
+    HashMap.size(listings) > 2_048
+  ) {
+    return emptyRefreshRevisions(event.revision);
+  }
+  return { global: previous.global, references, repositories, listings };
+}
+
+function refreshRevision(scope: PullRequestRefreshScope, revisions: RefreshRevisions): number {
+  if (scope.kind === undefined) return revisions.global;
+  if (scope.kind === "list") {
+    let revision = revisions.global;
+    for (const [projectId, listing] of revisions.listings) {
+      if (
+        (scope.projectIds === undefined || scope.projectIds.includes(projectId)) &&
+        (scope.host === undefined ||
+          listing.host === undefined ||
+          scope.host.toLowerCase() === listing.host)
+      ) {
+        revision = Math.max(revision, listing.revision);
+      }
+    }
+    return revision;
+  }
+  const revision =
+    scope.kind === "reference"
+      ? HashMap.get(revisions.references, referenceRefreshKey(scope.reference))
+      : HashMap.get(revisions.repositories, repositoryRefreshKey(scope.reference));
+  return Math.max(
+    revisions.global,
+    Option.getOrElse(revision, () => 0),
   );
 }
 
@@ -76,30 +132,27 @@ function createPullRequestRefreshAtomFamily<R, E>(
   const events = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:pull-requests:refreshes",
     tag: WS_METHODS.pullRequestsSubscribeRefreshes,
+    transform: (stream) => stream.pipe(Stream.scan(emptyRefreshRevisions(), accumulateRefresh)),
   });
   const scoped = Atom.family((key: string) => {
     const { environmentId, input } = JSON.parse(key) as {
       environmentId: EnvironmentId;
       input: PullRequestRefreshScope;
     };
-    return Atom.make((get): AsyncResult.AsyncResult<number, unknown> => {
+    return Atom.make<AsyncResult.AsyncResult<number, unknown>>((get) => {
       const result = get(events({ environmentId, input: { scoped: true } }));
-      // Numeric revisions are from servers predating scoped refreshes.
+      const previous = Option.getOrUndefined(get.self());
       if (AsyncResult.isSuccess(result)) {
-        const event =
-          typeof result.value === "number"
-            ? { revision: result.value, listings: true }
-            : result.value;
-        if (matchesRefresh(input, event)) {
-          const previous = Option.getOrUndefined(get.self());
+        const revision = refreshRevision(input, result.value);
+        if (revision > 0) {
           return previous !== undefined &&
             AsyncResult.isSuccess(previous) &&
-            previous.value === event.revision
+            previous.value === revision
             ? previous
-            : AsyncResult.success(event.revision);
+            : AsyncResult.success(revision);
         }
       }
-      return Option.getOrElse(get.self(), () => AsyncResult.initial<number>());
+      return previous ?? AsyncResult.initial<number>();
     });
   });
   return (target: {
