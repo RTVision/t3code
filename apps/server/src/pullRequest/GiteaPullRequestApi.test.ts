@@ -423,12 +423,14 @@ layer("GiteaPullRequestApi", (it) => {
         viewer: "",
         limit: 200,
         relationshipOnly: true,
+        includeTracking: true,
       });
 
       expect(page.items.map((item) => item.number)).toEqual([1]);
       assert.strictEqual(page.consumed, 2);
       assert.isTrue(page.truncated);
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
+      expect(callAt(0).path).not.toContain("include_tracking");
     }),
   );
 

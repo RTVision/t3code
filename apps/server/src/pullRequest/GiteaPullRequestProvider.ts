@@ -168,7 +168,7 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
-          includeTracking: true,
+          includeTracking: input.relationshipOnly !== true,
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           ...(input.relationshipOnly === undefined
