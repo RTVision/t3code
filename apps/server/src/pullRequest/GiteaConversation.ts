@@ -13,7 +13,8 @@ export const RawGiteaReaction = Schema.Struct({
 
 export type GiteaConversationReactionTarget =
   | { readonly kind: "pull-request" }
-  | { readonly kind: "comment"; readonly id: string };
+  | { readonly kind: "comment"; readonly id: string }
+  | { readonly kind: "review"; readonly id: string };
 
 const reactionContent = new Map<string, PullRequestReactionContent>([
   ["+1", "thumbs-up"],
@@ -38,14 +39,17 @@ function commentId(subjectId: string): string | null {
 
 /**
  * Gitea stores inline review remarks as issue comments. Review summaries use a separate Review
- * record, for which v1.27.3 intentionally exposes neither an edit nor a reaction endpoint.
+ * record, which the companion server extension exposes through a separate route.
  */
 export function reactionTarget(
   subjectId: string | undefined,
 ): GiteaConversationReactionTarget | null {
   if (subjectId === undefined) return { kind: "pull-request" };
-  const id = commentId(subjectId);
-  return id === null ? null : { kind: "comment", id };
+  const [kind, reviewId] = subjectId.split(":", 2);
+  if (kind === "review" && reviewId && /^\d+$/.test(reviewId))
+    return { kind: "review", id: reviewId };
+  const comment = commentId(subjectId);
+  return comment === null ? null : { kind: "comment", id: comment };
 }
 
 /** Returns the native issue-comment ID for both ordinary and inline-review remarks. */
