@@ -962,8 +962,13 @@ export const make = Effect.gen(function* () {
             continue;
           collected.push(pullRequest);
           if (collected.length === wanted) {
-            // A raw-row offset can safely continue even when this is the last allowed page; a
-            // search that cannot fill its requested slice reaches the bounded failure below.
+            if (page === MAX_PAGINATION_PAGES && next !== null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listPullRequests",
+                reason: "failed",
+                detail: "Gitea pull request pagination exceeded the safe page limit.",
+              });
+            }
             return {
               items: collected,
               truncated: index < pageRows.length - 1 || next !== null,
@@ -1055,8 +1060,8 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     limit: number;
-    requirePaginationEvidence?: boolean;
     nullAsEmpty?: boolean;
+    requirePaginationEvidence?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -1785,31 +1790,30 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownSlice({
-            operation: "listConversationReactions",
-            host: input.host,
-            repository: input.repository,
-            path:
-              entry.target.kind === "pull-request"
-                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
-                    page: 1,
-                    limit: PAGE_SIZE,
-                  })
-                : entry.target.kind === "review"
-                  ? query(
-                      `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`,
-                      { page: 1, limit: PAGE_SIZE },
-                    )
-                  : query(
-                      `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
-                      {
-                        page: 1,
-                        limit: PAGE_SIZE,
-                      },
-                    ),
-            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
-            nullAsEmpty: true,
-          }).pipe(
+          (entry.target.kind === "comment"
+            ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
+              readUnknownPage({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                nullAsEmpty: true,
+              }).pipe(Effect.map(({ rows }) => ({ rows, truncated: false })))
+            : readUnknownSlice({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: query(
+                  entry.target.kind === "review"
+                    ? `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`
+                    : `${basePath(input.repository)}/issues/${input.number}/reactions`,
+                  { page: 1, limit: PAGE_SIZE },
+                ),
+                limit: PAGE_SIZE * CONVERSATION_PAGES,
+                requirePaginationEvidence: true,
+                nullAsEmpty: true,
+              })
+          ).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
               reactions: result.truncated

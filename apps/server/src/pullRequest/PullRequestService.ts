@@ -1521,6 +1521,7 @@ export const make = Effect.gen(function* () {
             provider: project.api.kind,
             host: project.host,
             repository: project.repository,
+            repositoryPath: project.project.repositoryIdentity?.displayName ?? null,
             focus: input.number,
             rows,
             complete: branchComplete,

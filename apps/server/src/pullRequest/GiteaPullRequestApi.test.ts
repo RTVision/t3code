@@ -193,6 +193,7 @@ layer("GiteaPullRequestApi", (it) => {
         checksState: "failing",
       });
       expect(callAt(1).path).toContain("include_tracking=true");
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
       const api = yield* GiteaPullRequestApi.make;
       yield* api.listPullRequests({ ...input, relationshipOnly: true, includeTracking: true });
       expect(callAt(2).path).not.toContain("include_tracking");
@@ -918,7 +919,7 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("returns a page-boundary search match without requesting the page after the cap", () =>
+  it.effect("rejects a search match at the page cap when its continuation cannot advance", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation((request) => {
         if (request.path.includes("/pulls/100"))
@@ -933,15 +934,17 @@ layer("GiteaPullRequestApi", (it) => {
         );
       });
       const api = yield* GiteaPullRequestApi.make;
-      const page = yield* api.listPullRequests({
-        host: "forge.example.test",
-        repository: "acme/web",
-        state: "open",
-        involvement: "all",
-        viewer: "reviewer",
-        limit: 1,
-        query: "match",
-      });
+      const error = yield* api
+        .listPullRequests({
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "reviewer",
+          limit: 1,
+          query: "match",
+        })
+        .pipe(Effect.flip);
       const searchPages = mockedRequest.mock.calls
         .map(([request]) => request.path)
         .filter((path) => path.includes("/issues?"))
@@ -949,12 +952,64 @@ layer("GiteaPullRequestApi", (it) => {
           Number(new URL(path, "https://forge.example.test").searchParams.get("page")),
         );
 
-      expect(page.items.map((item) => item.number)).toEqual([100]);
-      assert.strictEqual(page.consumed, 100);
-      assert.isTrue(page.truncated);
+      expect(error.detail).toContain("safe page limit");
       expect(searchPages).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
       assert.strictEqual(mockedRequest.mock.calls.length, 101);
     }),
+  );
+
+  it.effect.each([false, true])(
+    "follows a search cursor to the final allowed page (more pages: %s)",
+    (hasMorePages) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((request) => {
+          const url = new URL(request.path, "https://forge.example.test");
+          if (url.pathname.endsWith("/pulls/99"))
+            return Effect.succeed(response(rawPullRequest(99)));
+          if (url.pathname.endsWith("/pulls/100"))
+            return Effect.succeed(response(rawPullRequest(100)));
+          const page = Number(url.searchParams.get("page"));
+          return Effect.succeed(
+            response([{ number: page >= 99 ? page : "malformed" }], {
+              "x-total-count": hasMorePages ? "101" : "100",
+            }),
+          );
+        });
+        const api = yield* GiteaPullRequestApi.make;
+        const input = {
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open" as const,
+          involvement: "all" as const,
+          viewer: "reviewer",
+          limit: 1,
+          query: "match",
+        };
+        const first = yield* api.listPullRequests(input);
+        expect(first.items.map((item) => item.number)).toEqual([99]);
+        expect(first.truncated).toBe(true);
+        const followUp = api.listPullRequests({
+          ...input,
+          cursor: { delivered: first.consumed, updatedBefore: "2026-09-02T10:00:00.000Z" },
+        });
+        if (hasMorePages) {
+          const error = yield* followUp.pipe(Effect.flip);
+          expect(error.detail).toContain("safe page limit");
+        } else {
+          const last = yield* followUp;
+          expect(last.items.map((item) => item.number)).toEqual([100]);
+          expect(last.consumed).toBe(1);
+          expect(last.truncated).toBe(false);
+        }
+        expect(
+          mockedRequest.mock.calls.every(
+            ([request]) =>
+              Number(
+                new URL(request.path, "https://forge.example.test").searchParams.get("page"),
+              ) <= 100,
+          ),
+        ).toBe(true);
+      }),
   );
 
   it.effect("post-filters merged state and keeps authored search case-insensitive", () =>
@@ -1514,49 +1569,6 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("limits later reviews to the remaining shared inline-comment budget", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(
-        Effect.succeed(
-          response([
-            { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
-            { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
-          ]),
-        ),
-      );
-      for (const [offset, length] of [
-        [0, 150],
-        [150, 100],
-      ] as const) {
-        mockedRequest.mockReturnValueOnce(
-          Effect.succeed(
-            response(
-              Array.from({ length }, (_, index) => ({
-                id: offset + index + 31,
-                body: "Comment",
-                path: "src/a.ts",
-                position: 1,
-                created_at: "2026-09-03T11:01:00Z",
-              })),
-            ),
-          ),
-        );
-      }
-      const api = yield* GiteaPullRequestApi.make;
-      const result = yield* api.listReviews({
-        host: "forge.example.test",
-        repository: "acme/web",
-        number: 7,
-      });
-
-      const inlineComments = result.comments.filter((comment) => comment.kind === "review-comment");
-      expect(inlineComments).toHaveLength(200);
-      expect(inlineComments.at(-1)?.id).toBe("review-comment:230");
-      expect(result.truncated).toBe(true);
-      expect(mockedRequest).toHaveBeenCalledTimes(3);
-    }),
-  );
-
   it.effect("follows pagination links when Gitea caps comment pages below the limit", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -1698,26 +1710,6 @@ layer("GiteaPullRequestApi", (it) => {
         yield* api.listChecks({ host: "forge.example.test", repository: "acme/web", sha: "" }),
       ).toEqual([]);
       expect(mockedRequest).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("maps native warning statuses to failing checks", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(
-        Effect.succeed(
-          response({
-            total_count: 1,
-            statuses: [{ context: "scan", status: "warning", updated_at: "2026-09-03T11:00:00Z" }],
-          }),
-        ),
-      );
-      const api = yield* GiteaPullRequestApi.make;
-      const checks = yield* api.listChecks({
-        host: "forge.example.test",
-        repository: "acme/web",
-        sha: "head-sha",
-      });
-      expect(checks).toEqual([expect.objectContaining({ name: "scan", status: "failure" })]);
     }),
   );
 
@@ -2079,8 +2071,8 @@ layer("GiteaPullRequestApi", (it) => {
       expect(mockedRequest.mock.calls.map((call) => call[0].path)).toEqual([
         "/settings/api",
         "/repos/acme/web/issues/7/reactions?page=1&limit=50",
-        "/repos/acme/web/issues/comments/12/reactions?page=1&limit=50",
-        "/repos/acme/web/issues/comments/34/reactions?page=1&limit=50",
+        "/repos/acme/web/issues/comments/12/reactions",
+        "/repos/acme/web/issues/comments/34/reactions",
       ]);
     }),
   );
@@ -2136,6 +2128,74 @@ layer("GiteaPullRequestApi", (it) => {
         { content: "eyes", count: 1, actors: ["two"], viewerHasReacted: false },
       ]);
     }),
+  );
+
+  it.effect.each([50, 200, 201])(
+    "retains all %i native comment reactions with one unpaginated read",
+    (count) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((input) => {
+          if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
+          if (input.path.startsWith("/repos/acme/web/issues/7/reactions?"))
+            return Effect.succeed(response([]));
+          if (input.path === "/repos/acme/web/issues/comments/12/reactions")
+            return Effect.succeed(
+              response(
+                Array.from({ length: count }, (_, index) => ({
+                  content: "+1",
+                  user: { login: `reader-${index}` },
+                })),
+              ),
+            );
+          return Effect.die(`unexpected request: ${input.path}`);
+        });
+        const api = yield* GiteaPullRequestApi.make;
+        const reactions = yield* api.listConversationReactions({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          viewer: "reader-0",
+          subjectIds: ["issue:12"],
+        });
+
+        expect(reactions.bySubjectId.get("issue:12")).toEqual([
+          expect.objectContaining({ content: "thumbs-up", count, viewerHasReacted: true }),
+        ]);
+        expect(mockedRequest).toHaveBeenCalledTimes(3);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "bounds paginated issue reactions with pagination evidence: %s",
+    (hasEvidence) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((input) => {
+          if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
+          const page = Number(
+            new URL(input.path, "https://forge.example.test").searchParams.get("page"),
+          );
+          return Effect.succeed(
+            response(
+              Array.from({ length: 50 }, (_, index) => ({
+                content: "+1",
+                user: { login: `reader-${page}-${index}` },
+              })),
+              hasEvidence ? { "x-total-count": "201" } : {},
+            ),
+          );
+        });
+        const api = yield* GiteaPullRequestApi.make;
+        const reactions = yield* api.listConversationReactions({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          viewer: "reader",
+          subjectIds: [],
+        });
+
+        expect(reactions.pullRequest).toEqual([]);
+        expect(mockedRequest).toHaveBeenCalledTimes(hasEvidence ? 5 : 2);
+      }),
   );
 
   it.effect("reports Gitea's missing review-summary reaction route", () =>

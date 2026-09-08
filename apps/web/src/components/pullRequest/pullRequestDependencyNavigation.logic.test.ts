@@ -70,6 +70,72 @@ describe("pull request dependency navigation", () => {
       possibleParents: [{ number: 41 }],
     });
   });
+  it("keeps warnings on another retained branch out of the focused path", () => {
+    const navigation = view(
+      context({
+        coverage: "partial",
+        edges: [
+          { parent: 41, child: 42, certainty: "confirmed" },
+          { parent: 41, child: 43, certainty: "confirmed" },
+          { parent: 44, child: 43, certainty: "candidate" },
+          { parent: 43, child: 44, certainty: "candidate" },
+        ],
+        issues: [
+          { number: 43, reason: "ambiguous-parent" },
+          { number: 43, reason: "cycle" },
+          { number: 44, reason: "cycle" },
+        ],
+      }),
+    );
+
+    expect(navigation).toMatchObject({
+      status: "ready",
+      path: [{ number: 41 }, { number: 42 }],
+      rootBase: "main",
+      parentAmbiguous: false,
+      cycleBefore: false,
+      cycleAfter: false,
+      siblings: [{ number: 43 }],
+      coverage: "partial",
+    });
+  });
+
+  it.each([41, 42])("retains ambiguous-parent warnings for ancestor or focus #%s", (number) => {
+    expect(
+      view(
+        context({
+          edges: [{ parent: 41, child: 42, certainty: "confirmed" }],
+          issues: [{ number, reason: "ambiguous-parent" }],
+        }),
+      ),
+    ).toMatchObject({ status: "ready", rootBase: null, parentAmbiguous: number === 42 });
+  });
+
+  it("retains cycle warnings for nodes on the focused path", () => {
+    expect(
+      view(
+        context({
+          edges: [{ parent: 41, child: 42, certainty: "confirmed" }],
+          issues: [{ number: 42, reason: "cycle" }],
+        }),
+      ),
+    ).toMatchObject({ status: "ready", cycleAfter: true });
+  });
+
+  it("does not hide the root base for an ambiguous descendant", () => {
+    expect(
+      view(
+        context({
+          edges: [
+            { parent: 41, child: 42, certainty: "confirmed" },
+            { parent: 42, child: 43, certainty: "confirmed" },
+          ],
+          issues: [{ number: 43, reason: "ambiguous-parent" }],
+        }),
+      ),
+    ).toMatchObject({ status: "ready", rootBase: "main", parentAmbiguous: false });
+  });
+
   it("keeps native membership navigable when a member was not loaded", () => {
     const navigation = view(
       context({
