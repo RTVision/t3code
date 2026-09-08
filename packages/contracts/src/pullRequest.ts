@@ -625,8 +625,10 @@ export const PullRequestProviderSummary = Schema.Struct({
 });
 export type PullRequestProviderSummary = typeof PullRequestProviderSummary.Type;
 
-/** One project whose repository could not be read; healthy projects still return entries. */
+/** A project whose repository could not be read fully; available entries are still returned. */
 export const PullRequestListProjectError = Schema.Struct({
+  /** Partial coverage preserves usable rows and does not disable the project filter. */
+  partial: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
   message: TrimmedNonEmptyString,

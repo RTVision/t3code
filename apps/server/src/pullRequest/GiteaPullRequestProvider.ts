@@ -186,6 +186,9 @@ export const make = Effect.gen(function* () {
             items: page.items.map((pullRequest) =>
               giteaToChangeRequest(pullRequest, input.relationshipOnly === true),
             ),
+            ...(page.coverageWarning === undefined
+              ? {}
+              : { coverageWarning: page.coverageWarning }),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,

@@ -845,9 +845,9 @@ export function writePullRequestListSnapshot(
         data: {
           ...snapshot.data,
           entries: snapshot.data.entries.slice(0, SNAPSHOT_MAX_ENTRIES),
-          // A failure is never cached and yesterday's is not this morning's; a cursor names a
-          // position in a listing the host has long since forgotten.
-          errors: [],
+          // Coverage warnings belong to the retained rows. Drop transient failures and cursors
+          // whose positions may no longer exist on the host.
+          errors: snapshot.data.errors.filter((error) => error.partial),
           nextCursors: {},
           // Where a listing stopped is as stale as the cursor that named it.
           truncatedEnvironments: [],
