@@ -511,12 +511,14 @@ layer("GiteaPullRequestApi", (it) => {
         viewer: "",
         limit: 200,
         relationshipOnly: true,
+        includeTracking: true,
       });
 
       expect(page.items.map((item) => item.number)).toEqual([1]);
       assert.strictEqual(page.consumed, 2);
       assert.isTrue(page.truncated);
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
+      expect(callAt(0).path).not.toContain("include_tracking");
     }),
   );
 
@@ -1512,6 +1514,49 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("limits later reviews to the remaining shared inline-comment budget", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([
+            { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
+            { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
+          ]),
+        ),
+      );
+      for (const [offset, length] of [
+        [0, 150],
+        [150, 100],
+      ] as const) {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length }, (_, index) => ({
+                id: offset + index + 31,
+                body: "Comment",
+                path: "src/a.ts",
+                position: 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      }
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      const inlineComments = result.comments.filter((comment) => comment.kind === "review-comment");
+      expect(inlineComments).toHaveLength(200);
+      expect(inlineComments.at(-1)?.id).toBe("review-comment:230");
+      expect(result.truncated).toBe(true);
+      expect(mockedRequest).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("follows pagination links when Gitea caps comment pages below the limit", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -1653,6 +1698,26 @@ layer("GiteaPullRequestApi", (it) => {
         yield* api.listChecks({ host: "forge.example.test", repository: "acme/web", sha: "" }),
       ).toEqual([]);
       expect(mockedRequest).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("maps native warning statuses to failing checks", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response({
+            total_count: 1,
+            statuses: [{ context: "scan", status: "warning", updated_at: "2026-09-03T11:00:00Z" }],
+          }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const checks = yield* api.listChecks({
+        host: "forge.example.test",
+        repository: "acme/web",
+        sha: "head-sha",
+      });
+      expect(checks).toEqual([expect.objectContaining({ name: "scan", status: "failure" })]);
     }),
   );
 
