@@ -97,7 +97,7 @@ describe("GiteaPullRequestProvider", () => {
         switch (input.path) {
           case "/settings/api":
             return Effect.succeed(response({ features: [] }));
-          case "/repos/acme/web/pulls/7":
+          case "/repos/acme/web/pulls/7?include_tracking=true":
             return Effect.succeed(response(rawPullRequest()));
           case "/repos/acme/web":
             return Effect.succeed(response({ permissions: { push: true } }));
