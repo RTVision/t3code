@@ -432,6 +432,28 @@ describe("findProjectForChangeRequest", () => {
     ).toBe(projects[0]);
   });
 
+  it("matches an unknown HTTP remote for a nested GitLab repository", () => {
+    const projects = [
+      project({
+        canonicalKey: "code.example/group/sub/repo",
+        provider: "unknown",
+        displayName: "group/sub/repo",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://code.example/group/sub/repo.git",
+        },
+      }),
+    ];
+    expect(
+      findProjectForChangeRequest(projects, {
+        host: "code.example",
+        repository: "group/sub/repo",
+        number: 42,
+      }),
+    ).toBe(projects[0]);
+  });
+
   it("keeps two hosts apart, so an Enterprise link does not open the public one", () => {
     const projects = [
       project({

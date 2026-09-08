@@ -173,7 +173,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
         ],
         { concurrency: 4 },
       ).pipe(
