@@ -6,12 +6,64 @@ import * as Option from "effect/Option";
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
 import {
   giteaBaseComparison,
+  giteaToChangeRequest,
   giteaProviderFailure,
   giteaViewerPermissions,
   make as makeGiteaPullRequestProvider,
 } from "./GiteaPullRequestProvider.ts";
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
-import { GiteaPullRequestApiError } from "./GiteaPullRequestApi.ts";
+import { GiteaPullRequestApiError, type GiteaPullRequest } from "./GiteaPullRequestApi.ts";
+
+const trackedPullRequest: GiteaPullRequest = {
+  number: 7,
+  title: "Tracking summary",
+  body: "",
+  url: "https://forge.example.test/acme/web/pulls/7",
+  author: null,
+  headBranch: "feature",
+  relationshipHeadBranch: "feature",
+  headBranchAvailable: true,
+  headRepositoryId: 1,
+  headSha: "head-sha",
+  headRepositoryNameWithOwner: "acme/web",
+  baseBranch: "main",
+  baseRepositoryNameWithOwner: "acme/web",
+  baseRepositoryId: 1,
+  baseSha: "base-sha",
+  mergeBaseSha: "base-sha",
+  state: "open",
+  isDraft: false,
+  mergeability: "mergeable",
+  additions: 1,
+  deletions: 1,
+  changedFiles: 1,
+  createdAt: "2026-09-04T00:00:00.000Z",
+  updatedAt: "2026-09-04T00:00:00.000Z",
+  mergedAt: null,
+  closedAt: null,
+  reviewRequestLogins: [],
+  reviewRequestTeamIDs: [],
+  reviewRequestTeamNames: [],
+  reviewers: [],
+  labels: [],
+  commentCount: 0,
+  reviewDecision: "approved",
+  checksState: "failing",
+};
+
+it("maps Gitea tracking summaries into the neutral change request", () => {
+  expect(giteaToChangeRequest(trackedPullRequest)).toMatchObject({
+    reviewDecision: "approved",
+    checksState: "failing",
+  });
+  expect(
+    giteaToChangeRequest({
+      ...trackedPullRequest,
+      reviewDecision: null,
+      checksState: null,
+    }),
+  ).toMatchObject({ reviewDecision: null, checksState: null });
+});
 
 function response(value: unknown) {
   return { body: JSON.stringify(value), truncated: false, headers: {} };
@@ -51,6 +103,7 @@ describe("GiteaPullRequestProvider", () => {
           case "/settings/api":
             return Effect.succeed(response({ features: [] }));
           case "/repos/acme/web/pulls/7":
+          case "/repos/acme/web/pulls/7?include_tracking=true":
             return Effect.succeed(response(rawPullRequest()));
           case "/repos/acme/web":
             return Effect.succeed(response({ permissions: { push: true } }));
@@ -290,5 +343,21 @@ describe("giteaProviderFailure", () => {
         }),
       ),
     ).toEqual({ reason: "rate-limited", retryAt: 1234 });
+  });
+});
+
+describe("native revert permission", () => {
+  it("requires write access and the advertised native endpoint", () => {
+    const input = { canWrite: true, ownsPullRequest: false, updateMethods: [] as const };
+    expect(giteaViewerPermissions(input).actions).not.toContain("revert");
+    expect(giteaViewerPermissions({ ...input, revertSupported: true }).actions).toContain("revert");
+    expect(
+      giteaViewerPermissions({
+        ...input,
+        canWrite: false,
+        ownsPullRequest: true,
+        revertSupported: true,
+      }).actions,
+    ).not.toContain("revert");
   });
 });

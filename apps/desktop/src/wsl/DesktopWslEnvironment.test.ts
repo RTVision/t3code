@@ -26,6 +26,7 @@ import {
   parseToolchainReport,
   parseWslRuntimeRoot,
   probeWslDistros,
+  resolveWslRunningUser,
   sanitizeWslRuntimeId,
 } from "./DesktopWslEnvironment.ts";
 
@@ -101,6 +102,32 @@ const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exit
       }),
     ),
   );
+
+describe("WSL account resolution", () => {
+  it.effect("uses a non-login shell and rejects malformed or failed identity output", () =>
+    Effect.gen(function* () {
+      for (const [stdout, exitCode, expected] of [
+        ["alice\n", 0, "alice"],
+        ["runningUser:root\nalice\n", 0, null],
+        ["alice\n", 1, null],
+        ["", 0, null],
+      ] as const) {
+        const delegate = makeDistroListSpawner({ stdout, exitCode });
+        const spawner = ChildProcessSpawner.make((command) => {
+          expect(command._tag).toBe("StandardCommand");
+          if (command._tag === "StandardCommand") {
+            expect(command.args).toEqual(["-d", "Debian", "--exec", "sh", "-s"]);
+          }
+          return delegate.spawn(command);
+        });
+        const user = yield* resolveWslRunningUser("Debian").pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        expect(user).toBe(expected);
+      }
+    }),
+  );
+});
 
 describe("probeWslDistros", () => {
   it.effect("preserves a successful empty distro list", () =>

@@ -12,7 +12,8 @@ export function editorLabelForPlatform(editorId: EditorId, platform: string): st
   return editorLabels.get(editorId) ?? "Editor";
 }
 
-export function openInEditorMenuLabel(editorId: EditorId | null): string {
+export function openInEditorMenuLabel(editorId: EditorId | "neovim" | null): string {
+  if (editorId === "neovim") return "Open in Neovim (Terminal)";
   return editorId === null || editorId === "file-manager"
     ? "Open in editor"
     : `Open in ${editorLabels.get(editorId) ?? "Editor"}`;
