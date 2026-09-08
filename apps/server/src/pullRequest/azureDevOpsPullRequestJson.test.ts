@@ -26,6 +26,8 @@ function pullRequest(overrides: Record<string, unknown> = {}): Record<string, un
     creationDate: "2026-07-01T00:00:00Z",
     url: REST_URL,
     repository: { name: "web", project: { name: "platform" } },
+    // Azure's explicit null fork marker proves this source branch is in the target repository.
+    forkSource: null,
     ...overrides,
   };
 }
@@ -50,6 +52,7 @@ describe("decodePullRequestListJson", () => {
       author: { login: "bilal@acme.dev", name: "Bilal Hassan" },
       // Azure prefixes its refs, which no other host does.
       headBranch: "feat/page",
+      headRepositoryNameWithOwner: "platform/web",
       baseBranch: "main",
       state: "open",
       isDraft: false,
@@ -142,6 +145,30 @@ describe("decodePullRequestJson", () => {
     expect(detail?.reviewers).toEqual([
       { login: "julius@acme.dev", name: "Julius", avatarUrl: null },
     ]);
+  });
+
+  it("uses Azure's fork source identity and leaves deleted sources unknown", () => {
+    const fork = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            forkSource: {
+              repository: { name: "web", project: { name: "contributor" } },
+            },
+          }),
+        ),
+      ),
+    );
+    expect(fork).toMatchObject({
+      headRepositoryNameWithOwner: "contributor/web",
+      isCrossRepository: true,
+    });
+
+    const deleted = expectSuccess(
+      decodePullRequestJson(asJson(pullRequest({ forkSource: { repository: null } }))),
+    );
+    expect(deleted?.headRepositoryNameWithOwner).toBeNull();
+    expect(deleted?.isCrossRepository).toBeUndefined();
   });
 
   it("reads auto-complete from whoever armed it, and its absence as nobody", () => {
