@@ -5,6 +5,7 @@ import {
   filterPullRequestsByInvolvement,
   findScopedProject,
   mergePullRequestLists,
+  mergePullRequestListErrors,
   pullRequestEntryKey,
   pullRequestEnvironmentSetKey,
   groupPullRequestsByInvolvement,
@@ -947,6 +948,32 @@ describe("the list snapshot across a reload", () => {
     expect(snapshot?.data.nextCursors).toEqual({});
   });
 
+  it("retains partial coverage while hydrating the rows that were read", () => {
+    const storage = makeStorage();
+    const warning = {
+      projectId: "project-1" as ProjectId,
+      environmentId: "env-1" as EnvironmentId,
+      projectTitle: "Web",
+      message: "Team review requests may be missing.",
+      partial: true,
+    };
+    writePullRequestListSnapshot(storage, "env-1", {
+      scope: "s",
+      data: {
+        entries: [entry({ number: 1 })],
+        viewers: {},
+        providers: [],
+        errors: [warning],
+        truncated: false,
+        truncatedEnvironments: [],
+        nextCursors: {},
+      },
+    });
+    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
+    expect(snapshot?.data.errors).toEqual([warning]);
+  });
+
   it("answers nothing for another environment", () => {
     const storage = makeStorage();
     writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
@@ -1143,6 +1170,58 @@ describe("merging the environments' own listings", () => {
     ]);
 
     expect(merged?.errors).toEqual([{ ...error, environmentId: ENV_1 }]);
+  });
+
+  it("keeps exhausted repositories' coverage while another environment continues and after reload", () => {
+    const warning = {
+      projectId: "project-1" as ProjectId,
+      projectTitle: "Web",
+      message: "Team review requests may be missing.",
+      partial: true,
+    };
+    const failure = {
+      projectId: "project-2" as ProjectId,
+      projectTitle: "Unavailable",
+      message: "Repository could not be read.",
+    };
+    const baseline = mergePullRequestLists([
+      [ENV_1, answer({ entries: [entry({ number: 1 })], errors: [warning, failure] })],
+      [
+        ENV_2,
+        answer({
+          entries: [entry({ number: 2 })],
+          truncated: true,
+          nextCursors: { "github.com/acme/web": "next" },
+        }),
+      ],
+    ])!;
+    const continuation = mergePullRequestLists([
+      [ENV_2, answer({ entries: [entry({ number: 3 })] })],
+    ])!;
+    const errors = mergePullRequestListErrors(
+      baseline.errors,
+      continuation.errors,
+      baseline.errors,
+    );
+    expect(errors).toEqual([
+      { ...warning, environmentId: ENV_1 },
+      { ...failure, environmentId: ENV_1 },
+    ]);
+
+    let stored: string | null = null;
+    const storage = {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => {
+        stored = value;
+      },
+    };
+    writePullRequestListSnapshot(storage, "both", {
+      scope: "reviewing",
+      data: { ...baseline, entries: [...baseline.entries, ...continuation.entries], errors },
+    });
+    const snapshot = readPullRequestListSnapshot(storage, "both");
+    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1, 2, 3]);
+    expect(snapshot?.data.errors).toEqual([{ ...warning, environmentId: ENV_1 }]);
   });
 
   it("folds a host reached from two environments into one switcher row", () => {

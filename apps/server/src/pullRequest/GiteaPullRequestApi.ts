@@ -520,6 +520,7 @@ export class GiteaPullRequestApi extends Context.Service<
         items: ReadonlyArray<GiteaPullRequest>;
         truncated: boolean;
         consumed: number;
+        coverageWarning?: string;
       },
       GiteaPullRequestApiError
     >;
@@ -910,8 +911,16 @@ export const make = Effect.gen(function* () {
       let rowsSkipped = 0;
       let consumed = 0;
       const collected: Array<GiteaPullRequest> = [];
-      const viewerTeamIDs =
-        input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
+      const viewerTeams =
+        input.involvement === "reviewing"
+          ? yield* getViewerTeams
+          : { ids: new Set<number>(), available: true };
+      const coverage = viewerTeams.available
+        ? {}
+        : {
+            coverageWarning:
+              "Some team review requests may be missing because Gitea team membership could not be read.",
+          };
 
       while (page <= MAX_PAGINATION_PAGES) {
         const result = yield* readUnknownPage({
@@ -956,16 +965,22 @@ export const make = Effect.gen(function* () {
               input.state,
               input.involvement,
               input.viewer,
-              viewerTeamIDs,
+              viewerTeams.ids,
             )
           )
             continue;
           collected.push(pullRequest);
           if (collected.length === wanted) {
-            // A raw-row offset can safely continue even when this is the last allowed page; a
-            // search that cannot fill its requested slice reaches the bounded failure below.
+            if (page === MAX_PAGINATION_PAGES && next !== null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listPullRequests",
+                reason: "failed",
+                detail: "Gitea pull request pagination exceeded the safe page limit.",
+              });
+            }
             return {
               items: collected,
+              ...coverage,
               truncated: index < pageRows.length - 1 || next !== null,
               consumed,
             };
@@ -984,6 +999,7 @@ export const make = Effect.gen(function* () {
       }
       return {
         items: collected,
+        ...coverage,
         truncated: false,
         consumed,
       };
@@ -1012,7 +1028,7 @@ export const make = Effect.gen(function* () {
     "1 minute",
   );
 
-  const getViewerTeamIDs = yield* Effect.cachedWithTTL(
+  const getViewerTeams = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       Effect.gen(function* () {
         const teamIDs = new Set<number>();
@@ -1032,7 +1048,7 @@ export const make = Effect.gen(function* () {
             rowsSeen,
             headers: response.headers,
           });
-          if (next === null) return teamIDs;
+          if (next === null) return { ids: teamIDs, available: true };
           path = next;
         }
         return yield* new GiteaPullRequestApiError({
@@ -1041,6 +1057,10 @@ export const make = Effect.gen(function* () {
           detail: "Gitea viewer team pagination exceeded the safe page limit.",
         });
       }),
+    ).pipe(
+      // Public-only tokens can read pull requests while Gitea rejects their team lookup.
+      // Team membership enriches individual review requests and must not hide those matches.
+      Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
     ),
     "1 minute",
   );
@@ -1051,8 +1071,8 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     limit: number;
-    requirePaginationEvidence?: boolean;
     nullAsEmpty?: boolean;
+    requirePaginationEvidence?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -1128,8 +1148,16 @@ export const make = Effect.gen(function* () {
     const repositoryIdsByName = new Map<string, number>();
     const expectedRepository = input.repository.trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
-    const viewerTeamIDs =
-      input.involvement === "reviewing" ? yield* getViewerTeamIDs : new Set<number>();
+    const viewerTeams =
+      input.involvement === "reviewing"
+        ? yield* getViewerTeams
+        : { ids: new Set<number>(), available: true };
+    const coverage = viewerTeams.available
+      ? {}
+      : {
+          coverageWarning:
+            "Some team review requests may be missing because Gitea team membership could not be read.",
+        };
     const maxPages = relationshipOnly ? DEPENDENCY_PAGINATION_PAGES : MAX_PAGINATION_PAGES;
     let pagesRead = 0;
     let prefetchedPage: UnknownPage | null = null;
@@ -1225,7 +1253,9 @@ export const make = Effect.gen(function* () {
             else if (observed !== id) relationshipEvidenceIncomplete = true;
           }
         }
-        if (!matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeamIDs)) {
+        if (
+          !matchesPullRequest(pr, input.state, input.involvement, input.viewer, viewerTeams.ids)
+        ) {
           relationshipEvidenceIncomplete = relationshipOnly || relationshipEvidenceIncomplete;
           continue;
         }
@@ -1240,6 +1270,7 @@ export const make = Effect.gen(function* () {
           }
           return {
             items: collected,
+            ...coverage,
             truncated:
               relationshipEvidenceIncomplete || index < pageRows.length - 1 || next !== null,
             consumed,
@@ -1259,6 +1290,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       items: collected,
+      ...coverage,
       truncated: relationshipOnly && (relationshipEvidenceIncomplete || next !== null),
       consumed,
     };
@@ -1781,31 +1813,30 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownSlice({
-            operation: "listConversationReactions",
-            host: input.host,
-            repository: input.repository,
-            path:
-              entry.target.kind === "pull-request"
-                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
-                    page: 1,
-                    limit: PAGE_SIZE,
-                  })
-                : entry.target.kind === "review"
-                  ? query(
-                      `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`,
-                      { page: 1, limit: PAGE_SIZE },
-                    )
-                  : query(
-                      `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
-                      {
-                        page: 1,
-                        limit: PAGE_SIZE,
-                      },
-                    ),
-            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
-            nullAsEmpty: true,
-          }).pipe(
+          (entry.target.kind === "comment"
+            ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
+              readUnknownPage({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                nullAsEmpty: true,
+              }).pipe(Effect.map(({ rows }) => ({ rows, truncated: false })))
+            : readUnknownSlice({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: query(
+                  entry.target.kind === "review"
+                    ? `${basePath(input.repository)}/pulls/${input.number}/reviews/${entry.target.id}/reactions`
+                    : `${basePath(input.repository)}/issues/${input.number}/reactions`,
+                  { page: 1, limit: PAGE_SIZE },
+                ),
+                limit: PAGE_SIZE * CONVERSATION_PAGES,
+                requirePaginationEvidence: true,
+                nullAsEmpty: true,
+              })
+          ).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
               reactions: result.truncated
@@ -2129,11 +2160,12 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
-          readUnknownArray({
+          readUnknownPage({
             operation: "listTeamReviewerCandidates",
             ...input,
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
+            Effect.map((page) => page.rows),
             Effect.catch((error) =>
               isGiteaApiError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
