@@ -125,6 +125,52 @@ describe("pull request dependency topology", () => {
     expect(result.coverage).toBe("complete");
   });
 
+  it.each(["contoso/Project/_git/web", "v3/contoso/Project/web", "Project/_git/web"])(
+    "qualifies an Azure CLI selector with its stored project path %s",
+    (repositoryPath) => {
+      const result = buildPullRequestDependencyContext({
+        projectId,
+        provider: "azure-devops",
+        host: "dev.azure.com",
+        repository: "web",
+        repositoryPath,
+        focus: 2,
+        rows: [
+          row(1, "parent", "main", "PROJECT/Web"),
+          row(2, "child", "parent", "Project/web"),
+          row(3, "parent", "main", "OtherProject/web"),
+          row(4, "parent", "main", "Project/fork"),
+        ],
+        complete: true,
+      });
+
+      expect(result.edges).toEqual([{ child: 2, parent: 1, certainty: "confirmed" }]);
+      expect(result.nodes.map((node) => node.ref.number)).toEqual([1, 2]);
+      expect(result.focus.repository).toBe("web");
+      expect(result.coverage).toBe("complete");
+    },
+  );
+
+  it.each([null, "web", "contoso/Project/_git/other"])(
+    "does not infer Azure project scope from rows when the stored path is %s",
+    (repositoryPath) => {
+      const result = buildPullRequestDependencyContext({
+        projectId,
+        provider: "azure-devops",
+        host: "dev.azure.com",
+        repository: "web",
+        repositoryPath,
+        focus: 2,
+        rows: [row(1, "parent", "main", "Other/web"), row(2, "child", "parent", "Other/web")],
+        complete: true,
+      });
+
+      expect(result.edges).toEqual([]);
+      expect(result.coverage).toBe("partial");
+      expect(result.issues).toContainEqual({ reason: "identity-unknown" });
+    },
+  );
+
   it("never confirms an unknown repository identity and ignores a known fork", () => {
     const result = context([
       row(1, "migration", "main", null),
