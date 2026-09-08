@@ -1347,26 +1347,28 @@ export const make = Effect.gen(function* () {
       }
       const reactions = yield* Effect.all(
         targets.map((entry) =>
-          readUnknownSlice({
-            operation: "listConversationReactions",
-            host: input.host,
-            repository: input.repository,
-            path:
-              entry.target.kind === "pull-request"
-                ? query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
-                    page: 1,
-                    limit: PAGE_SIZE,
-                  })
-                : query(
-                    `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
-                    {
-                      page: 1,
-                      limit: PAGE_SIZE,
-                    },
-                  ),
-            limit: PAGE_SIZE * MAX_PAGINATION_PAGES,
-            nullAsEmpty: true,
-          }).pipe(
+          (entry.target.kind === "comment"
+            ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
+              readUnknownPage({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: `${basePath(input.repository)}/issues/comments/${entry.target.id}/reactions`,
+                nullAsEmpty: true,
+              }).pipe(Effect.map(({ rows }) => ({ rows, truncated: false })))
+            : readUnknownSlice({
+                operation: "listConversationReactions",
+                host: input.host,
+                repository: input.repository,
+                path: query(`${basePath(input.repository)}/issues/${input.number}/reactions`, {
+                  page: 1,
+                  limit: PAGE_SIZE,
+                }),
+                limit: PAGE_SIZE * CONVERSATION_PAGES,
+                requirePaginationEvidence: true,
+                nullAsEmpty: true,
+              })
+          ).pipe(
             Effect.map((result) => ({
               subjectId: entry.subjectId,
               reactions: result.truncated

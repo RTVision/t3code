@@ -1225,8 +1225,8 @@ layer("GiteaPullRequestApi", (it) => {
       expect(reactions.bySubjectId.has("review:21")).toBe(false);
       expect(mockedRequest.mock.calls.map((call) => call[0].path)).toEqual([
         "/repos/acme/web/issues/7/reactions?page=1&limit=50",
-        "/repos/acme/web/issues/comments/12/reactions?page=1&limit=50",
-        "/repos/acme/web/issues/comments/34/reactions?page=1&limit=50",
+        "/repos/acme/web/issues/comments/12/reactions",
+        "/repos/acme/web/issues/comments/34/reactions",
       ]);
     }),
   );
@@ -1280,6 +1280,72 @@ layer("GiteaPullRequestApi", (it) => {
         { content: "eyes", count: 1, actors: ["two"], viewerHasReacted: false },
       ]);
     }),
+  );
+
+  it.effect.each([50, 200, 201])(
+    "retains all %i native comment reactions with one unpaginated read",
+    (count) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((input) => {
+          if (input.path.startsWith("/repos/acme/web/issues/7/reactions?"))
+            return Effect.succeed(response([]));
+          if (input.path === "/repos/acme/web/issues/comments/12/reactions")
+            return Effect.succeed(
+              response(
+                Array.from({ length: count }, (_, index) => ({
+                  content: "+1",
+                  user: { login: `reader-${index}` },
+                })),
+              ),
+            );
+          return Effect.die(`unexpected request: ${input.path}`);
+        });
+        const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+        const reactions = yield* api.listConversationReactions({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          viewer: "reader-0",
+          subjectIds: ["issue:12"],
+        });
+
+        expect(reactions.bySubjectId.get("issue:12")).toEqual([
+          expect.objectContaining({ content: "thumbs-up", count, viewerHasReacted: true }),
+        ]);
+        expect(mockedRequest).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "bounds paginated issue reactions with pagination evidence: %s",
+    (hasEvidence) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((input) => {
+          const page = Number(
+            new URL(input.path, "https://forge.example.test").searchParams.get("page"),
+          );
+          return Effect.succeed(
+            response(
+              Array.from({ length: 50 }, (_, index) => ({
+                content: "+1",
+                user: { login: `reader-${page}-${index}` },
+              })),
+              hasEvidence ? { "x-total-count": "201" } : {},
+            ),
+          );
+        });
+        const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+        const reactions = yield* api.listConversationReactions({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          viewer: "reader",
+          subjectIds: [],
+        });
+
+        expect(reactions.pullRequest).toEqual([]);
+        expect(mockedRequest).toHaveBeenCalledTimes(hasEvidence ? 4 : 1);
+      }),
   );
 
   it.effect("reports Gitea's missing review-summary reaction route without issuing a request", () =>
