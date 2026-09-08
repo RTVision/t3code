@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./releasePackage": {
+      "types": "./src/releasePackage.ts",
+      "import": "./src/releasePackage.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

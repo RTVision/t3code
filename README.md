@@ -27,12 +27,12 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 The easiest way to test T3 Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
 
 ```bash
-npx t3@latest
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest
 ```
 
 This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
 
-Tip: Use `npx t3@latest --help` for the full CLI reference.
+Tip: Use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest --help` for the full CLI reference.
 
 ### Desktop app
 

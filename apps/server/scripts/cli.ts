@@ -19,6 +19,7 @@ import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import serverPackageJson from "../package.json" with { type: "json" };
 import {
   ServerCliBuildAssetMissingError,
@@ -31,6 +32,8 @@ import {
 
 interface PackageJson {
   name: string;
+  license: string;
+  publishConfig: { registry: string };
   repository: {
     type: string;
     url: string;
@@ -190,7 +193,7 @@ const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<stri
   const args = [
     "publish",
     "--filter",
-    "t3",
+    "./apps/server",
     "--access",
     config.access,
     "--tag",
@@ -213,6 +216,10 @@ const publishCmd = Command.make(
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    packDestination: Flag.string("pack-destination").pipe(
+      Flag.withDescription("Write a release tarball to this directory instead of publishing."),
+      Flag.optional,
+    ),
   },
   (config) =>
     Effect.gen(function* () {
@@ -242,8 +249,13 @@ const publishCmd = Command.make(
           const workspaceCatalog = workspaceConfig.catalog ?? {};
           const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
+            name: T3_NPM_PACKAGE,
+            license: serverPackageJson.license,
+            publishConfig: { registry: T3_NPM_REGISTRY },
+            repository: {
+              ...serverPackageJson.repository,
+              url: "https://github.com/RTVision/t3code",
+            },
             bin: serverPackageJson.bin,
             type: serverPackageJson.type,
             version,
@@ -277,7 +289,15 @@ const publishCmd = Command.make(
             }
             yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
-            const args = createVpPmPublishArgs(config);
+            const args = Option.isSome(config.packDestination)
+              ? [
+                  "pack",
+                  "--filter",
+                  "./apps/server",
+                  "--pack-destination",
+                  path.resolve(repoRoot, config.packDestination.value),
+                ]
+              : createVpPmPublishArgs(config);
             const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
 
             yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);

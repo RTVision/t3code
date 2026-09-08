@@ -1,0 +1,220 @@
+name: RTVision release
+
+on:
+  push:
+    branches: [rtvision]
+    paths:
+      - apps/server/package.json
+      - .github/workflows/rtvision-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rtvision-release
+  cancel-in-progress: false
+
+env:
+  T3CODE_DESKTOP_UPDATE_REPOSITORY: RTVision/t3code
+
+jobs:
+  prepare:
+    if: github.repository == 'RTVision/t3code' && github.ref == 'refs/heads/rtvision'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        run: |
+          node -e 'const fs = require("fs"); const { version } = require("./apps/server/package.json"); if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error("RTVision releases require a stable version"); fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);'
+      - name: Refuse to replace an existing release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          existing=$(git ls-remote origin "refs/tags/v$VERSION")
+          if [ -n "$existing" ]; then
+            echo "v$VERSION already exists. Bump the release version before building."
+            exit 1
+          fi
+
+  wsl-pty:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --frozen-lockfile
+              - --filter=t3...
+      - name: Build the Linux terminal binary for Windows WSL
+        run: |
+          pty_dir=$(node -e 'console.log(require("path").dirname(require.resolve("node-pty/package.json", { paths: ["./apps/server"] })))')
+          (cd "$pty_dir" && npx --yes node-gyp rebuild)
+          mkdir -p wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rtvision-wsl-pty
+          path: wsl-prebuild/pty.node
+          if-no-files-found: error
+
+  desktop:
+    needs: [prepare, wsl-pty]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            target: AppImage
+            rust: x86_64-unknown-linux-gnu
+            resource: linux-x64
+          - runner: windows-2025
+            platform: win
+            arch: x64
+            target: nsis
+            rust: x86_64-pc-windows-msvc
+            resource: win32-x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: false
+      - name: Install dependencies
+        run: vp install --frozen-lockfile --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust }}
+      - name: Install Linux build libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+      - name: Install Windows Spectre-mitigated MSVC libraries
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setup = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setup -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -notin @(0, 3010)) { throw "Visual Studio Installer failed: $($proc.ExitCode)" }
+      - uses: actions/download-artifact@v8
+        if: matrix.platform == 'win'
+        with:
+          name: rtvision-wsl-pty
+          path: wsl-prebuild
+      - name: Build desktop installer
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          args=(--platform "$PLATFORM" --target "$TARGET" --arch "$ARCH" --build-version "$VERSION" --verbose)
+          if [ "$PLATFORM" = win ]; then
+            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+          fi
+          vp run dist:desktop:artifact "${args[@]}"
+      - name: Collect installers and updater metadata
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          RUST_TARGET: ${{ matrix.rust }}
+        run: |
+          mkdir -p release-publish resource-monitor
+          shopt -s nullglob
+          for file in release/*.dmg release/*.zip release/*.AppImage release/*.exe release/*.blockmap release/*.yml; do
+            cp "$file" release-publish/
+          done
+          binary=t3-resource-monitor
+          if [ "$PLATFORM" = win ]; then binary=$binary.exe; fi
+          cp "native/resource-monitor/target/$RUST_TARGET/release/$binary" resource-monitor/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rtvision-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rtvision-resource-${{ matrix.resource }}
+          path: resource-monitor/*
+          if-no-files-found: error
+
+  cli:
+    needs: [prepare, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --frozen-lockfile
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+      - run: vp run --filter t3 build
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rtvision-resource-*
+          path: resource-monitors
+      - name: Pack CLI with resource monitors
+        run: |
+          for directory in resource-monitors/rtvision-resource-*; do
+            key=${directory##*/rtvision-resource-}
+            mkdir -p "apps/server/dist/resource-monitor/$key"
+            cp "$directory"/* "apps/server/dist/resource-monitor/$key/"
+            chmod +x "apps/server/dist/resource-monitor/$key/"* || true
+          done
+          mkdir -p release-cli
+          node apps/server/scripts/cli.ts publish --pack-destination release-cli --verbose
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rtvision-cli
+          path: release-cli/*.tgz
+          if-no-files-found: error
+
+  draft:
+    needs: [prepare, desktop, cli]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rtvision-desktop-*
+          merge-multiple: true
+          path: release-assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: rtvision-cli
+          path: release-assets
+      - name: Create draft for local npm publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          (cd release-assets && sha256sum * > SHA256SUMS)
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          RTVision T3 Code uses `@rtvision/t3` from `https://npm-registry.rtvision.com/` and desktop updates from this repository.
+
+          Desktop installers are unsigned. Install only on machines that can reach RTVision's npm registry when using server installation or update features.
+
+          Maintainers: publish the attached npm tarball to RTVision's registry, verify its version and integrity, then publish this draft. See `docs/operations/rtvision-release.md`.
+          NOTES
+          gh release create "v$VERSION" release-assets/* --target "$GITHUB_SHA" --title "RTVision T3 Code $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --draft

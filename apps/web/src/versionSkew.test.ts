@@ -14,6 +14,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
+  manualServerUpdateCommand,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -25,6 +26,11 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
+  it("copies an exact-version command for the RTVision registry", () => {
+    expect(manualServerUpdateCommand("0.0.41")).toBe(
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.41",
+    );
+  });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
   });

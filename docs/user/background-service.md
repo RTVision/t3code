@@ -7,17 +7,17 @@ to keep a terminal open.
 
 Run these commands on the machine that will host T3 Code:
 
-| Task                            | Command                           |
-| ------------------------------- | --------------------------------- |
-| Install and start               | `npx t3@latest service install`   |
-| Inspect status and log location | `npx t3@latest service status`    |
-| Update or repair                | `npx t3@latest service update`    |
-| Stop and remove from startup    | `npx t3@latest service uninstall` |
+| Task                            | Command                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| Install and start               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service install`   |
+| Inspect status and log location | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service status`    |
+| Update or repair                | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
+| Stop and remove from startup    | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
 
 Install and update use the version of the CLI you invoke. For nightly, use
-`npx t3@nightly service update`; replace `nightly` with an exact version to pin
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@nightly service update`; replace `nightly` with an exact version to pin
 one. An older CLI refuses to replace a newer service unless you explicitly add
 `--allow-downgrade`.
 

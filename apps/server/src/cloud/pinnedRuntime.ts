@@ -6,11 +6,12 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
- * A pinned runtime is an exact `t3@<version>` npm-installed into
+ * A pinned runtime is an exact `@rtvision/t3@<version>` npm-installed into
  * <baseDir>/runtime/versions/<version>. The boot service points its unit or
  * launch agent here, and server self-update installs the target version here before
  * switching over, never `npx t3`, whose cache is ephemeral and whose
@@ -22,6 +23,15 @@ const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
 // Boot-service setup and remote update can construct separate layers. Serialize
 // the complete install transaction across every caller in this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
+
+const decodeRuntimePackage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ name: Schema.Literal(T3_NPM_PACKAGE) })),
+);
+
+export const isForkRuntime = (fs: FileSystem.FileSystem, path: Path.Path, entryPath: string) =>
+  fs
+    .readFileString(path.join(path.dirname(entryPath), "..", "package.json"))
+    .pipe(Effect.flatMap(decodeRuntimePackage), Effect.isSuccess);
 
 export interface PinnedRuntimePaths {
   readonly versionDir: string;
@@ -72,7 +82,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
 }
 
 /**
- * Installs `t3@<version>` into the pinned runtime directory unless a complete
+ * Installs `@rtvision/t3@<version>` into the pinned runtime directory unless a complete
  * install is already there, and returns its paths. The sentinel is written
  * only after npm exits 0; checking the entry file alone is not enough. npm
  * extracts files before running native builds (node-pty), so a killed
@@ -94,17 +104,21 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 ) {
   const { fs, runner } = input;
   const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
-  const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
+  const [versionDirExists, entryExists, sentinel, forkRuntime] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),
     fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+    isForkRuntime(fs, input.path, paths.entryPath),
   ]).pipe(
     Effect.mapError(
       (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
     ),
   );
   const alreadyPinned =
-    entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
+    entryExists &&
+    forkRuntime &&
+    Option.isSome(sentinel) &&
+    sentinel.value.trim() === input.version;
   if (alreadyPinned) {
     yield* input.validate(paths);
     return paths;
@@ -159,7 +173,10 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       stagingDir,
       "--no-fund",
       "--no-audit",
-      `t3@${input.version}`,
+      "--registry",
+      T3_NPM_REGISTRY,
+      // Keep the alias path used by existing service launchers and rollback runtimes.
+      `t3@npm:${T3_NPM_PACKAGE}@${input.version}`,
     ];
     yield* runner
       .run({
@@ -210,6 +227,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         Effect.all([
           fs.exists(paths.entryPath),
           fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+          isForkRuntime(fs, input.path, paths.entryPath),
         ]).pipe(
           Effect.mapError(
             (checkCause) =>
@@ -218,8 +236,9 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
                 cause: checkCause,
               }),
           ),
-          Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
+          Effect.flatMap(([publishedEntryExists, publishedSentinel, publishedForkRuntime]) =>
             publishedEntryExists &&
+            publishedForkRuntime &&
             Option.isSome(publishedSentinel) &&
             publishedSentinel.value.trim() === input.version
               ? Effect.succeed(false)

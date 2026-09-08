@@ -18,6 +18,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
+  isForkRuntime,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
@@ -833,13 +834,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
+    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText, forkRuntime] =
       yield* Effect.all([
         fs.readFileString(unitPath),
         fs.exists(launcherPath),
         fs.exists(runtimePaths.entryPath),
         fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
         fs.readFileString(statePath).pipe(Effect.option),
+        isForkRuntime(fs, path, runtimePaths.entryPath),
       ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
@@ -860,6 +862,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
         launcherExists &&
         runtimeEntryExists &&
+        forkRuntime &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&

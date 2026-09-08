@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 
@@ -43,7 +44,7 @@ function detectCliRunner(entryPath: string): CliRunner | null {
  * anything else suggests the bare package.
  */
 function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? "t3@nightly" : "t3";
+  return version.includes("-nightly.") ? `${T3_NPM_PACKAGE}@nightly` : T3_NPM_PACKAGE;
 }
 
 /**
@@ -61,7 +62,8 @@ export function formatCliCommand(input: {
   if (runner === null) {
     return `t3 ${input.subcommand}`;
   }
-  return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
+  // bunx has no registry flag; npx keeps these commands on the fork's registry.
+  return `${runner === "bunx" ? "npx" : runner} --registry=${T3_NPM_REGISTRY} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }
 
 /** `formatCliCommand` against this process's real entry path and version. */

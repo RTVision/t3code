@@ -120,6 +120,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "export {};\n");
   yield* fs.writeFileString(
+    path.join(path.dirname(runtime.entryPath), "..", "package.json"),
+    '{"name":"@rtvision/t3"}\n',
+  );
+  yield* fs.writeFileString(
     path.join(path.dirname(runtime.entryPath), "service-launcher.mjs"),
     "export const source = 'pinned runtime';\n",
   );

@@ -14,11 +14,11 @@ launch T3 Code and configure providers afterwards.
 ## Run without installing
 
 ```bash
-npx t3@latest
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest
 ```
 
 This starts the server and opens the local web app. Run
-`npx t3@latest --help` for command-line options.
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest --help` for command-line options.
 
 ## Desktop app
 
@@ -44,11 +44,11 @@ update can take longer.
 With the desktop app already running on the same machine:
 
 ```bash
-npx t3 app
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `npx t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 

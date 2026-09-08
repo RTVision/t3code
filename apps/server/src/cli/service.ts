@@ -82,7 +82,7 @@ export function formatServiceStatus(
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
       ...problems,
-      `  Next: Use \`npx t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
+      `  Next: Use \`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -91,7 +91,11 @@ export function formatServiceStatus(
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...problems,
-    ...(status.current ? [] : [`  Next: Run \`npx t3@${cliVersion} service update\`.`]),
+    ...(status.current
+      ? []
+      : [
+          `  Next: Run \`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@${cliVersion} service update\`.`,
+        ]),
   ].join("\n");
 }
 
@@ -135,7 +139,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
 
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
+    "Update or repair the background service using this CLI version. Use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update` for the latest release.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(

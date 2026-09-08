@@ -19,12 +19,23 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
+        assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
+        assert.equal(
+          input.args[input.args.indexOf("--registry") + 1],
+          "https://npm-registry.rtvision.com/",
+        );
         const prefixIndex = input.args.indexOf("--prefix");
         const stagingDir = input.args[prefixIndex + 1];
         if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
         const entry = path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs");
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
         yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);
+        yield* fs
+          .writeFileString(
+            path.join(path.dirname(entry), "..", "package.json"),
+            '{"name":"@rtvision/t3"}\n',
+          )
+          .pipe(Effect.orDie);
         return {
           stdout: "",
           stderr: "",
@@ -204,6 +215,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const finalPaths = pinnedRuntimePaths(path, baseDir, "1.2.3");
       yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
       yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* fs.writeFileString(
+        path.join(path.dirname(finalPaths.entryPath), "..", "package.json"),
+        '{"name":"@rtvision/t3"}\n',
+      );
       yield* fs.writeFileString(finalPaths.sentinelPath, "1.2.3\n");
 
       let validations = 0;
@@ -228,6 +243,29 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("replaces an upstream runtime with the same version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-upstream-runtime-" });
+      const paths = pinnedRuntimePaths(path, baseDir, "1.2.3");
+      const manifest = path.join(path.dirname(paths.entryPath), "..", "package.json");
+      yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
+      yield* fs.writeFileString(paths.entryPath, "upstream\n");
+      yield* fs.writeFileString(paths.sentinelPath, "1.2.3\n");
+      yield* fs.writeFileString(manifest, '{"name":"t3"}\n');
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: successfulRunner(fs, path),
+        validate: () => Effect.void,
+      });
+      assert.equal(yield* fs.readFileString(manifest), '{"name":"@rtvision/t3"}\n');
+      assert.equal(yield* fs.readFileString(paths.entryPath), "export {};\n");
+    }),
+  );
   it.effect("removes staging when installation is interrupted", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
