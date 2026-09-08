@@ -823,8 +823,13 @@ export const make = Effect.gen(function* () {
             continue;
           collected.push(pullRequest);
           if (collected.length === wanted) {
-            // A raw-row offset can safely continue even when this is the last allowed page; a
-            // search that cannot fill its requested slice reaches the bounded failure below.
+            if (page === MAX_PAGINATION_PAGES && next !== null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listPullRequests",
+                reason: "failed",
+                detail: "Gitea pull request pagination exceeded the safe page limit.",
+              });
+            }
             return {
               items: collected,
               truncated: index < pageRows.length - 1 || next !== null,

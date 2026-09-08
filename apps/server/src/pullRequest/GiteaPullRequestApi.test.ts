@@ -328,7 +328,7 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("returns a page-boundary search match without requesting the page after the cap", () =>
+  it.effect("rejects a search match at the page cap when its continuation cannot advance", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation((request) => {
         if (request.path.includes("/pulls/100"))
@@ -343,15 +343,17 @@ layer("GiteaPullRequestApi", (it) => {
         );
       });
       const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
-      const page = yield* api.listPullRequests({
-        host: "forge.example.test",
-        repository: "acme/web",
-        state: "open",
-        involvement: "all",
-        viewer: "reviewer",
-        limit: 1,
-        query: "match",
-      });
+      const error = yield* api
+        .listPullRequests({
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "reviewer",
+          limit: 1,
+          query: "match",
+        })
+        .pipe(Effect.flip);
       const searchPages = mockedRequest.mock.calls
         .map(([request]) => request.path)
         .filter((path) => path.includes("/issues?"))
@@ -359,12 +361,64 @@ layer("GiteaPullRequestApi", (it) => {
           Number(new URL(path, "https://forge.example.test").searchParams.get("page")),
         );
 
-      expect(page.items.map((item) => item.number)).toEqual([100]);
-      assert.strictEqual(page.consumed, 100);
-      assert.isTrue(page.truncated);
+      expect(error.detail).toContain("safe page limit");
       expect(searchPages).toEqual(Array.from({ length: 100 }, (_, index) => index + 1));
       assert.strictEqual(mockedRequest.mock.calls.length, 101);
     }),
+  );
+
+  it.effect.each([false, true])(
+    "follows a search cursor to the final allowed page (more pages: %s)",
+    (hasMorePages) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((request) => {
+          const url = new URL(request.path, "https://forge.example.test");
+          if (url.pathname.endsWith("/pulls/99"))
+            return Effect.succeed(response(rawPullRequest(99)));
+          if (url.pathname.endsWith("/pulls/100"))
+            return Effect.succeed(response(rawPullRequest(100)));
+          const page = Number(url.searchParams.get("page"));
+          return Effect.succeed(
+            response([{ number: page >= 99 ? page : "malformed" }], {
+              "x-total-count": hasMorePages ? "101" : "100",
+            }),
+          );
+        });
+        const api = yield* GiteaPullRequestApi.GiteaPullRequestApi;
+        const input = {
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open" as const,
+          involvement: "all" as const,
+          viewer: "reviewer",
+          limit: 1,
+          query: "match",
+        };
+        const first = yield* api.listPullRequests(input);
+        expect(first.items.map((item) => item.number)).toEqual([99]);
+        expect(first.truncated).toBe(true);
+        const followUp = api.listPullRequests({
+          ...input,
+          cursor: { delivered: first.consumed, updatedBefore: "2026-09-02T10:00:00.000Z" },
+        });
+        if (hasMorePages) {
+          const error = yield* followUp.pipe(Effect.flip);
+          expect(error.detail).toContain("safe page limit");
+        } else {
+          const last = yield* followUp;
+          expect(last.items.map((item) => item.number)).toEqual([100]);
+          expect(last.consumed).toBe(1);
+          expect(last.truncated).toBe(false);
+        }
+        expect(
+          mockedRequest.mock.calls.every(
+            ([request]) =>
+              Number(
+                new URL(request.path, "https://forge.example.test").searchParams.get("page"),
+              ) <= 100,
+          ),
+        ).toBe(true);
+      }),
   );
 
   it.effect("post-filters merged state and keeps authored search case-insensitive", () =>
