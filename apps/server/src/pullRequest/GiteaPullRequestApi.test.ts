@@ -2432,6 +2432,56 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect.each([undefined, "fix"])(
+    "preserves individual reviewing matches when viewer teams are forbidden (query: %s)",
+    (query) =>
+      Effect.gen(function* () {
+        const pullRequests = [
+          rawPullRequest(7),
+          rawPullRequest(8, {
+            requested_reviewers: [],
+            requested_reviewers_teams: [{ id: 9, name: "maintainers" }],
+          }),
+        ];
+        mockedRequest.mockImplementation((input) => {
+          if (input.path.startsWith("/user/teams?"))
+            return Effect.fail(
+              new GiteaApi.GiteaApiError({
+                operation: "getViewerTeams",
+                reason: "failed",
+                detail: "Public-only tokens cannot access viewer teams.",
+                status: 403,
+              }),
+            );
+          if (input.path.startsWith("/repos/acme/web/pulls?"))
+            return Effect.succeed(response(pullRequests));
+          if (input.path.startsWith("/repos/acme/web/issues?"))
+            return Effect.succeed(response([{ number: 7 }, { number: 8 }]));
+          const pullRequest = pullRequests.find(
+            (pullRequest) => input.path === `/repos/acme/web/pulls/${pullRequest.number}`,
+          );
+          if (pullRequest !== undefined) return Effect.succeed(response(pullRequest));
+          return Effect.die(`unexpected request: ${input.path}`);
+        });
+        const api = yield* GiteaPullRequestApi.make;
+        const page = yield* api.listPullRequests({
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "reviewer",
+          limit: 10,
+          ...(query === undefined ? {} : { query }),
+        });
+
+        expect(page.items.map((pullRequest) => pullRequest.number)).toEqual([7]);
+        expect(page.consumed).toBe(2);
+        expect(
+          mockedRequest.mock.calls.filter(([input]) => input.path.startsWith("/user/teams?")),
+        ).toHaveLength(1);
+      }),
+  );
+
   it.effect("includes pull requests requested from a viewer team in reviewing listings", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation((input) => {
