@@ -141,7 +141,7 @@ function createPullRequestRefreshAtomFamily<R, E>(
     };
     return Atom.make<AsyncResult.AsyncResult<number, unknown>>((get) => {
       const result = get(events({ environmentId, input: { scoped: true } }));
-      const previous = Option.getOrUndefined(get.self());
+      const previous = Option.getOrUndefined(get.self<AsyncResult.AsyncResult<number, unknown>>());
       if (AsyncResult.isSuccess(result)) {
         const revision = refreshRevision(input, result.value);
         if (revision > 0) {

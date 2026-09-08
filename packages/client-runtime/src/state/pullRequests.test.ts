@@ -245,7 +245,7 @@ it.effect(
           }),
         );
         for (const atom of [...activityAtoms, ...listAtoms]) {
-          const unmount = registry.mount(atom);
+          const unmount = registry.mount<unknown>(atom);
           yield* Effect.addFinalizer(() => Effect.sync(unmount));
         }
         for (const atom of activityAtoms)
