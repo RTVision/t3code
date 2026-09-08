@@ -1,3 +1,4 @@
+import { VimSettingsPanel } from "../../vim/VimSettingsPanel";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -1497,6 +1498,9 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection {...searchableSetting("vim-navigation")}>
+        <VimSettingsPanel />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={

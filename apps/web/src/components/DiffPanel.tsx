@@ -1,3 +1,4 @@
+import { useVimDiff } from "../vim/useVimDiff";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
@@ -472,6 +473,8 @@ export default function DiffPanel({
     },
     [codeViewFiles, collapseScopeKey, requestTreeReveal],
   );
+
+  useVimDiff({ files: codeViewFiles, viewer: codeView, reveal: revealDiffFile });
 
   const openDiffFile = useCallback(
     (filePath: string) => {
@@ -1028,7 +1031,11 @@ export default function DiffPanel({
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                  <aside
+                    data-vim-diff-files
+                    tabIndex={-1}
+                    className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60"
+                  >
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}

@@ -330,6 +330,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project thread tree old flat list"],
   },
   {
+    id: "vim-navigation",
+    title: "Vim navigation",
+    to: "/settings/keybindings",
+    searchTerms: ["vim modal normal insert leader which-key terminal keyboard shortcuts"],
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",

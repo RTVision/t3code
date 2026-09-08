@@ -1,3 +1,5 @@
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -56,16 +58,18 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-          previewFocus: isPreviewFocused(),
-          previewOpen,
-        },
-      });
+    const onWindowKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+      if (event.defaultPrevented && !requestedCommand) return;
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen,
+            previewFocus: isPreviewFocused(),
+            previewOpen,
+          },
+        });
 
       if (isCommandPaletteOpen()) {
         return;
@@ -152,8 +156,10 @@ function ChatRouteGlobalShortcuts() {
       }
     };
 
+    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
+      unsubscribeCommand();
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [

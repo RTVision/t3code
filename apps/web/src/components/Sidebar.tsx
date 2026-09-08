@@ -1,3 +1,5 @@
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -4129,18 +4131,25 @@ export default function Sidebar() {
       : false,
   );
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
+    const onWindowKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+      if (
+        (event.defaultPrevented && !requestedCommand) ||
+        event.repeat ||
+        isCommandPaletteOpen() ||
+        isModelPickerOpen()
+      ) {
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform: navigator.platform,
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen: routeTerminalOpen,
-          modelPickerOpen: isModelPickerOpen(),
-        },
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          platform: navigator.platform,
+          context: {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen: routeTerminalOpen,
+            modelPickerOpen: isModelPickerOpen(),
+          },
+        });
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -4165,8 +4174,12 @@ export default function Sidebar() {
       if (jumpIndex === null) return;
       navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
     };
+    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
   }, [
     keybindings,
     navigateToThread,

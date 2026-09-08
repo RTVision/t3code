@@ -1,3 +1,5 @@
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
@@ -3490,17 +3492,27 @@ export default function LegacySidebar() {
   }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
   useEffect(() => {
-    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+    const onWindowKeyDown = (
+      event: globalThis.KeyboardEvent,
+      requestedCommand?: AppKeybindingCommand,
+    ) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
 
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
+      if (
+        (event.defaultPrevented && !requestedCommand) ||
+        event.repeat ||
+        isCommandPaletteOpen() ||
+        isModelPickerOpen()
+      ) {
         return;
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform,
-        context: shortcutContext,
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          platform,
+          context: shortcutContext,
+        });
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
@@ -3541,9 +3553,11 @@ export default function LegacySidebar() {
       navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
     };
 
+    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
 
     return () => {
+      unsubscribeCommand();
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [

@@ -1,5 +1,9 @@
 "use client";
 
+import { rememberVimOverlayFocus, restoreVimOverlayFocus } from "../vim/runtime";
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
+
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
@@ -416,11 +420,14 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     mode: "command",
     openIntent: null,
   });
-  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
-  const toggleMode = useCallback(
-    (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
-    [],
-  );
+  const setOpen = useCallback((open: boolean) => {
+    if (open) rememberVimOverlayFocus();
+    dispatch({ _tag: "SetOpen", open });
+  }, []);
+  const toggleMode = useCallback((mode: SearchOverlayMode) => {
+    rememberVimOverlayFocus();
+    dispatch({ _tag: "ToggleMode", mode });
+  }, []);
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
@@ -456,18 +463,23 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [state.mode, state.open, toggleMode]);
 
   useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+    const onKeyDown = (
+      event: globalThis.KeyboardEvent,
+      requestedCommand?: AppKeybindingCommand,
+    ) => {
+      if (event.defaultPrevented && !requestedCommand) return;
       // Resolve with the complete shortcut context so customized bindings
       // using any documented `when` condition (e.g. previewFocus) work.
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-          previewFocus: isPreviewFocused(),
-          previewOpen,
-        },
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen,
+            previewFocus: isPreviewFocused(),
+            previewOpen,
+          },
+        });
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -486,13 +498,18 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       event.stopPropagation();
       toggleMode(mode);
     };
+    const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
 
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
+        rememberVimOverlayFocus();
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
@@ -556,6 +573,7 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        if (restoreVimOverlayFocus()) return false;
         composerHandleRef?.current?.focusAtEnd();
         return false;
       }}

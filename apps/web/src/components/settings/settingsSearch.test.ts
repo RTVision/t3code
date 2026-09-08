@@ -185,6 +185,12 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("finds Vim navigation in keybinding settings", () => {
+    expect(searchSettings("vim navigation")[0]).toMatchObject({
+      id: "vim-navigation",
+      to: "/settings/keybindings",
+    });
+  });
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
