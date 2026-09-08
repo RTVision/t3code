@@ -291,16 +291,41 @@ it.effect(
             listed.openUnsafe();
         });
         yield* Effect.addFinalizer(() => Effect.sync(stop));
-        yield* PubSub.publish(refreshEvents, {
-          revision: 2,
-          reference,
-          projectIds: [reference.projectId, sibling.projectId],
-          listings: true,
-        });
+        const burstUpdated = [Latch.makeUnsafe(), Latch.makeUnsafe()];
+        for (const [index, atom] of [activityAtoms[0]!, activityAtoms[2]!].entries()) {
+          const stopActivity = registry.subscribe(atom, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.commentCount === 2) {
+              burstUpdated[index]!.openUnsafe();
+            }
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stopActivity));
+        }
+        revision = 2;
+        // One chunk must retain both repositories and the earlier listing invalidation even
+        // when a later reaction on that reference does not affect listings.
+        yield* PubSub.publishAll(refreshEvents, [
+          {
+            revision: 2,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: true,
+          },
+          {
+            revision: 3,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: false,
+          },
+          { revision: 4, reference: unrelated, listings: false },
+        ]);
         yield* listed.await;
+        for (const latch of burstUpdated) yield* latch.await;
         expect(listReads.get(unrelated.projectId)).toBe(beforeLists.get(unrelated.projectId));
+        expect(activityReads.get(reference.projectId)).toBe(
+          beforeActivity.get(reference.projectId)! + 2,
+        );
         expect(activityReads.get(unrelated.projectId)).toBe(
-          beforeActivity.get(unrelated.projectId),
+          beforeActivity.get(unrelated.projectId)! + 1,
         );
       }),
     ),
