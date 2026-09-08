@@ -138,7 +138,7 @@ export const make = Effect.gen(function* () {
   }) =>
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
-      workflowApprovalSupported: input.workflowApprovalSupported,
+      workflowApprovalSupported: input.workflowApprovalSupported === true,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getAutoMergeEnabled(input),
+          api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
           api
             .getWorkflowApprovals(input)
             .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
@@ -321,7 +321,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(input),
           api.getRepositoryAccess(input),
           api.getViewer(),
-          api.getFeatures().pipe(Effect.orElseSucceed(() => [])),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         {
           concurrency: 3,

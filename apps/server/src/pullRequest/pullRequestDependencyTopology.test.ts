@@ -101,6 +101,30 @@ describe("pull request dependency topology", () => {
     expect(result.edges).toEqual([{ child: 2, parent: 1, certainty: "confirmed" }]);
   });
 
+  it.each([
+    ["Acme/Web", "acme/web"],
+    ["acme/web", "Acme/Web"],
+  ])("matches Gitea repository %s against source identity %s", (repository, sourceRepository) => {
+    const result = buildPullRequestDependencyContext({
+      projectId,
+      provider: "gitea",
+      host: "gitea.example.test",
+      repository,
+      focus: 2,
+      rows: [
+        row(1, "parent", "main", sourceRepository),
+        row(2, "child", "parent", sourceRepository),
+        row(3, "parent", "main", "someone/fork"),
+        row(4, "Parent", "main", sourceRepository),
+      ],
+      complete: true,
+    });
+
+    expect(result.edges).toEqual([{ child: 2, parent: 1, certainty: "confirmed" }]);
+    expect(result.nodes.map((node) => node.ref.number)).toEqual([1, 2]);
+    expect(result.coverage).toBe("complete");
+  });
+
   it("never confirms an unknown repository identity and ignores a known fork", () => {
     const result = context([
       row(1, "migration", "main", null),

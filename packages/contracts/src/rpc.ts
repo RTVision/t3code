@@ -100,6 +100,7 @@ import {
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
   PullRequestInvalidateInput,
+  PullRequestRefresh,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestListStatsInput,
@@ -729,8 +730,8 @@ export const WsPullRequestsInvalidateRpc = Rpc.make(WS_METHODS.pullRequestsInval
 export const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(
   WS_METHODS.pullRequestsSubscribeRefreshes,
   {
-    payload: Schema.Struct({}),
-    success: NonNegativeInt,
+    payload: Schema.Struct({ scoped: Schema.optional(Schema.Boolean) }),
+    success: Schema.Union([NonNegativeInt, PullRequestRefresh]),
     error: EnvironmentAuthorizationError,
     stream: true,
   },
