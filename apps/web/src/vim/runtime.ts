@@ -61,6 +61,9 @@ export function focusVimNormal(pane?: HTMLElement | null): void {
 }
 
 let requestedPane: VimScope | null = null;
+export function cancelVimPaneFocus(): void {
+  requestedPane = null;
+}
 export function requestVimPaneFocus(scope: VimScope): void {
   requestedPane = scope;
 }
@@ -71,8 +74,10 @@ export function claimVimPaneFocus(scope: VimScope, element: HTMLElement | null):
 }
 
 let overlayReturnPane: HTMLElement | null = null;
+let overlayReturnUrl: string | null = null;
 export function rememberVimOverlayFocus(): void {
   if (document.querySelector("[data-command-palette]")) return;
+  overlayReturnUrl = window.location.href;
   overlayReturnPane =
     vimEnabled() && getVimMode() === "normal" ? vimPane(document.activeElement) : null;
 }
@@ -80,6 +85,7 @@ export function restoreVimOverlayFocus(): boolean {
   const pane = overlayReturnPane;
   overlayReturnPane = null;
   if (!vimEnabled() || !pane) return false;
+  if (getVimMode() === "insert" || window.location.href !== overlayReturnUrl) return true;
   focusVimNormal(pane.isConnected ? pane : undefined);
   return true;
 }

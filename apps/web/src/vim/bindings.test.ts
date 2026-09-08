@@ -47,6 +47,18 @@ describe("Vim sequences", () => {
       "move.bottom",
     );
   });
+  it("uses physical letter keys for macOS Alt mappings", () => {
+    expect(
+      strokeFromEvent({
+        key: "∆",
+        code: "KeyJ",
+        altKey: true,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("alt+j");
+  });
   it("can replace, disable and change the modes of bindings", () => {
     const bindings = resolveVimBindings({
       ...DEFAULT_VIM_SETTINGS,

@@ -82,10 +82,12 @@ export function parseSequence(sequence: string): string[] {
   return sequence.trim().split(/\s+/).filter(Boolean).map(normalizeStroke);
 }
 export function strokeFromEvent(
-  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "metaKey" | "shiftKey"> &
+    Partial<Pick<KeyboardEvent, "code">>,
 ): string {
   let key =
     event.key === " " ? "space" : event.key.length === 1 ? event.key : event.key.toLowerCase();
+  if (event.altKey && event.code?.startsWith("Key")) key = event.code.slice(3).toLowerCase();
   const modified = event.ctrlKey || event.altKey || event.metaKey;
   if (modified) key = key.toLowerCase();
   return [

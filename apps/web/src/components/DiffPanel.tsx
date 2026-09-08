@@ -1033,7 +1033,7 @@ export default function DiffPanel({
                 {fileTreeOpen ? (
                   <aside
                     data-vim-diff-files
-                    tabIndex={0}
+                    tabIndex={-1}
                     className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60"
                   >
                     <DiffFileTree

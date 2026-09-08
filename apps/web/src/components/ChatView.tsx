@@ -6311,6 +6311,7 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    const focusAtSend = document.activeElement;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -7072,7 +7073,9 @@ export default function ChatView(props: ChatViewProps) {
       turnStartSucceeded &&
       vimEnabled() &&
       resolvedSubmissionIntent !== "background" &&
-      routeThreadKeyRef.current === routeThreadKey
+      routeThreadKeyRef.current === routeThreadKey &&
+      document.activeElement === focusAtSend &&
+      promptRef.current.length === 0
     )
       focusVimNormal();
     if (!turnStartSucceeded) {

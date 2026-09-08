@@ -244,7 +244,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <VimNavigation />
+        <VimNavigation isOnSettings={isOnSettings} />
         <ProjectProjectionRetention />
         <Sidebar
           side="left"

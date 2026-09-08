@@ -15,6 +15,7 @@ import {
   dispatchVimAction,
   focusVimNormal,
   requestVimPaneFocus,
+  cancelVimPaneFocus,
   getVimMode,
   setVimMode,
   useVimMode,
@@ -71,7 +72,7 @@ function focusNeighbor(direction: string): void {
 }
 
 /** One capture owner decides whether a stroke belongs to Vim or the focused input. */
-export function VimNavigation() {
+export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
   const settings = useClientSettings((value) => value.vim);
   const mode = useVimMode();
   const bindings = useMemo(() => resolveVimBindings(settings), [settings]);
@@ -82,17 +83,37 @@ export function VimNavigation() {
   const timeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const guideTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const config = useRef({ settings, bindings });
+  const config = useRef({ settings, bindings, isOnSettings, help });
   useLayoutEffect(() => {
-    config.current = { settings, bindings };
-  }, [settings, bindings]);
+    config.current = { settings, bindings, isOnSettings, help };
+    if (!settings.enabled) {
+      sequence.current = EMPTY_SEQUENCE;
+      clearTimeout(timeout.current);
+      clearTimeout(guideTimeout.current);
+      cancelVimPaneFocus();
+      setPending("");
+      setGuide((current) => (current.length ? [] : current));
+    }
+  }, [settings, bindings, isOnSettings, help]);
   useLayoutEffect(() => {
+    const suppressedReleases = new Set<string>();
+    function consume(event: KeyboardEvent) {
+      suppressedReleases.add(event.code || event.key);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    function keyup(event: KeyboardEvent) {
+      if (!suppressedReleases.delete(event.code || event.key)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
     function clear() {
+      cancelVimPaneFocus();
       sequence.current = EMPTY_SEQUENCE;
       clearTimeout(timeout.current);
       clearTimeout(guideTimeout.current);
       setPending("");
-      setGuide([]);
+      setGuide((current) => (current.length ? [] : current));
     }
 
     function focus(event: FocusEvent) {
@@ -105,11 +126,8 @@ export function VimNavigation() {
       } else if (vimPane(target)) setVimMode("normal");
     }
     function keydown(event: KeyboardEvent) {
-      const { settings, bindings } = config.current;
-      if (!settings.enabled) {
-        clear();
-        return;
-      }
+      const { settings, bindings, isOnSettings, help } = config.current;
+      if (!settings.enabled) return;
       if (
         event.isComposing ||
         event.key === "Process" ||
@@ -118,10 +136,7 @@ export function VimNavigation() {
       )
         return;
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (
-        target?.closest("[data-keybinding-capture]") ||
-        window.location.pathname.startsWith("/settings")
-      ) {
+      if (target?.closest("[data-keybinding-capture]") || isOnSettings) {
         clear();
         return;
       }
@@ -177,22 +192,26 @@ export function VimNavigation() {
         normalBinding?.modes.includes(currentMode) &&
         normalBinding.keys.some((key) => parseSequence(key).join(" ") === stroke)
       ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        consume(event);
         clear();
         setHelp(false);
         return;
       }
       const result = advanceSequence(sequence.current, stroke, bindings, currentMode, scope);
       if (!result.consumed) return;
-      if (result.command === "mode.normal" && stroke === "ctrl+c" && selectionPresent()) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      if (result.command === "mode.normal") {
+        if (stroke === "ctrl+c" && selectionPresent()) return;
+        // Rename, search and comment inputs own cancellation, including blur side effects.
+        if (currentMode === "insert" && !target?.closest('[data-testid="composer-editor"]')) return;
+        // Preserve application Escape actions such as clearing sidebar selection.
+        if (currentMode === "normal" && !help) return;
+      }
+      consume(event);
       sequence.current = result.state;
       clearTimeout(timeout.current);
       clearTimeout(guideTimeout.current);
       setPending(result.state.count + result.state.strokes.join(" "));
-      setGuide([]);
+      setGuide((current) => (current.length ? [] : current));
       if (result.command) {
         if (event.repeat && !/^(move\.|message\.|hunk\.)/.test(result.command)) return;
         clear();
@@ -221,8 +240,15 @@ export function VimNavigation() {
               : command;
         const supported = STATIC_KEYBINDING_COMMANDS.find((entry) => entry === appCommand);
         if (supported) {
-          if (command === "diff.toggle") requestVimPaneFocus("diff");
-          if (command === "sidebar.toggle") requestVimPaneFocus("sidebar");
+          const openingPane =
+            command === "diff.toggle" ? "diff" : command === "sidebar.toggle" ? "sidebar" : null;
+          if (
+            openingPane &&
+            !Array.from(
+              document.querySelectorAll<HTMLElement>(`[data-vim-pane="${openingPane}"]`),
+            ).some(visible)
+          )
+            requestVimPaneFocus(openingPane);
           dispatchAppCommand(supported, event);
         }
       } else {
@@ -235,10 +261,14 @@ export function VimNavigation() {
       }
     }
     window.addEventListener("keydown", keydown, true);
+    window.addEventListener("keyup", keyup, true);
+    window.addEventListener("pointerdown", clear, true);
     document.addEventListener("focusin", focus);
     window.addEventListener("blur", clear);
     return () => {
       window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("keyup", keyup, true);
+      window.removeEventListener("pointerdown", clear, true);
       document.removeEventListener("focusin", focus);
       window.removeEventListener("blur", clear);
       clearTimeout(timeout.current);

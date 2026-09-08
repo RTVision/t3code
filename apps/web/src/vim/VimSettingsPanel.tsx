@@ -56,8 +56,12 @@ export function VimSettingsPanel() {
                 type="number"
                 min={key === "guideDelayMs" ? 0 : 100}
                 max={key === "guideDelayMs" ? 5000 : 10000}
-                value={settings[key]}
-                onChange={(event) => {
+                key={settings[key]}
+                defaultValue={settings[key]}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+                onBlur={(event) => {
                   const value = event.currentTarget.valueAsNumber;
                   if (
                     Number.isInteger(value) &&
@@ -65,6 +69,7 @@ export function VimSettingsPanel() {
                     value <= (key === "guideDelayMs" ? 5000 : 10000)
                   )
                     save((current) => ({ ...current, [key]: value }));
+                  else event.currentTarget.value = String(settings[key]);
                 }}
               />
             </label>

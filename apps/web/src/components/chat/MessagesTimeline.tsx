@@ -1,3 +1,4 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { VimTimeline } from "../../vim/VimTimeline";
 import {
   type AssistantCitation,
@@ -406,6 +407,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
@@ -817,22 +819,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
-          <VimTimeline
-            key={routeThreadKey}
-            entries={timelineEntries}
-            rows={rows}
-            listRef={listRef}
-            loadEarlier={loadEarlier}
-            historyError={vimHistoryError}
-            expandTurn={expandCitedTurn}
-            onManualNavigation={onManualNavigation}
-            onBottom={
-              onVimBottom ??
-              (() => {
-                void listRef.current?.scrollToEnd({ animated: false });
-              })
-            }
-          />
+          {vimEnabled && (
+            <VimTimeline
+              key={routeThreadKey}
+              entries={timelineEntries}
+              rows={rows}
+              listRef={listRef}
+              loadEarlier={loadEarlier}
+              historyError={vimHistoryError}
+              expandTurn={expandCitedTurn}
+              onManualNavigation={onManualNavigation}
+              onBottom={
+                onVimBottom ??
+                (() => {
+                  void listRef.current?.scrollToEnd({ animated: false });
+                })
+              }
+            />
+          )}
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar
               viewport={timelineViewportElement}
