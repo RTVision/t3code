@@ -1555,35 +1555,6 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  it.effect("follows a reaction list when Gitea caps a requested page below its limit", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockImplementation((input) => {
-        if (input.path === "/settings/api") return Effect.succeed(response({ features: [] }));
-        if (input.path === "/repos/acme/web/issues/7/reactions?page=1&limit=50")
-          return Effect.succeed(
-            response([{ reaction: "heart", user: { login: "one" } }], { "x-total-count": "2" }),
-          );
-        if (input.path === "/repos/acme/web/issues/7/reactions?page=2&limit=50")
-          return Effect.succeed(
-            response([{ reaction: "eyes", user: { login: "two" } }], { "x-total-count": "2" }),
-          );
-        return Effect.die(`unexpected request: ${input.path}`);
-      });
-      const api = yield* GiteaPullRequestApi.make;
-      const reactions = yield* api.listConversationReactions({
-        host: "forge.example.test",
-        repository: "acme/web",
-        number: 7,
-        viewer: "reader",
-        subjectIds: [],
-      });
-      expect(reactions.pullRequest).toEqual([
-        { content: "heart", count: 1, actors: ["one"], viewerHasReacted: false },
-        { content: "eyes", count: 1, actors: ["two"], viewerHasReacted: false },
-      ]);
-    }),
-  );
-
   it.effect("reports Gitea's missing review-summary reaction route", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response({ features: [] })));

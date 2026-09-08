@@ -48,6 +48,8 @@ describe("GiteaPullRequestProvider", () => {
     Effect.gen(function* () {
       const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
         switch (input.path) {
+          case "/settings/api":
+            return Effect.succeed(response({ features: [] }));
           case "/repos/acme/web/pulls/7":
             return Effect.succeed(response(rawPullRequest()));
           case "/repos/acme/web":
