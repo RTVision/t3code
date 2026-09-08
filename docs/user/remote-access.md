@@ -101,6 +101,19 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
+On Windows, **WSL only** uses your selected distro's SSH keys, agent, and host
+configuration. When both backends are enabled, choose **SSH credentials** under
+**Settings → Connections** to use Windows OpenSSH or WSL. Changing this selection
+restarts T3 Code. Your WSL login shell must configure `SSH_AUTH_SOCK` to use an
+existing agent; keys on disk and the in-app password prompt also work.
+
+Saved SSH environments remember their runner and distro. If you change those
+settings, restore the original selection to reconnect, or remove and add the
+SSH environment with the new credentials. Restore the original runner before
+removing an environment if you want T3 Code to stop its remote server. Existing
+environments created before
+this setting use Windows OpenSSH until you add them again.
+
 The remote host needs a compatible [Node.js installation](./install.md#requirements)
 and [provider setup](./install.md#providers). If launch cannot find Node or reports
 an incompatible version, check it through a non-interactive SSH session:

@@ -947,6 +947,32 @@ describe("the list snapshot across a reload", () => {
     expect(snapshot?.data.nextCursors).toEqual({});
   });
 
+  it("retains partial coverage while hydrating the rows that were read", () => {
+    const storage = makeStorage();
+    const warning = {
+      projectId: "project-1" as ProjectId,
+      environmentId: "env-1" as EnvironmentId,
+      projectTitle: "Web",
+      message: "Team review requests may be missing.",
+      partial: true,
+    };
+    writePullRequestListSnapshot(storage, "env-1", {
+      scope: "s",
+      data: {
+        entries: [entry({ number: 1 })],
+        viewers: {},
+        providers: [],
+        errors: [warning],
+        truncated: false,
+        truncatedEnvironments: [],
+        nextCursors: {},
+      },
+    });
+    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
+    expect(snapshot?.data.errors).toEqual([warning]);
+  });
+
   it("answers nothing for another environment", () => {
     const storage = makeStorage();
     writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });

@@ -102,6 +102,7 @@ describe("GiteaPullRequestProvider", () => {
         switch (input.path) {
           case "/settings/api":
             return Effect.succeed(response({ features: [] }));
+          case "/repos/acme/web/pulls/7":
           case "/repos/acme/web/pulls/7?include_tracking=true":
             return Effect.succeed(response(rawPullRequest()));
           case "/repos/acme/web":
@@ -149,6 +150,140 @@ describe("GiteaPullRequestProvider", () => {
       expect("autoMergeEnabled" in detail).toBe(false);
     }),
   );
+  it.effect.each([undefined, "fix"])(
+    "retains Reviewing coverage warnings in provider listings (%s)",
+    (query) =>
+      Effect.gen(function* () {
+        const pull = { ...rawPullRequest(), requested_reviewers: [{ login: "reader" }] };
+        const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+          if (input.path.startsWith("/user/teams?"))
+            return Effect.fail(
+              new GiteaApi.GiteaApiError({
+                operation: "getViewerTeams",
+                reason: "failed",
+                status: 403,
+                detail: "Teams unavailable",
+              }),
+            );
+          if (input.path.startsWith("/repos/acme/web/pulls?"))
+            return Effect.succeed(response([pull]));
+          if (input.path.startsWith("/repos/acme/web/issues?"))
+            return Effect.succeed(response([{ number: 7 }]));
+          if (input.path.startsWith("/repos/acme/web/pulls/7"))
+            return Effect.succeed(response(pull));
+          return Effect.die(`Unexpected Gitea request: ${input.path}`);
+        });
+        const apiLayer = GiteaPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              GiteaApi.GiteaApi,
+              GiteaApi.GiteaApi.of({
+                baseUrl: Option.some("https://forge.example.test/gitea"),
+                sshHosts: [],
+                request,
+                probeAuth: Effect.die("not used"),
+              }),
+            ),
+          ),
+        );
+        const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
+        const page = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          host: "forge.example.test",
+          repository: "acme/web",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "reader",
+          limit: 10,
+          ...(query === undefined ? {} : { query }),
+        });
+        expect(page.items.map((item) => item.number)).toEqual([7]);
+        expect(page.coverageWarning).toBe(
+          "Some team review requests may be missing because Gitea team membership could not be read.",
+        );
+        expect(page.truncated).toBe(false);
+      }),
+  );
+  for (const discovery of ["failed", "incomplete"] as const) {
+    it.effect(
+      `keeps workflow approval state unknown when supported discovery is ${discovery}`,
+      () =>
+        Effect.gen(function* () {
+          const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+            switch (input.path) {
+              case "/settings/api":
+                return Effect.succeed(response({ features: ["actions-run-approve"] }));
+              case "/repos/acme/web/pulls/7":
+              case "/repos/acme/web/pulls/7?include_tracking=true":
+                return Effect.succeed(response(rawPullRequest()));
+              case "/repos/acme/web":
+                return Effect.succeed(response({ permissions: { push: true } }));
+              case "/user":
+                return Effect.succeed(response({ login: "reader" }));
+              case "/repos/acme/web/issues/7/timeline?page=1&limit=50":
+                return Effect.succeed(response([]));
+              case "/repos/acme/web/commits/head-sha/status?page=1&limit=50":
+                return Effect.succeed(
+                  response({
+                    statuses: [
+                      {
+                        context: "build",
+                        status: "success",
+                        target_url: null,
+                        description: "Passed",
+                      },
+                    ],
+                    total_count: 1,
+                  }),
+                );
+              case "/repos/acme/web/actions/runs?event=pull_request&page=1&limit=50":
+                return discovery === "incomplete"
+                  ? Effect.succeed(response({ total_count: 1, workflow_runs: [] }))
+                  : Effect.fail(
+                      new GiteaApi.GiteaApiError({
+                        operation: "listWorkflowApprovals",
+                        reason: "failed",
+                        detail: "workflow lookup unavailable",
+                      }),
+                    );
+              default:
+                return Effect.die(`Unexpected Gitea request: ${input.path}`);
+            }
+          });
+          const apiLayer = GiteaPullRequestApi.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                GiteaApi.GiteaApi,
+                GiteaApi.GiteaApi.of({
+                  baseUrl: Option.some("https://forge.example.test/gitea"),
+                  sshHosts: [],
+                  request,
+                  probeAuth: Effect.die("not used"),
+                }),
+              ),
+            ),
+          );
+          const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
+          const detail = yield* provider.getChangeRequest({
+            cwd: "/repo",
+            host: "forge.example.test",
+            repository: "acme/web",
+            number: 7,
+          });
+          expect(detail.checks).toEqual([
+            { name: "build", status: "success", description: "Passed", url: null },
+            {
+              name: "Workflow approval status",
+              status: "action-required",
+              description: "Gitea could not determine whether workflows are awaiting approval.",
+              url: null,
+            },
+          ]);
+          expect(detail.workflowApprovalsRequired).toBeUndefined();
+          expect(detail.viewerPermissions.actions).not.toContain("approve-workflows");
+        }),
+    );
+  }
 });
 
 describe("giteaViewerPermissions", () => {
