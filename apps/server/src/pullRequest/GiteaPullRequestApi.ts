@@ -664,17 +664,13 @@ export const make = Effect.gen(function* () {
     return { rows, headers: response.headers } satisfies UnknownPage;
   });
 
-  const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
-    (input: { operation: string; host: string; repository: string; path: string }) =>
-      readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
-  );
-
   const readUnknownSlice = Effect.fn("GiteaPullRequestApi.readUnknownSlice")(function* (input: {
     operation: string;
     host: string;
     repository: string;
     path: string;
     limit: number;
+    requirePaginationEvidence?: boolean;
   }) {
     const rows: Array<unknown> = [];
     let path = input.path;
@@ -696,14 +692,25 @@ export const make = Effect.gen(function* () {
         rowsSeen,
         headers: result.headers,
       });
+      const hasPaginationEvidence =
+        nextLink(result.headers) !== null || totalCount(result.headers) !== null;
+      const paginationNext =
+        input.requirePaginationEvidence && !hasPaginationEvidence ? null : next;
+      // Native unpaginated endpoints can return more than the requested page size. Exactly
+      // one requested page is ambiguous when headers do not establish whether more rows exist.
+      const paginationUncertain =
+        input.requirePaginationEvidence === true &&
+        !hasPaginationEvidence &&
+        result.rows.length === PAGE_SIZE;
       if (result.rows.length > remaining || rows.length >= input.limit) {
         return {
           rows,
-          truncated: result.rows.length > remaining || next !== null,
+          truncated:
+            result.rows.length > remaining || paginationNext !== null || paginationUncertain,
         };
       }
-      if (next === null) return { rows, truncated: false };
-      path = next;
+      if (paginationNext === null) return { rows, truncated: paginationUncertain };
+      path = paginationNext;
     }
     return { rows, truncated: true };
   });
@@ -809,20 +816,15 @@ export const make = Effect.gen(function* () {
       });
       const repo = yield* decode(operation, RawRepository, response);
       return {
-        // An omitted permission block is unknown rather than a denial. Gitea will still enforce
-        // the write, while hiding it here would leave an entitled viewer with no route to try.
-        canWrite:
-          repo.permissions == null ||
-          repo.permissions.push === true ||
-          repo.permissions.admin === true,
+        canWrite: repo.permissions?.push === true || repo.permissions?.admin === true,
         mergeCapabilities: {
-          merge: repo.allow_merge_commits ?? true,
-          squash: repo.allow_squash_merge ?? true,
-          rebase: repo.allow_rebase ?? true,
+          merge: repo.allow_merge_commits === true,
+          squash: repo.allow_squash_merge === true,
+          rebase: repo.allow_rebase === true,
         },
         updateMethods: [
-          ...(repo.allow_merge_update !== false ? (["merge"] as const) : []),
-          ...(repo.allow_rebase_update !== false ? (["rebase"] as const) : []),
+          ...(repo.allow_merge_update === true ? (["merge"] as const) : []),
+          ...(repo.allow_rebase_update === true ? (["rebase"] as const) : []),
         ],
       };
     },
@@ -913,7 +915,8 @@ export const make = Effect.gen(function* () {
     }
     const comments: Array<PullRequestComment> = [];
     const threads: Array<PullRequestReviewThread> = [];
-    const commentsTruncated = reviewsTruncated;
+    let commentsTruncated = reviewsTruncated;
+    let remainingReviewCommentRows = PAGE_SIZE * CONVERSATION_PAGES;
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
@@ -930,11 +933,22 @@ export const make = Effect.gen(function* () {
           reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
         });
       }
-      const codeRows = yield* readUnknownArray({
+      if (remainingReviewCommentRows === 0) {
+        commentsTruncated = true;
+        continue;
+      }
+      const codeRows = yield* readUnknownSlice({
         operation: "listReviewComments",
         ...input,
-        path: `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+        path: query(
+          `${basePath(input.repository)}/pulls/${input.number}/reviews/${review.value.id}/comments`,
+          { page: 1, limit: PAGE_SIZE },
+        ),
+        limit: remainingReviewCommentRows,
+        requirePaginationEvidence: true,
       });
+      remainingReviewCommentRows -= codeRows.rows.length;
+      commentsTruncated ||= codeRows.truncated;
       const grouped = new Map<
         string,
         Array<{
@@ -946,7 +960,7 @@ export const make = Effect.gen(function* () {
           readonly comment: PullRequestReviewThread["comments"][number];
         }>
       >();
-      for (const codeRow of codeRows) {
+      for (const codeRow of codeRows.rows) {
         const decoded = decodeReviewComment(codeRow);
         if (Option.isNone(decoded)) continue;
         const mapped = decoded.value;
@@ -1109,7 +1123,7 @@ export const make = Effect.gen(function* () {
                   ? "success"
                   : state === "pending"
                     ? "pending"
-                    : state === "failure" || state === "error"
+                    : state === "failure" || state === "error" || state === "warning"
                       ? "failure"
                       : state === "skipped"
                         ? "skipped"
