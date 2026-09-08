@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
 import {
   editableCommentId,
@@ -23,15 +24,28 @@ describe("GiteaConversation", () => {
 
   it("groups supported Gitea reactions and names the signed-in viewer separately", () => {
     const rows: ReadonlyArray<typeof RawGiteaReaction.Type> = [
-      { reaction: "+1", user: { login: "Reader" } },
-      { reaction: "+1", user: { login: "teammate" } },
-      { reaction: "heart", user: { login: "friend" } },
-      { reaction: "party", user: { login: "ignored" } },
+      { content: "+1", user: { login: "Reader" } },
+      { content: "+1", user: { login: "teammate" } },
+      { content: "heart", user: { login: "friend" } },
+      { content: "party", user: { login: "ignored" } },
     ];
 
     expect(reactionsForViewer(rows, "reader")).toEqual([
       { content: "thumbs-up", count: 2, actors: ["teammate"], viewerHasReacted: true },
       { content: "heart", count: 1, actors: ["friend"], viewerHasReacted: false },
+    ]);
+  });
+
+  it("decodes and groups the native Gitea reaction response shape", () => {
+    const decodeReaction = Schema.decodeUnknownSync(RawGiteaReaction);
+    const row = decodeReaction({
+      content: "+1",
+      created_at: "2026-09-05T00:00:00Z",
+      user: { id: 7, login: "kalvens", full_name: "Kalven" },
+    });
+
+    expect(reactionsForViewer([row], "Kalvens")).toEqual([
+      { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
     ]);
   });
 

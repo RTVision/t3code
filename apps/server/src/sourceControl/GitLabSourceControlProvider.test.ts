@@ -121,6 +121,62 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
   }),
 );
 
+it.effect("passes the target repository from remote context to GitLab MR reads", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
+    let getInput: Parameters<GitLabCli.GitLabCli["Service"]["getMergeRequest"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listMergeRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+      getMergeRequest: (input) => {
+        getInput = input;
+        return Effect.succeed({
+          number: 42,
+          title: "Same repository MR",
+          url: "https://gitlab.com/group/project/-/merge_requests/42",
+          baseRefName: "main",
+          headRefName: "feature/provider",
+        });
+      },
+    });
+    const context = {
+      provider: {
+        kind: "gitlab",
+        name: "GitLab",
+        baseUrl: "https://gitlab.com",
+      },
+      remoteName: "origin",
+      remoteUrl: "https://gitlab.com/group/project.git",
+    } as const;
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context,
+      headSelector: "feature/provider",
+      state: "all",
+      limit: 10,
+    });
+    yield* provider.getChangeRequest({ cwd: "/repo", context, reference: "42" });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "group/project",
+      repositoryUrl: "https://gitlab.com/group/project",
+      state: "all",
+      limit: 10,
+    });
+    assert.deepStrictEqual(getInput, {
+      cwd: "/repo",
+      reference: "42",
+      repository: "group/project",
+      repositoryUrl: "https://gitlab.com/group/project",
+    });
+  }),
+);
+
 it.effect("creates GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitLabCli.GitLabCli["Service"]["createMergeRequest"]>[0] | null =
