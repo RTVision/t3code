@@ -49,6 +49,10 @@ it("accepts PR numbers and URLs only from the selected repository", () => {
     giteaPullRequestNumber(`${base}/TEAM/REPO/pulls/42/files`, "team/repo", base),
     42,
   );
+  assert.strictEqual(
+    giteaPullRequestNumber(`${base}/%C3%A9quipe/r%C3%A9po/pulls/43/files`, "équipe/répo", base),
+    43,
+  );
   for (const ref of [
     "0",
     "-1",

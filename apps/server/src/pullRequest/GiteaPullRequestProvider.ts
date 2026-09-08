@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
+import { giteaForkCapabilities } from "./GiteaForkCapabilities.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderApi,
@@ -23,15 +24,21 @@ const CAPABILITIES: PullRequestCapabilities = {
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "approve-workflows",
+    "revert",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
-  // Gitea's repository pull listing has no text parameter. Returning an unfiltered page keeps
-  // narrowing correct at the service boundary without claiming host-side search.
-  search: false,
-  // Issue reactions exist, but review-comment reactions do not have a corresponding route in
-  // the target API. The one capability covers every displayed remark, so partial support stays off.
+  search: true,
+  // Review summaries have no Gitea reaction route. Conversation rows carry reactions only for
+  // target kinds the host supports; the provider must not claim the legacy all-remarks flag.
   reactions: false,
+  reactionSubjects: {
+    changeRequest: true,
+    issueComment: true,
+    reviewComment: true,
+    review: false,
+  },
   review: {
     inlineComment: true,
     reply: true,
@@ -39,9 +46,9 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
-  // Gitea can edit the pull request and ordinary issue comments. It has no edit route for a
-  // review comment, and this capability applies to every conversation remark.
-  edit: { changeRequest: true, comment: false },
+  // Inline review comments are issue-comment records in Gitea and share this PATCH route.
+  // A review summary is a separate Review record and is not a rewriteable comment in this API.
+  edit: { changeRequest: true, comment: true },
   labels: true,
 };
 
@@ -59,11 +66,16 @@ export function giteaProviderFailure(
 
 export function giteaViewerPermissions(input: {
   readonly canWrite: boolean;
+  readonly workflowApprovalSupported?: boolean;
+  readonly revertSupported?: boolean;
   readonly ownsPullRequest: boolean;
   readonly updateMethods: ReadonlyArray<"merge" | "rebase">;
 }): PullRequestViewerPermissions {
   return {
     actions: CAPABILITIES.actions.filter((action) => {
+      if (action === "revert") return input.canWrite && input.revertSupported === true;
+      if (action === "approve-workflows")
+        return input.canWrite && input.workflowApprovalSupported === true;
       if (action === "ready" || action === "draft" || action === "close" || action === "reopen")
         return input.canWrite || input.ownsPullRequest;
       return input.canWrite;
@@ -84,13 +96,17 @@ export function giteaBaseComparison(
   return pullRequest.baseSha === pullRequest.mergeBaseSha ? "up-to-date" : "behind";
 }
 
-function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): ProviderChangeRequest {
+export function giteaToChangeRequest(
+  pullRequest: GiteaPullRequestApi.GiteaPullRequest,
+  relationshipOnly = false,
+): ProviderChangeRequest {
   return {
     number: pullRequest.number,
     title: pullRequest.title,
     url: pullRequest.url,
     author: pullRequest.author,
-    headBranch: pullRequest.headBranch,
+    headBranch: relationshipOnly ? pullRequest.relationshipHeadBranch : pullRequest.headBranch,
+    ...(relationshipOnly ? { headBranchAvailable: pullRequest.headBranchAvailable } : {}),
     headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner,
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
@@ -102,6 +118,10 @@ function toChangeRequest(pullRequest: GiteaPullRequestApi.GiteaPullRequest): Pro
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     labels: pullRequest.labels,
+    ...(pullRequest.reviewDecision === undefined
+      ? {}
+      : { reviewDecision: pullRequest.reviewDecision }),
+    ...(pullRequest.checksState === undefined ? {} : { checksState: pullRequest.checksState }),
   };
 }
 
@@ -121,9 +141,13 @@ export const make = Effect.gen(function* () {
     readonly access: GiteaPullRequestApi.GiteaRepositoryAccess;
     readonly viewer: string;
     readonly author: string | undefined;
+    readonly workflowApprovalSupported?: boolean;
+    readonly revertSupported?: boolean;
   }) =>
     giteaViewerPermissions({
       canWrite: input.access.canWrite,
+      workflowApprovalSupported: input.workflowApprovalSupported === true,
+      revertSupported: input.revertSupported === true,
       ownsPullRequest:
         input.author !== undefined && input.author.toLowerCase() === input.viewer.toLowerCase(),
       updateMethods: input.access.updateMethods,
@@ -132,6 +156,11 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "gitea",
     capabilities: CAPABILITIES,
+    getCapabilities: () =>
+      api.getFeatures().pipe(
+        Effect.orElseSucceed(() => []),
+        Effect.map((features) => giteaForkCapabilities(CAPABILITIES, features)),
+      ),
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
@@ -144,12 +173,19 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
+          includeTracking: input.relationshipOnly !== true,
+          ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          ...(input.relationshipOnly === undefined
+            ? {}
+            : { relationshipOnly: input.relationshipOnly }),
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((page) => ({
-            items: page.items.map(toChangeRequest),
+            items: page.items.map((pullRequest) =>
+              giteaToChangeRequest(pullRequest, input.relationshipOnly === true),
+            ),
             truncated: page.truncated,
             cursorAdvance: page.consumed,
             continues: true,
@@ -159,31 +195,49 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.all(
         [
-          api.getPullRequest(input),
+          api.getPullRequest({ ...input, includeTracking: true }),
           api.getRepositoryAccess(input),
           api.getViewer(),
           api.getAutoMergeEnabled(input).pipe(Effect.orElseSucceed(() => undefined)),
+          api
+            .getWorkflowApprovals(input)
+            .pipe(Effect.orElseSucceed(() => ({ supported: false, runs: [] }))),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
         ],
         { concurrency: 4 },
       ).pipe(
-        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled]) =>
+        Effect.flatMap(([pullRequest, access, viewer, autoMergeEnabled, workflows, features]) =>
           api.listChecks({ ...input, sha: pullRequest.headSha }).pipe(
             Effect.orElseSucceed(() => []),
             Effect.map((checks): ProviderChangeRequestDetail => ({
-              ...toChangeRequest(pullRequest),
+              ...giteaToChangeRequest(pullRequest),
               body: pullRequest.body,
               changedFiles: pullRequest.changedFiles,
               mergedAt: pullRequest.mergedAt,
               closedAt: pullRequest.closedAt,
               reviewers: pullRequest.reviewers,
-              checks,
+              checks: [
+                ...checks,
+                ...workflows.runs.map((run) => ({
+                  name: run.display_title?.trim() || `Workflow ${run.id}`,
+                  status: "action-required" as const,
+                  description: "Awaiting approval",
+                  url: run.html_url,
+                })),
+              ],
+              ...(workflows.supported ? { workflowApprovalsRequired: workflows.runs.length } : {}),
               mergeCapabilities: access.mergeCapabilities,
               baseComparison: giteaBaseComparison(pullRequest),
               ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
+              ...(pullRequest.autoMergeMethod === undefined
+                ? {}
+                : { autoMergeMethod: pullRequest.autoMergeMethod }),
               viewerPermissions: permissions({
                 access,
                 viewer,
                 author: pullRequest.author?.login,
+                workflowApprovalSupported: workflows.supported,
+                revertSupported: features.includes("pull-revert"),
               }),
             })),
           ),
@@ -217,35 +271,83 @@ export const make = Effect.gen(function* () {
             .listReviews(input)
             .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
           api.listCommits(input).pipe(Effect.orElseSucceed(() => [])),
+          api.getViewer().pipe(Effect.orElseSucceed(() => "")),
         ],
-        { concurrency: 4 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, issueComments, reviews, commits]): ProviderChangeRequestActivity => ({
-            author: pullRequest.author,
-            reviewers: pullRequest.reviewers,
-            comments: [...issueComments.comments, ...reviews.comments].toSorted((left, right) =>
-              left.createdAt.localeCompare(right.createdAt),
-            ),
-            commentCount: Math.max(
-              pullRequest.commentCount,
-              issueComments.comments.length + reviews.comments.length,
-            ),
-            commentsTruncated: issueComments.truncated || reviews.truncated,
-            reviewThreads: reviews.threads,
-            commits,
-          }),
-        ),
+        Effect.flatMap(([pullRequest, issueComments, reviews, commits, viewer]) => {
+          const reactions =
+            viewer === ""
+              ? Effect.succeed({ pullRequest: [], bySubjectId: new Map<string, never>() })
+              : api
+                  .listConversationReactions({
+                    ...input,
+                    viewer,
+                    subjectIds: [...issueComments.comments, ...reviews.comments].map(
+                      (comment) => comment.id,
+                    ),
+                  })
+                  .pipe(
+                    Effect.orElseSucceed(() => ({
+                      pullRequest: [],
+                      bySubjectId: new Map<string, never>(),
+                    })),
+                  );
+          return reactions.pipe(
+            Effect.map((reactions): ProviderChangeRequestActivity => ({
+              author: pullRequest.author,
+              reviewers: pullRequest.reviewers,
+              comments: [...issueComments.comments, ...reviews.comments]
+                .map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                })
+                .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+              commentCount: Math.max(
+                pullRequest.commentCount,
+                issueComments.comments.length + reviews.comments.length,
+              ),
+              commentsTruncated: issueComments.truncated || reviews.truncated,
+              reviewThreads: reviews.threads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => {
+                  const remarkReactions = reactions.bySubjectId.get(comment.id);
+                  return remarkReactions === undefined
+                    ? comment
+                    : { ...comment, reactions: remarkReactions };
+                }),
+              })),
+              commits,
+              reactions: reactions.pullRequest,
+            })),
+          );
+        }),
       ),
 
     getViewerPermissions: (input) =>
-      Effect.all([api.getPullRequest(input), api.getRepositoryAccess(input), api.getViewer()], {
-        concurrency: 3,
-      }).pipe(
+      Effect.all(
+        [
+          api.getPullRequest(input),
+          api.getRepositoryAccess(input),
+          api.getViewer(),
+          api.getFeatures().pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
+        ],
+        {
+          concurrency: 3,
+        },
+      ).pipe(
         Effect.mapError(fail("getViewerPermissions")),
-        Effect.map(([pullRequest, access, viewer]) =>
-          permissions({ access, viewer, author: pullRequest.author?.login }),
+        Effect.map(([pullRequest, access, viewer, features]) =>
+          permissions({
+            access,
+            viewer,
+            author: pullRequest.author?.login,
+            workflowApprovalSupported: features.includes("actions-run-approve"),
+            revertSupported: features.includes("pull-revert"),
+          }),
         ),
       ),
 
@@ -290,7 +392,6 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => api.comment(input).pipe(Effect.mapError(fail("comment"))),
 
-    // Never called: Gitea cannot edit every kind of remark, and the capability stays false.
     updateComment: (input) => api.updateComment(input).pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) => api.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
@@ -311,7 +412,6 @@ export const make = Effect.gen(function* () {
     setThreadResolution: (input) =>
       api.setThreadResolution(input).pipe(Effect.mapError(fail("setThreadResolution"))),
 
-    // Never called: the target API cannot cover reactions on review comments.
     setReaction: (input) =>
       api
         .setReaction({
