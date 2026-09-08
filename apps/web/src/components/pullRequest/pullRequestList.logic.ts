@@ -742,6 +742,19 @@ export function mergePullRequestLists(
   };
 }
 
+/** A continuation omits exhausted repositories; their retained rows still carry coverage errors. */
+export function mergePullRequestListErrors(
+  ...pages: ReadonlyArray<ReadonlyArray<EnvironmentPullRequestError> | undefined>
+): ReadonlyArray<EnvironmentPullRequestError> {
+  const errors = new Map<string, EnvironmentPullRequestError>();
+  for (const page of pages) {
+    for (const error of page ?? []) {
+      errors.set(JSON.stringify([error.environmentId, error.projectId, error.message]), error);
+    }
+  }
+  return [...errors.values()];
+}
+
 /** One page is what the list itself starts with, and all a cold start needs to look warm. */
 const SNAPSHOT_MAX_ENTRIES = 99;
 
