@@ -31,8 +31,12 @@ function makeBridge(
   options?: { readonly failDescriptor?: boolean },
 ): DesktopBridge {
   return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
+    ensureSshEnvironment: async (
+      target: DesktopSshEnvironmentTarget,
+      ensureOptions?: { issuePairingToken?: boolean; isNewTarget?: boolean },
+    ) => {
       calls.push("ensure");
+      expect(ensureOptions).toEqual({ issuePairingToken: true, isNewTarget: true });
       return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
