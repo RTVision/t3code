@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 
 import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
@@ -19,6 +20,69 @@ function makeTempHomeDir() {
 }
 
 describe("sshEnvironment", () => {
+  it.effect("assigns the active runner only to explicitly new targets", () =>
+    Effect.gen(function* () {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: null,
+        port: null,
+      } as const;
+      const runner = {
+        kind: "wsl",
+        distro: "Debian",
+        homeDir: "/home/test",
+        tunnelHost: "127.0.0.1",
+      } as const;
+
+      const persisted = yield* Effect.result(
+        DesktopSshEnvironment.prepareTargetForSshRunner(target, runner, "win32", false),
+      );
+      assert.isTrue(Result.isFailure(persisted));
+      assert.deepEqual(
+        yield* DesktopSshEnvironment.prepareTargetForSshRunner(target, runner, "win32", true),
+        { ...target, runner: { kind: "wsl", distro: "Debian" } },
+      );
+    }),
+  );
+
+  it.effect(
+    "backfills the current account for legacy WSL targets and keeps that binding strict",
+    () =>
+      Effect.gen(function* () {
+        const target = {
+          alias: "devbox",
+          hostname: "devbox.example.test",
+          username: null,
+          port: null,
+          runner: { kind: "wsl", distro: "Debian" },
+        } as const;
+        const runner = {
+          kind: "wsl",
+          distro: "Debian",
+          user: "alice",
+          homeDir: "/home/alice",
+          tunnelHost: "127.0.0.1",
+        } as const;
+        const resolved = yield* DesktopSshEnvironment.prepareTargetForSshRunner(
+          target,
+          runner,
+          "win32",
+          false,
+        );
+        assert.deepEqual(resolved.runner, { kind: "wsl", distro: "Debian", user: "alice" });
+        const changed = yield* Effect.result(
+          DesktopSshEnvironment.prepareTargetForSshRunner(
+            resolved,
+            { ...runner, user: "bob" },
+            "win32",
+            false,
+          ),
+        );
+        assert.isTrue(Result.isFailure(changed));
+      }),
+  );
+
   it("keeps prompt presentation diagnostics distinct from the legacy wrapper message", () => {
     const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
       requestId: "prompt-1",
