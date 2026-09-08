@@ -1569,6 +1569,49 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("limits later reviews to the remaining shared inline-comment budget", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response([
+            { id: 21, body: "First review", submitted_at: "2026-09-03T11:00:00Z" },
+            { id: 22, body: "Second review", submitted_at: "2026-09-03T12:00:00Z" },
+          ]),
+        ),
+      );
+      for (const [offset, length] of [
+        [0, 150],
+        [150, 100],
+      ] as const) {
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              Array.from({ length }, (_, index) => ({
+                id: offset + index + 31,
+                body: "Comment",
+                path: "src/a.ts",
+                position: 1,
+                created_at: "2026-09-03T11:01:00Z",
+              })),
+            ),
+          ),
+        );
+      }
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      const inlineComments = result.comments.filter((comment) => comment.kind === "review-comment");
+      expect(inlineComments).toHaveLength(200);
+      expect(inlineComments.at(-1)?.id).toBe("review-comment:230");
+      expect(result.truncated).toBe(true);
+      expect(mockedRequest).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("follows pagination links when Gitea caps comment pages below the limit", () =>
     Effect.gen(function* () {
       mockedRequest
