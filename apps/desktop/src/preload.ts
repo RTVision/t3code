@@ -104,6 +104,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setWslBackendEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_WSL_BACKEND_ENABLED_CHANNEL, enabled),
   setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
+  setSshRunner: (runner) => ipcRenderer.invoke(IpcChannels.SET_SSH_RUNNER_CHANNEL, runner),
   setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
   pickProjectFavicon: (initialPath) =>
@@ -118,6 +119,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
+  probeTerminalEditor: (input) =>
+    ipcRenderer.invoke(IpcChannels.PROBE_TERMINAL_EDITOR_CHANNEL, input),
+  openTerminalEditor: (input) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_TERMINAL_EDITOR_CHANNEL, input),
+  setTerminalEditorSettings: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_TERMINAL_EDITOR_SETTINGS_CHANNEL, input),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {

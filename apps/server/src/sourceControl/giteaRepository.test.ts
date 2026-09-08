@@ -49,6 +49,10 @@ it("accepts PR numbers and URLs only from the selected repository", () => {
     giteaPullRequestNumber(`${base}/TEAM/REPO/pulls/42/files`, "team/repo", base),
     42,
   );
+  assert.strictEqual(
+    giteaPullRequestNumber(`${base}/%C3%A9quipe/r%C3%A9po/pulls/43/files`, "équipe/répo", base),
+    43,
+  );
   for (const ref of [
     "0",
     "-1",
@@ -59,4 +63,22 @@ it("accepts PR numbers and URLs only from the selected repository", () => {
   ]) {
     assert.isNull(giteaPullRequestNumber(ref, "team/repo", base));
   }
+});
+
+it("accepts only explicit SSH aliases without extending the trusted HTTP origin", () => {
+  const base = "https://forge.example.test/gitea";
+  const aliases = ["work-forge", "ssh.example.test"];
+  assert.strictEqual(
+    giteaRepositoryFromRemote("git@work-forge:team/repo.git", base, aliases),
+    "team/repo",
+  );
+  assert.strictEqual(
+    giteaRepositoryFromRemote("ssh://git@SSH.EXAMPLE.TEST:2222/team/repo.git", base, aliases),
+    "team/repo",
+  );
+  assert.isNull(giteaRepositoryFromRemote("git@other-forge:team/repo.git", base, aliases));
+  assert.isNull(
+    giteaRepositoryFromRemote("https://ssh.example.test/gitea/team/repo.git", base, aliases),
+  );
+  assert.isNull(giteaRepositoryFromRemote("git@work-forge:../repo.git", base, aliases));
 });

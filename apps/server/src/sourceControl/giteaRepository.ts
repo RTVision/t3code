@@ -14,18 +14,23 @@ export function parseGiteaRepository(value: string): string | null {
 }
 
 /** Match only the configured forge; an SSH port is independent of its web port. */
-export function giteaRepositoryFromRemote(remoteUrl: string, baseUrl: string): string | null {
+export function giteaRepositoryFromRemote(
+  remoteUrl: string,
+  baseUrl: string,
+  sshHosts: ReadonlyArray<string> = [],
+): string | null {
   try {
     const base = new URL(baseUrl);
+    const matchesSshHost = (host: string) =>
+      host.toLowerCase() === base.hostname.toLowerCase() ||
+      sshHosts.some((allowed) => allowed.toLowerCase() === host.toLowerCase());
     const scp = /^[a-zA-Z0-9._-]+@([^:/]+):(.+)$/u.exec(remoteUrl.trim());
     if (scp) {
-      return scp[1]?.toLowerCase() === base.hostname.toLowerCase()
-        ? parseGiteaRepository(scp[2] ?? "")
-        : null;
+      return matchesSshHost(scp[1] ?? "") ? parseGiteaRepository(scp[2] ?? "") : null;
     }
     const remote = new URL(remoteUrl.trim());
     if (remote.protocol === "ssh:") {
-      return remote.hostname.toLowerCase() === base.hostname.toLowerCase()
+      return matchesSshHost(remote.hostname)
         ? parseGiteaRepository(decodeURIComponent(remote.pathname.replace(/^\//u, "")))
         : null;
     }
@@ -54,7 +59,8 @@ export function giteaPullRequestNumber(
   try {
     const url = new URL(reference);
     const base = new URL(baseUrl);
-    const expected = `${base.pathname.replace(/\/+$/u, "")}/${repository}/pulls/`;
+    const encodedRepository = repository.split("/").map(encodeURIComponent).join("/");
+    const expected = `${base.pathname.replace(/\/+$/u, "")}/${encodedRepository}/pulls/`;
     if (
       url.origin !== base.origin ||
       !url.pathname.toLowerCase().startsWith(expected.toLowerCase())

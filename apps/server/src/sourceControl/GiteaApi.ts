@@ -20,6 +20,7 @@ export const GITEA_SETUP_HINT =
 
 const GiteaConfig = Config.all({
   baseUrl: Config.string("T3CODE_GITEA_BASE_URL").pipe(Config.option),
+  sshHosts: Config.string("T3CODE_GITEA_SSH_HOSTS").pipe(Config.withDefault("")),
   token: Config.redacted("T3CODE_GITEA_TOKEN").pipe(Config.option),
 });
 
@@ -47,6 +48,8 @@ export class GiteaApi extends Context.Service<
   GiteaApi,
   {
     readonly baseUrl: Option.Option<string>;
+    /** Explicit SSH aliases for this forge; API requests still use only baseUrl. */
+    readonly sshHosts?: ReadonlyArray<string>;
     readonly request: (input: {
       readonly operation: string;
       readonly method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -240,6 +243,10 @@ export const make = Effect.gen(function* () {
 
   return GiteaApi.of({
     baseUrl,
+    sshHosts: config.sshHosts
+      .toLowerCase()
+      .split(/[,\s]+/u)
+      .filter(Boolean),
     request,
     probeAuth: request({ operation: "probeAuth", method: "GET", path: "/user" }).pipe(
       Effect.flatMap((response) => decodeGiteaResponse("probeAuth", GiteaViewer, response)),

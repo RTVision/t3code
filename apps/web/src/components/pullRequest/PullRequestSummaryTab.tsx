@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
   ChevronDownIcon,
@@ -777,7 +778,7 @@ export function PullRequestSummaryTab({
           <PullRequestReactionBar
             className="mt-2"
             reactions={detail.reactions ?? []}
-            canReact={detail.capabilities.reactions === true}
+            canReact={pullRequestCanReact(detail.capabilities, "change-request")}
             environmentId={environmentId}
             reference={reference}
             onRefresh={onRefresh}
@@ -893,7 +894,7 @@ export function PullRequestSummaryTab({
                           <PullRequestReactionBar
                             className="mt-2"
                             reactions={comment.reactions ?? []}
-                            canReact={detail.capabilities.reactions === true}
+                            canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
                             subjectId={comment.id}
                             environmentId={environmentId}
                             reference={reference}
@@ -922,7 +923,7 @@ export function PullRequestSummaryTab({
                   const reactionBar = (
                     <PullRequestReactionBar
                       reactions={comment.reactions ?? []}
-                      canReact={detail.capabilities.reactions === true}
+                      canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
                       subjectId={comment.id}
                       environmentId={environmentId}
                       reference={reference}

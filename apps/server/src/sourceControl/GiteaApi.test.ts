@@ -286,3 +286,27 @@ it.effect("accepts successful deletion with no response body", () => {
     assert.strictEqual(execute.mock.calls.length, 1);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("keeps SSH aliases separate from authenticated HTTP destinations", () => {
+  const { layer, execute } = makeLayer({
+    env: {
+      T3CODE_GITEA_BASE_URL: "https://forge.example.test/gitea",
+      T3CODE_GITEA_TOKEN: "test-token",
+      T3CODE_GITEA_SSH_HOSTS: "WORK-FORGE, ssh.example.test",
+    },
+  });
+  return Effect.gen(function* () {
+    const api = yield* GiteaApi.GiteaApi;
+    assert.deepStrictEqual(api.sshHosts, ["work-forge", "ssh.example.test"]);
+    const error = yield* api
+      .request({ operation: "test", method: "GET", path: "https://ssh.example.test/api/v1/user" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.reason, "failed");
+    assert.strictEqual(execute.mock.calls.length, 0);
+    yield* api.probeAuth;
+    assert.strictEqual(
+      execute.mock.calls[0]?.[0].url,
+      "https://forge.example.test/gitea/api/v1/user",
+    );
+  }).pipe(Effect.provide(layer));
+});

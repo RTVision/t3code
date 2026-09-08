@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -54,7 +55,7 @@ import {
 
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
-  readonly canReact: boolean;
+  readonly canReact: (event: PullRequestTimelineEvent) => boolean;
   readonly environmentId: EnvironmentId;
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
@@ -274,11 +275,11 @@ function ConversationCard({
           />
         </div>
       ) : null}
-      {reactions.canReact || event.reactions.length > 0 ? (
+      {reactions.canReact(event) || event.reactions.length > 0 ? (
         <div className="px-2 pb-2">
           <PullRequestReactionBar
             reactions={event.reactions}
-            canReact={reactions.canReact}
+            canReact={reactions.canReact(event)}
             subjectId={event.id}
             environmentId={reactions.environmentId}
             reference={reactions.reference}
@@ -519,10 +520,10 @@ function ReviewVerdictEvent({
                 </span>
               ) : null}
             </PullRequestMetaLine>
-            {reactions.canReact || event.reactions.length > 0 ? (
+            {reactions.canReact(event) || event.reactions.length > 0 ? (
               <PullRequestReactionBar
                 reactions={event.reactions}
-                canReact={reactions.canReact}
+                canReact={reactions.canReact(event)}
                 subjectId={event.id}
                 environmentId={reactions.environmentId}
                 reference={reactions.reference}
@@ -568,7 +569,15 @@ export function PullRequestTimelineTab({
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
-    canReact: detail.capabilities.reactions === true,
+    canReact: (event) =>
+      pullRequestCanReact(
+        detail.capabilities,
+        event.kind === "review"
+          ? "review"
+          : event.id.startsWith("review-comment:")
+            ? "review-comment"
+            : "issue-comment",
+      ),
     environmentId,
     threadRef,
     reference,

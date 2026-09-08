@@ -4,9 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestDependencyContext,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
+  pullRequestCanReact,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
@@ -236,6 +238,65 @@ describe("PullRequestCapabilities", () => {
 
   it("decodes a server that says nothing about reactions as a server with none", () => {
     expect(decodeCapabilities(base).reactions).toBeUndefined();
+    expect(decodeCapabilities(base).dependencies).toBeUndefined();
+  });
+
+  it("adds dependency capabilities without changing older server responses", () => {
+    expect(
+      decodeCapabilities({
+        ...base,
+        dependencies: { branchRelationships: true, nativeMembership: false },
+      }).dependencies,
+    ).toEqual({ branchRelationships: true, nativeMembership: false });
+  });
+
+  it("keeps the legacy all-subject reaction flag while allowing an exact subject gate", () => {
+    const granular = decodeCapabilities({
+      ...base,
+      reactions: false,
+      reactionSubjects: {
+        changeRequest: true,
+        issueComment: true,
+        reviewComment: true,
+        review: false,
+      },
+    });
+
+    expect(pullRequestCanReact(granular, "review-comment")).toBe(true);
+    expect(pullRequestCanReact(granular, "review")).toBe(false);
+    expect(pullRequestCanReact(decodeCapabilities({ ...base, reactions: true }), "review")).toBe(
+      true,
+    );
+  });
+});
+
+describe("PullRequestDependencyContext", () => {
+  it("round-trips bounded branch and native membership data through the RPC codec", () => {
+    const projectId = "p1" as PullRequestDependencyContext["focus"]["projectId"];
+    const value: PullRequestDependencyContext = {
+      focus: { projectId, repository: "acme/web", number: 2 },
+      provider: "github",
+      host: "github.com",
+      repository: "acme/web",
+      nodes: [
+        {
+          ref: { projectId, repository: "acme/web", number: 2 },
+          title: "API",
+          url: "https://github.com/acme/web/pull/2",
+          state: "open",
+          isDraft: false,
+          baseBranch: "migration",
+          head: { repository: "acme/web", branch: "api" },
+        },
+      ],
+      edges: [{ child: 2, parent: 1, certainty: "confirmed" }],
+      coverage: "complete",
+      issues: [],
+      native: { status: "present", id: "STACK_1", members: [1, 2], coverage: "complete" },
+    };
+    const codec = Schema.toCodecJson(PullRequestDependencyContext);
+
+    expect(Schema.decodeUnknownSync(codec)(Schema.encodeUnknownSync(codec)(value))).toEqual(value);
   });
 });
 
