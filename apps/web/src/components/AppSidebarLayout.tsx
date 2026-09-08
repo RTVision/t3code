@@ -1,3 +1,8 @@
+import { claimVimPaneFocus } from "../vim/runtime";
+import { useVimSidebar } from "../vim/useVimSidebar";
+import { VimNavigation } from "../vim/VimNavigation";
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -70,9 +75,17 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
+  useVimSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
+  useEffect(() => {
+    if (isSidebarVisible)
+      claimVimPaneFocus(
+        "sidebar",
+        document.querySelector<HTMLElement>('[data-vim-pane="sidebar"]'),
+      );
+  }, [isSidebarVisible]);
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -80,15 +93,16 @@ function SidebarControl() {
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+    const onKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+      if (event.defaultPrevented && !requestedCommand) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
       ) {
         return;
       }
-      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
+      if ((requestedCommand ?? resolveShortcutCommand(event, keybindings)) !== "sidebar.toggle")
+        return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -96,8 +110,12 @@ function SidebarControl() {
     };
 
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
+    const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [keybindings, toggleSidebar]);
 
   return (
@@ -226,11 +244,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
+        <VimNavigation />
         <ProjectProjectionRetention />
         <Sidebar
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
+          data-vim-pane="sidebar"
+          tabIndex={-1}
           className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
           resizable={{
             maxWidth: sidebarMaximumWidth,

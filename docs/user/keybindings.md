@@ -3,6 +3,40 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+## Vim navigation
+
+Enable **Vim navigation** in **Settings → Keybindings**. The preset and its
+customizations are saved on this client and apply across connected environments.
+Every binding can be changed or disabled, including the keys used to enter and
+leave input. Expand **Customize Vim shortcuts** to change sequences, modes, or
+the pending-key guide and its timing. Server keybindings remain available where
+an active Vim binding does not override them.
+
+Existing threads open in Normal mode. Press `i` to write a prompt and `Esc` to
+return to navigation. `Ctrl+C` also leaves the composer unless text is selected
+for copying. New threads open ready to type; sending returns to navigation.
+This preset does not add Vim text editing inside prompts.
+
+Use `Space pt` to find projects and threads, `Space pf` for files, `Space pg` to
+search project files, and `Space pn` for a new thread. `Space h/l` switches
+threads. Pickers accept typing immediately; use `Ctrl+N/P` or arrows to move
+through results and `Enter` to select.
+
+`Ctrl+.` opens or hides the terminal. While typing in it, keys go to the shell.
+Press `Ctrl+\` followed by `Ctrl+N` to return to navigation while keeping the
+terminal visible, then `i` to resume terminal input. In Normal mode, `Space w`
+followed by `h/j/k/l` moves between panes, `s/v` splits the focused terminal,
+and `c` closes a terminal or panel. `Space tn` creates a terminal.
+
+In conversations, `j/k` scroll, `Ctrl+D/U` move half a page, `gg/G` go to the
+start/end, and `]m/[m` move between messages. Counts such as `5j` work for
+movement. `/` searches user and assistant messages throughout the thread,
+loading older history as needed; `n/N` moves between matches. Close search to
+stop loading further history. Tool output and reasoning are excluded.
+
+`Space gd` opens the diff, where `]c/[c` moves between hunks. `Space ?` shows
+the active shortcuts. The pending-key guide reflects your custom mappings.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in

@@ -270,7 +270,29 @@ export const LoadBalancingWeights = Schema.Record(
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
 );
 
+export const VimBindingOverride = Schema.Struct({
+  command: Schema.String,
+  keys: Schema.Array(Schema.String),
+  modes: Schema.Array(Schema.Literals(["normal", "insert", "terminal"])),
+});
+export const VimSettings = Schema.Struct({
+  enabled: Schema.Boolean,
+  guideEnabled: Schema.Boolean,
+  guideDelayMs: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 5000 })),
+  sequenceTimeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 10000 })),
+  bindings: Schema.Array(VimBindingOverride),
+});
+export type VimSettings = typeof VimSettings.Type;
+export const DEFAULT_VIM_SETTINGS: VimSettings = {
+  enabled: false,
+  guideEnabled: true,
+  guideDelayMs: 400,
+  sequenceTimeoutMs: 1000,
+  bindings: [],
+};
+
 export const ClientSettingsSchema = Schema.Struct({
+  vim: VimSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_VIM_SETTINGS))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -1290,6 +1312,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  vim: Schema.optionalKey(VimSettings),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

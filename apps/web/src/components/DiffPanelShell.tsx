@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { claimVimPaneFocus } from "../vim/runtime";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
@@ -23,10 +24,17 @@ export function DiffPanelShell(props: {
   header: ReactNode;
   children: ReactNode;
 }) {
+  const paneRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    claimVimPaneFocus("diff", paneRef.current);
+  });
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
 
   return (
     <div
+      ref={paneRef}
+      data-vim-pane="diff"
+      tabIndex={-1}
       className={cn(
         "flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"

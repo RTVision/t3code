@@ -1,3 +1,4 @@
+import { getVimMode, setVimMode, useVimAction, vimEnabled } from "../vim/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -956,6 +957,12 @@ export function TerminalViewport({
 
   useEffect(() => {
     if (!autoFocus || !visible) return;
+    if (
+      vimEnabled() &&
+      getVimMode() === "normal" &&
+      document.activeElement === containerRef.current
+    )
+      return;
     // Claim focus when requested, then hand it to the terminal once ready only
     // if the user has not focused something else in the meantime.
     (terminalRef.current ?? containerRef.current)?.focus();
@@ -978,9 +985,21 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+  useVimAction(({ command, scope }) => {
+    if (
+      command !== "input.enter" ||
+      scope !== "terminal" ||
+      document.activeElement !== containerRef.current
+    )
+      return;
+    setVimMode("terminal");
+    terminalRef.current?.focus();
+    return true;
+  });
   return (
     <div
       ref={containerRef}
+      data-vim-pane="terminal"
       tabIndex={-1}
       className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
     />
@@ -1521,6 +1540,10 @@ export default function ThreadTerminalDrawer({
                           ? "border-border"
                           : "border-border/70"
                       }`}
+                      onFocusCapture={() => {
+                        if (terminalId !== resolvedActiveTerminalId)
+                          onActiveTerminalChange(terminalId);
+                      }}
                       onMouseDown={() => {
                         if (terminalId !== resolvedActiveTerminalId) {
                           onActiveTerminalChange(terminalId);
