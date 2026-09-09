@@ -19,7 +19,11 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -162,6 +166,7 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   // Settings routes show the settings nav in place of whichever thread
@@ -274,10 +279,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
-          <VimNavigation isOnSettings={isOnSettings} />
-        </div>
+        {vimEnabled ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
+            <VimNavigation isOnSettings={isOnSettings} />
+          </div>
+        ) : (
+          children
+        )}
         <SidebarControl />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>

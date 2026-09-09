@@ -291,6 +291,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
     document.addEventListener("focusin", focus);
     window.addEventListener("blur", reset);
     return () => {
+      cancelVimPaneFocus();
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("keydown", bubbleKeydown);
       window.removeEventListener("keyup", keyup, true);
@@ -318,7 +319,9 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
           className="absolute bottom-full left-0 z-50 max-h-[min(18rem,60dvh)] w-max max-w-full overflow-auto rounded-t border bg-popover p-3 shadow"
           aria-label="Vim shortcuts"
         >
-          <p className="mb-2 text-muted-foreground">Choose a shortcut or press Esc to cancel.</p>
+          <p className="mb-2 text-muted-foreground">
+            {help ? "Press Esc to close." : "Choose a shortcut or press Esc to cancel."}
+          </p>
           {shown
             .filter((binding) => binding.keys.length > 0 && binding.modes.includes(mode))
             .map((binding) => (
