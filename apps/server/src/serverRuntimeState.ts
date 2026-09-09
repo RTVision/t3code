@@ -36,7 +36,13 @@ export const persistServiceRuntimeState = (input: {
     yield* persistServerRuntimeState({
       path: yield* serviceRuntimeStatePath(input.baseDir),
       state: { ...input.state, launcherPid: input.launcherPid },
-    });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to persist service runtime state").pipe(
+          Effect.annotateLogs({ cause }),
+        ),
+      ),
+    );
   });
 
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(

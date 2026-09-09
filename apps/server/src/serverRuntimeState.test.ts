@@ -76,6 +76,41 @@ describe("serverRuntimeState", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "continues startup publication when the daemon discovery directory is unwritable",
+    () => {
+      const logs: CapturedLog[] = [];
+      const logger = Logger.make(({ fiber, message }) => {
+        logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) });
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-service-runtime-failure-",
+        });
+        // A file in place of the directory fails reliably, including in root-run CI.
+        yield* fs.writeFileString(path.join(baseDir, "runtime"), "not a directory");
+        const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 15357,
+        });
+        yield* ServerRuntimeState.persistServiceRuntimeState({ baseDir, state, launcherPid: 123 });
+        const sharedPath = path.join(baseDir, "userdata", "server-runtime.json");
+        yield* ServerRuntimeState.persistServerRuntimeState({ path: sharedPath, state });
+        assert.deepEqual(
+          Option.getOrThrow(yield* ServerRuntimeState.readPersistedServerRuntimeState(sharedPath)),
+          state,
+        );
+        assert.equal(logs[0]?.message, "Failed to persist service runtime state");
+      }).pipe(
+        Effect.provide(
+          Layer.merge(NodeServices.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
+    },
+  );
+
   it.effect("records the dev web URL when the server fronts a dev server", () =>
     Effect.gen(function* () {
       const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
