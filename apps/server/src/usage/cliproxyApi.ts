@@ -27,6 +27,7 @@ const AuthFile = Schema.Struct({
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
       chatgpt_plan_type: Schema.optional(Schema.String),
+      plan_type: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -151,6 +152,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
+    const accountId = account.id_token?.chatgpt_account_id?.trim();
     const header =
       account.provider === "codex"
         ? {
@@ -158,9 +160,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             "Content-Type": "application/json",
             "OpenAI-Beta": "codex-1",
             Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
-              ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
-              : {}),
+            ...(accountId ? { "Chatgpt-Account-Id": accountId } : {}),
           }
         : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
     const raw = yield* management(config, "api-call", {
@@ -205,6 +205,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id?.trim()
+        ? { accountId: account.id_token.chatgpt_account_id.trim() }
+        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
@@ -252,14 +255,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
       // A credits outage must not hide successfully fetched quota windows.
       const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
+      const planType =
+        usage.plan_type?.trim() ||
+        account.id_token?.plan_type?.trim() ||
+        account.id_token?.chatgpt_plan_type?.trim();
       return {
         ...base,
-        plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
+        plan: codexPlanLabel(planType),
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
             snapshot: {
-              planType: usage.plan_type ?? null,
+              planType: planType ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
             },
