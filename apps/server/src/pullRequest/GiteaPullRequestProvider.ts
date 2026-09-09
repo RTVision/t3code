@@ -342,6 +342,10 @@ export const make = Effect.gen(function* () {
         }),
       ),
 
+    getViewedFiles: (input) =>
+      api.getViewedFiles(input).pipe(Effect.mapError(fail("getViewedFiles"))),
+    setFileViewed: (input) => api.setFileViewed(input).pipe(Effect.mapError(fail("setFileViewed"))),
+
     getViewerPermissions: (input) =>
       Effect.all(
         [

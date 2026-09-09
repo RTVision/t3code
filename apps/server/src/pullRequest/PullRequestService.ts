@@ -52,6 +52,8 @@ import {
   type PullRequestSummary,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
+  type PullRequestViewedFiles,
+  type PullRequestSetFileViewedInput,
   type PullRequestThreadCommentsInput,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
@@ -176,6 +178,12 @@ export class PullRequestService extends Context.Service<
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
+    readonly viewedFiles: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestViewedFiles, PullRequestError>;
+    readonly setFileViewed: (
+      input: PullRequestSetFileViewedInput,
+    ) => Effect.Effect<void, PullRequestError>;
     readonly diff: (
       input: PullRequestDiffInput,
     ) => Effect.Effect<PullRequestDiffResult, PullRequestError>;
@@ -510,6 +518,12 @@ function withRateLimitBackoff(
           getReviewThreadComments: wrap("getReviewThreadComments", api.getReviewThreadComments),
         }),
     getViewerPermissions: interactive("getViewerPermissions", api.getViewerPermissions),
+    ...(api.getViewedFiles === undefined
+      ? {}
+      : { getViewedFiles: wrap("getViewedFiles", api.getViewedFiles) }),
+    ...(api.setFileViewed === undefined
+      ? {}
+      : { setFileViewed: interactive("setFileViewed", api.setFileViewed) }),
     getDiff: wrap("getDiff", api.getDiff),
     ...(api.getDiffFileContents === undefined
       ? {}
@@ -1635,6 +1649,48 @@ export const make = Effect.gen(function* () {
         },
       ),
     );
+
+  const viewedFiles: PullRequestService["Service"]["viewedFiles"] = Effect.fn(
+    "PullRequestService.viewedFiles",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const capabilities = yield* capabilitiesOf(project);
+    if (!capabilities.fileViewedState || project.api.getViewedFiles === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "viewedFiles",
+        detail: "This host does not support saved viewed files.",
+      });
+    }
+    return yield* project.api
+      .getViewedFiles({
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+        repository: project.repository,
+        number: input.number,
+      })
+      .pipe(Effect.mapError(toPullRequestError("viewedFiles")));
+  });
+
+  const setFileViewed: PullRequestService["Service"]["setFileViewed"] = Effect.fn(
+    "PullRequestService.setFileViewed",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const capabilities = yield* capabilitiesOf(project);
+    if (!capabilities.fileViewedState || project.api.setFileViewed === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "setFileViewed",
+        detail: "This host does not support saved viewed files.",
+      });
+    }
+    yield* project.api
+      .setFileViewed({
+        ...input,
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+        repository: project.repository,
+      })
+      .pipe(Effect.mapError(toPullRequestError("setFileViewed")));
+  });
 
   const diffUncached: PullRequestService["Service"]["diff"] = (input) =>
     requireProject(input).pipe(
@@ -2816,6 +2872,7 @@ export const make = Effect.gen(function* () {
       input.commit === undefined
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
+      input.headSha ?? null,
     ]);
     return staleDiff(key, Cache.get(diffCache, key));
   };
@@ -2948,6 +3005,8 @@ export const make = Effect.gen(function* () {
     activity,
     threadComments,
     diff,
+    viewedFiles,
+    setFileViewed: invalidatedByMutation(setFileViewed, false),
     diffFileContents,
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),

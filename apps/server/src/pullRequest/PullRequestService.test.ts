@@ -1787,6 +1787,20 @@ it.effect(
       // An approval is a verdict in itself, so it needs no words.
       yield* service.submitReview({ ...reference, verdict: "approve", body: "", comments: [] });
       assert.isTrue(approved);
+      approved = false;
+      yield* service.submitReview({
+        ...reference,
+        verdict: "request-changes",
+        body: "",
+        comments: [
+          {
+            path: "src/a.ts",
+            body: "Please change this.",
+            position: { kind: "added", newLine: 1 },
+          },
+        ],
+      });
+      assert.isTrue(approved);
     }),
 );
 
@@ -4852,5 +4866,107 @@ it.effect("names the signed-in account in the detail, and says nothing where the
 
     assert.strictEqual(named.viewer, "bilal");
     assert.strictEqual(unnamed.viewer, undefined);
+  }),
+);
+
+it.effect("saves viewed progress through the selected host and refreshes other clients", () =>
+  Effect.gen(function* () {
+    const viewed = { headSha: "head", files: [{ path: "src/a.ts", viewed: false }] };
+    const provider = fakeProvider("github", {
+      getViewedFiles: () => Effect.succeed(viewed),
+      setFileViewed: (input) =>
+        Effect.sync(() => {
+          assert.strictEqual(input.host, "github.com");
+          assert.strictEqual(input.repository, "pingdotgg/t3code");
+          assert.strictEqual(input.headSha, "head");
+          assert.strictEqual(input.path, "src/a.ts");
+          viewed.files[0]!.viewed = input.viewed;
+        }),
+    });
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        { ...provider, capabilities: { ...provider.capabilities, fileViewedState: true } },
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+    assert.isFalse((yield* service.viewedFiles(reference)).files[0]!.viewed);
+    yield* service.setFileViewed({ ...reference, path: "src/a.ts", headSha: "head", viewed: true });
+    assert.isTrue((yield* service.viewedFiles(reference)).files[0]!.viewed);
+    const refresh = yield* service.subscribeRefreshes.pipe(Stream.take(1), Stream.runHead);
+    assert.deepEqual(Option.getOrThrow(refresh).reference, reference);
+    assert.isFalse(Option.getOrThrow(refresh).listings);
+    yield* service.setFileViewed({
+      ...reference,
+      path: "src/a.ts",
+      headSha: "head",
+      viewed: false,
+    });
+    assert.isFalse((yield* service.viewedFiles(reference)).files[0]!.viewed);
+  }),
+);
+
+it.effect("rejects viewed-file requests on hosts without the capability", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewedFiles: () => Effect.die("unsupported"),
+          setFileViewed: () => Effect.die("unsupported"),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+    assert.strictEqual(
+      (yield* service.viewedFiles(reference).pipe(Effect.flip))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(
+      (yield* service
+        .setFileViewed({ ...reference, path: "a.ts", headSha: "head", viewed: true })
+        .pipe(Effect.flip))._tag,
+      "PullRequestOperationError",
+    );
+  }),
+);
+
+it.effect("does not reuse a cached diff after the viewed PR head changes", () =>
+  Effect.gen(function* () {
+    let patch = "old patch";
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { patch, truncated: false, nextCursor: null };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+    assert.strictEqual(
+      (yield* service.diff({ ...reference, headSha: "old-head" })).patch,
+      "old patch",
+    );
+    patch = "new patch";
+    assert.strictEqual(
+      (yield* service.diff({ ...reference, headSha: "new-head" })).patch,
+      "new patch",
+    );
+    assert.strictEqual(
+      (yield* service.diff({ ...reference, headSha: "new-head" })).patch,
+      "new patch",
+    );
+    assert.strictEqual(reads, 2);
   }),
 );

@@ -471,6 +471,8 @@ export function PullRequestMetaLine({
 
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
+  const total = checks.filter((check) => check.status !== "skipped").length;
+  if (total === 0) return "All checks skipped";
   const actionRequired = checks.filter((check) => check.status === "action-required");
   const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;
   const otherActionRequired = actionRequired.length - workflowApprovalRequired;
@@ -479,7 +481,7 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
-  if (failed > 0) return `${failed} of ${checks.length} failing`;
+  if (failed > 0) return `${failed} of ${total} failing`;
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
     return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
   }
@@ -489,6 +491,6 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   if (otherActionRequired > 0) {
     return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
   }
-  if (pending > 0) return `${pending} of ${checks.length} running`;
-  return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  if (pending > 0) return `${pending} of ${total} running`;
+  return passed === total ? "All checks passed" : `${passed} of ${total} passing`;
 }

@@ -34,6 +34,10 @@ describe("GiteaForkCapabilities", () => {
     expect(giteaForkCapabilities(available, ["pull-revert"]).actions).toEqual(["merge", "revert"]);
     expect(available.actions).toEqual(["merge", "approve-workflows", "revert"]);
   });
+  it("enables viewed files only when the server advertises support", () => {
+    expect(giteaForkCapabilities(base, []).fileViewedState).toBe(false);
+    expect(giteaForkCapabilities(base, ["pull-viewed-files"]).fileViewedState).toBe(true);
+  });
   it("enables review-summary reactions only for an advertising server", () => {
     expect(giteaForkCapabilities(base, []).reactionSubjects?.review).toBe(false);
     expect(giteaForkCapabilities(base, ["pull-review-reactions"]).reactionSubjects?.review).toBe(

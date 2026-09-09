@@ -1,3 +1,4 @@
+import type { PullRequestViewedFiles } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -494,6 +495,19 @@ function nextPagePath(input: {
 export class GiteaPullRequestApi extends Context.Service<
   GiteaPullRequestApi,
   {
+    readonly getViewedFiles: (input: {
+      host: string;
+      repository: string;
+      number: number;
+    }) => Effect.Effect<PullRequestViewedFiles, GiteaPullRequestApiError>;
+    readonly setFileViewed: (input: {
+      host: string;
+      repository: string;
+      number: number;
+      path: string;
+      viewed: boolean;
+      headSha: string;
+    }) => Effect.Effect<void, GiteaPullRequestApiError>;
     readonly getWorkflowApprovals: (input: {
       host: string;
       repository: string;
@@ -1411,8 +1425,19 @@ export const make = Effect.gen(function* () {
     for (const row of reviewRows) {
       const review = decodeReview(row);
       if (Option.isNone(review)) continue;
+      const state = review.value.state?.toUpperCase();
+      if (state === "PENDING") continue;
       const reviewAt = iso(review.value.submitted_at ?? review.value.updated_at);
-      if (reviewAt && (review.value.body ?? "").trim()) {
+      const reviewState = review.value.dismissed
+        ? "dismissed"
+        : state === "REQUEST_CHANGES"
+          ? "changes-requested"
+          : (state?.toLowerCase().replaceAll("_", "-") ?? null);
+      const hasVerdict =
+        reviewState === "approved" ||
+        reviewState === "changes-requested" ||
+        reviewState === "dismissed";
+      if (reviewAt && (hasVerdict || (review.value.body ?? "").trim())) {
         comments.push({
           id: `review:${review.value.id}`,
           kind: "review",
@@ -1421,7 +1446,8 @@ export const make = Effect.gen(function* () {
           createdAt: reviewAt,
           url: review.value.html_url ?? null,
           path: null,
-          reviewState: review.value.state?.toLowerCase().replaceAll("_", " ") ?? null,
+          reviewState,
+          ...(review.value.stale === undefined ? {} : { reviewStale: review.value.stale }),
         });
       }
       if (remainingReviewCommentRows === 0) {
@@ -2082,6 +2108,31 @@ export const make = Effect.gen(function* () {
           return revertPullRequest(input);
       }
     },
+    getViewedFiles: Effect.fn("GiteaPullRequestApi.getViewedFiles")(function* (input) {
+      const response = yield* request({
+        ...input,
+        operation: "getViewedFiles",
+        method: "GET",
+        path: `${basePath(input.repository)}/pulls/${input.number}/viewed-files`,
+      });
+      const value = yield* decode(
+        "getViewedFiles",
+        Schema.Struct({
+          head_sha: Schema.String,
+          files: Schema.Array(Schema.Struct({ path: Schema.String, viewed: Schema.Boolean })),
+        }),
+        response,
+      );
+      return { headSha: value.head_sha, files: value.files };
+    }),
+    setFileViewed: (input) =>
+      write({
+        ...input,
+        operation: "setFileViewed",
+        method: "PUT",
+        path: `${basePath(input.repository)}/pulls/${input.number}/viewed-files`,
+        body: { head_sha: input.headSha, files: { [input.path]: input.viewed } },
+      }),
     updatePullRequest: (input) =>
       write({
         operation: "updatePullRequest",

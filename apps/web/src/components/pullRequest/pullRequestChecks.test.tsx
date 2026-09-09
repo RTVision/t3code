@@ -19,6 +19,22 @@ function check(
 }
 
 describe("pullRequestChecksState", () => {
+  it("excludes skipped checks from progress totals", () => {
+    expect(summarizePullRequestChecks([check("success"), check("skipped")])).toBe(
+      "All checks passed",
+    );
+    expect(summarizePullRequestChecks([check("success"), check("failure"), check("skipped")])).toBe(
+      "1 of 2 failing",
+    );
+    expect(summarizePullRequestChecks([check("success"), check("pending"), check("skipped")])).toBe(
+      "1 of 2 running",
+    );
+    expect(summarizePullRequestChecks([check("skipped")])).toBe("All checks skipped");
+    expect(summarizePullRequestChecks([check("success"), check("neutral"), check("skipped")])).toBe(
+      "1 of 2 passing",
+    );
+  });
+
   it("lets a failure outrank a run still going, and reports nothing without checks", () => {
     expect(pullRequestChecksState([check("success"), check("pending"), check("failure")])).toBe(
       "failing",

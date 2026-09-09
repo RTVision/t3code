@@ -183,6 +183,93 @@ afterEach(() => {
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("pages saved viewed files and resets dismissed file state", () =>
+    Effect.gen(function* () {
+      const page = (nodes: unknown[], cursor: string | null) =>
+        output(
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  id: "PR_7",
+                  headRefOid: "head",
+                  files: { nodes, pageInfo: { hasNextPage: cursor !== null, endCursor: cursor } },
+                },
+              },
+            },
+          }),
+        );
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(page([{ path: "a.ts", viewerViewedState: "VIEWED" }], "next")),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            page(
+              [
+                { path: "old.ts", viewerViewedState: "DISMISSED" },
+                { path: "b.ts", viewerViewedState: "UNVIEWED" },
+              ],
+              null,
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      expect(
+        yield* cli.getViewedFiles({
+          cwd: "/repo",
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+        }),
+      ).toEqual({
+        headSha: "head",
+        files: [
+          { path: "a.ts", viewed: true },
+          { path: "old.ts", viewed: false },
+          { path: "b.ts", viewed: false },
+        ],
+      });
+      expect(mockedExecute.mock.calls[1]?.[0].args).toContain("cursor=next");
+    }),
+  );
+
+  it.effect("marks and unmarks the host file, refusing an outdated diff", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/repo",
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+        headSha: "head",
+        path: 'src/file with "quotes".ts',
+      };
+      const identity = output(
+        JSON.stringify({
+          data: { repository: { pullRequest: { id: "PR_7", headRefOid: "head" } } },
+        }),
+      );
+      for (const viewed of [true, false]) {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(identity))
+          .mockReturnValueOnce(Effect.succeed(output("{}")));
+        yield* cli.setFileViewed({ ...input, viewed });
+        const body = JSON.parse(mockedExecute.mock.calls.at(-1)![0].stdin!);
+        expect(body.variables).toEqual({ pullRequestId: "PR_7", path: input.path });
+        expect(body.query).toContain(
+          viewed ? "markPullRequestFileAsViewed" : "unmarkPullRequestFileAsViewed",
+        );
+      }
+      mockedExecute.mockReturnValueOnce(Effect.succeed(identity));
+      const result = yield* cli
+        .setFileViewed({ ...input, headSha: "old", viewed: true })
+        .pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
+    }),
+  );
+
   it.effect(
     "relationship discovery uses one bounded repository listing without search fallback",
     () =>

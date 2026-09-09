@@ -22,6 +22,7 @@ import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPull
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
+  fileViewedState: true,
   comment: true,
   actions: [
     "merge",
@@ -606,6 +607,10 @@ export const make = Effect.gen(function* () {
           reacted: input.reacted,
         })
         .pipe(Effect.mapError(fail("setReaction"))),
+
+    getViewedFiles: (input) =>
+      cli.getViewedFiles(input).pipe(Effect.mapError(fail("getViewedFiles"))),
+    setFileViewed: (input) => cli.setFileViewed(input).pipe(Effect.mapError(fail("setFileViewed"))),
 
     setThreadResolution: (input) =>
       cli

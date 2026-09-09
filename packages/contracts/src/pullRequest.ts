@@ -202,6 +202,8 @@ export const PullRequestComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
+  /** The host's assessment of whether this review covers an older version of the change. */
+  reviewStale: Schema.optional(Schema.Boolean),
   /** Absent from a host with no reactions at all, which is a different thing from none on this. */
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
@@ -429,6 +431,8 @@ export type PullRequestDependencyCapabilities = typeof PullRequestDependencyCapa
 export const PullRequestCapabilities = Schema.Struct({
   /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
+  /** Viewed files can be read and saved to the connected host account. */
+  fileViewedState: Schema.optional(Schema.Boolean),
   /** A comment can be posted, and the conversation read back. */
   comment: Schema.Boolean,
   /** The actions this host can carry out; anything absent is never offered. */
@@ -951,6 +955,8 @@ export type PullRequestDetailView = typeof PullRequestDetailView.Type;
  */
 export const PullRequestDiffInput = Schema.Struct({
   ...PullRequestRef.fields,
+  /** Keeps cached diffs separate when the PR head changes during a review. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   /**
    * Where to carry on from. Absent asks for the first slice. Opaque to the reader: each host
    * counts its files its own way, and only the provider that issued one knows what it means.
@@ -963,6 +969,20 @@ export const PullRequestDiffInput = Schema.Struct({
   commit: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestDiffInput = typeof PullRequestDiffInput.Type;
+
+export const PullRequestViewedFiles = Schema.Struct({
+  headSha: TrimmedNonEmptyString,
+  files: Schema.Array(Schema.Struct({ path: Schema.NonEmptyString, viewed: Schema.Boolean })),
+});
+export type PullRequestViewedFiles = typeof PullRequestViewedFiles.Type;
+
+export const PullRequestSetFileViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  headSha: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
+  viewed: Schema.Boolean,
+});
+export type PullRequestSetFileViewedInput = typeof PullRequestSetFileViewedInput.Type;
 
 /** Real line counts for a file whose hunks the host withheld from the patch. */
 export const PullRequestOmittedFileStat = Schema.Struct({
