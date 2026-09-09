@@ -60,9 +60,16 @@ const emptyRefreshRevisions = (global = 0) => ({
 type RefreshRevisions = ReturnType<typeof emptyRefreshRevisions>;
 
 const repositoryRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
-  JSON.stringify([projectId, reference.repository.trim().toLowerCase()]);
+  JSON.stringify([
+    reference.host?.toLowerCase() ?? projectId,
+    reference.repository.trim().toLowerCase(),
+  ]);
 const referenceRefreshKey = (reference: PullRequestRef, projectId = reference.projectId) =>
-  JSON.stringify([projectId, reference.repository.trim().toLowerCase(), reference.number]);
+  JSON.stringify([
+    reference.host?.toLowerCase() ?? projectId,
+    reference.repository.trim().toLowerCase(),
+    reference.number,
+  ]);
 
 /** Accumulate before the atom keeps only the last value of a stream chunk. */
 function accumulateRefresh(
@@ -74,15 +81,15 @@ function accumulateRefresh(
     typeof value === "number" ? { revision: value, listings: true } : value;
   if (event.reference === undefined) return emptyRefreshRevisions(event.revision);
   let { references, repositories, listings } = previous;
+  const hosted = { ...event.reference, host: event.host ?? event.reference.host };
+  references = HashMap.set(references, referenceRefreshKey(hosted), event.revision);
+  repositories = HashMap.set(repositories, repositoryRefreshKey(hosted), event.revision);
   for (const projectId of event.projectIds ?? [event.reference.projectId]) {
-    references = HashMap.set(
-      references,
-      referenceRefreshKey(event.reference, projectId),
-      event.revision,
-    );
+    const legacy = { ...event.reference, host: undefined };
+    references = HashMap.set(references, referenceRefreshKey(legacy, projectId), event.revision);
     repositories = HashMap.set(
       repositories,
-      repositoryRefreshKey(event.reference, projectId),
+      repositoryRefreshKey(legacy, projectId),
       event.revision,
     );
     if (event.listings) {
@@ -178,6 +185,21 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   });
 }
 
+/** The host-native stack a pull request belongs to; null where it is not stacked. */
+export function createPullRequestStackAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  refreshes = createPullRequestRefreshAtomFamily(runtime),
+) {
+  return createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:stack",
+    tag: WS_METHODS.pullRequestsStack,
+    staleTimeMs: 60_000,
+    idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "repository", reference: input } }),
+  });
+}
+
 export function pullRequestDetailToVcsStatus(
   detail: PullRequestDetail | PullRequestSummary,
 ): NonNullable<VcsStatusResult["pr"]> {
@@ -216,6 +238,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   });
   return {
     refreshes,
+    linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:linked-threads",
+      tag: WS_METHODS.pullRequestsLinkedThreads,
+      staleTimeMs: 0,
+      refreshIntervalMs: 10_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "repository", reference: input } }),
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       tag: WS_METHODS.pullRequestsList,
@@ -317,6 +347,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           JSON.stringify([
             environmentId,
             input.projectId,
+            input.host?.toLowerCase() ?? null,
             input.repository,
             input.number,
             input.commit ?? null,
@@ -349,9 +380,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsUpdateComment,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
-      onSuccess: ({ environmentId, input: { projectId, repository, number } }, registry) =>
+      onSuccess: ({ environmentId, input: { projectId, host, repository, number } }, registry) =>
         Effect.sync(() =>
-          registry.refresh(activity({ environmentId, input: { projectId, repository, number } })),
+          registry.refresh(
+            activity({
+              environmentId,
+              input: { projectId, ...(host === undefined ? {} : { host }), repository, number },
+            }),
+          ),
         ),
     }),
     submitReview: createEnvironmentRpcCommand(runtime, {

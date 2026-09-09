@@ -234,8 +234,7 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const { repository } = yield* resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const refName =
-          source?.refName ?? SourceControlProvider.normalizeSourceBranch(input.headSelector);
+        const refName = SourceControlProvider.sourceBranch(input);
         const items: ChangeRequest[] = [];
         const limit = input.limit ?? 20;
         let page = 1;

@@ -234,6 +234,10 @@
     "./editor-choice": {
       "types": "./src/editorChoice.ts",
       "default": "./src/editorChoice.ts"
+    },
+    "./thread-pull-request-compatibility": {
+      "types": "./src/threadPullRequestCompatibility.ts",
+      "default": "./src/threadPullRequestCompatibility.ts"
     }
   },
   "scripts": {
