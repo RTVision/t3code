@@ -367,22 +367,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     describe("checkCodexProviderStatus", () => {
       it.effect("does not count proxy rate limits as a native subscription", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-            Effect.succeed(
-              makeCodexProbeSnapshot({
-                account: { account: null, requiresOpenaiAuth: false },
-                rateLimits: {
-                  snapshot: {
-                    primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 },
+          for (const account of [
+            null,
+            { type: "chatgpt" as const, email: "test@example.com", planType: "pro" as const },
+          ]) {
+            const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  account: { account, requiresOpenaiAuth: false },
+                  rateLimits: {
+                    snapshot: {
+                      primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 },
+                    },
+                    rateLimitsByLimitId: null,
+                    resetCredits: null,
                   },
-                  rateLimitsByLimitId: null,
-                  resetCredits: null,
-                },
-              }),
-            ),
-          );
-          assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
-          assert.deepStrictEqual(status.usageLimits?.windows, []);
+                }),
+              ),
+            );
+            assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+            assert.deepStrictEqual(status.usageLimits?.windows, []);
+          }
         }),
       );
       it.effect("uses the app-server account and model list for provider status", () =>

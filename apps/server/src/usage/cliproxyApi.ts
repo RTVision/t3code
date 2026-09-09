@@ -259,7 +259,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       return {
         ...base,
         plan: codexPlanLabel(
-          usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type,
+          usage.plan_type?.trim() ||
+            account.id_token?.plan_type?.trim() ||
+            account.id_token?.chatgpt_plan_type?.trim(),
         ),
         usageLimits: {
           ...codexRateLimitsToLimits({
