@@ -7,7 +7,11 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessRunner, type ProcessRunInput } from "../processRunner.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "../cloud/serviceProtocol.ts";
-import { issueServiceUpdateToken, requestServiceUpdate } from "./serviceUpdate.ts";
+import {
+  issueServiceUpdateToken,
+  requestServiceUpdate,
+  updateRunningService,
+} from "./serviceUpdate.ts";
 
 const config = (version = "0.0.42", managed = true): Pick<ServerConfig, "environment"> => ({
   environment: {
@@ -146,4 +150,41 @@ it.effect("authenticates with the installed CLI before any new-version migration
       "old schema untouched",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["absent", "daemon-record", "unreadable"] as const)(
+  "handles %s service state without replacing a known daemon",
+  (mode) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-fallback-" });
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"));
+      yield* fs.makeDirectory(path.join(baseDir, "runtime"));
+      const runtime = {
+        version: 1,
+        pid: process.pid,
+        port: 1,
+        origin: "http://127.0.0.1:1",
+        startedAt: "2026-09-09T00:00:00Z",
+      };
+      const serverRuntimeStatePath = path.join(baseDir, "userdata", "server-runtime.json");
+      yield* fs.writeFileString(serverRuntimeStatePath, JSON.stringify(runtime));
+      if (mode === "daemon-record") {
+        yield* fs.writeFileString(
+          path.join(baseDir, "runtime", "server-runtime.json"),
+          JSON.stringify({ ...runtime, launcherPid: process.pid }),
+        );
+      } else if (mode === "unreadable") {
+        yield* fs.makeDirectory(path.join(baseDir, "runtime", "service-state.json"));
+      }
+      const run = updateRunningService({ baseDir, serverRuntimeStatePath }, "0.0.44");
+      if (mode === "absent") expect(yield* run).toBe(false);
+      else {
+        const error = yield* run.pipe(Effect.flip);
+        expect(error._tag).toBe(
+          mode === "daemon-record" ? "ServiceUpdateConnectionError" : "PlatformError",
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

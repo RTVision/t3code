@@ -56,9 +56,15 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
-  const state = parseServiceState(
-    yield* fs.readFileString(path.join(baseDir, "runtime", "service-state.json")),
-  );
+  const rawState = yield* fs
+    .readFileString(path.join(baseDir, "runtime", "service-state.json"))
+    .pipe(
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+      ),
+    );
+  if (rawState === null) return null;
+  const state = parseServiceState(rawState);
   if (state === undefined || state.update?.status === "pending") {
     return yield* new ServiceUpdateConnectionError({
       message:
@@ -104,7 +110,7 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
 
 /** No service-manager commands: the running server owns installation and handoff. */
 export const updateRunningService = Effect.fn("cli.service.updateRunning")(function* (
-  config: Config.ServerConfig["Service"],
+  config: Pick<Config.ServerConfig["Service"], "baseDir" | "serverRuntimeStatePath">,
   targetVersion: string,
   allowDowngrade = false,
 ) {
@@ -138,6 +144,15 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
   const token = yield* issueServiceUpdateToken(config.baseDir).pipe(
     Effect.provide(ProcessRunner.layer),
   );
+  if (token === null) {
+    if (Option.isSome(serviceState)) {
+      return yield* new ServiceUpdateConnectionError({
+        message:
+          "The running daemon's service state is missing. Repair the existing service before updating it.",
+      });
+    }
+    return false;
+  }
   const wsUrl = new URL("/ws", origin);
   wsUrl.protocol = "ws:";
   const constructorLayer = Layer.succeed(

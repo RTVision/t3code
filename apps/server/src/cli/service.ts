@@ -152,19 +152,16 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         );
         return;
       }
-      return yield* runServiceCommand(
-        flags,
-        Effect.gen(function* () {
-          const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
-          if (!result.changed) {
-            yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
-            return;
-          }
-          yield* Console.log(
-            `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
-          );
-        }),
-      );
+      return yield* Effect.gen(function* () {
+        const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
+        if (!result.changed) {
+          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
+          return;
+        }
+        yield* Console.log(
+          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+        );
+      }).pipe(Effect.provide(bootServiceLayer(config)));
     }),
   ),
 );
