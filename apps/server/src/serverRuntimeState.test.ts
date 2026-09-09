@@ -44,6 +44,38 @@ describe("serverRuntimeState", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps daemon discovery when another server overwrites and clears shared state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-runtime-test-" });
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 15357,
+      });
+      const sharedPath = path.join(baseDir, "userdata", "server-runtime.json");
+      yield* ServerRuntimeState.persistServiceRuntimeState({ baseDir, state, launcherPid: 123 });
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: sharedPath,
+        state: { ...state, pid: 456, port: 3774 },
+      });
+      yield* ServerRuntimeState.clearPersistedServerRuntimeState(sharedPath);
+      const daemon = yield* ServerRuntimeState.readPersistedServerRuntimeState(
+        yield* ServerRuntimeState.serviceRuntimeStatePath(baseDir),
+      );
+      assert.deepEqual(Option.getOrThrow(daemon), { ...state, launcherPid: 123 });
+      yield* ServerRuntimeState.persistServiceRuntimeState({
+        baseDir,
+        state: { ...state, pid: 789, port: 15358 },
+        launcherPid: 123,
+      });
+      const restarted = yield* ServerRuntimeState.readPersistedServerRuntimeState(
+        yield* ServerRuntimeState.serviceRuntimeStatePath(baseDir),
+      );
+      assert.equal(Option.getOrThrow(restarted).port, 15358);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("records the dev web URL when the server fronts a dev server", () =>
     Effect.gen(function* () {
       const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({

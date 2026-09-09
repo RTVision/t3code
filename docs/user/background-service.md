@@ -11,7 +11,7 @@ Run these commands on the machine that will host T3 Code:
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | Install and start               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service install`   |
 | Inspect status and log location | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service status`    |
-| Update or repair                | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
+| Update the running server                | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
 | Stop and remove from startup    | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
@@ -21,13 +21,22 @@ Install and update use the version of the CLI you invoke. For nightly, use
 one. An older CLI refuses to replace a newer service unless you explicitly add
 `--allow-downgrade`.
 
+The Update button and `service update` ask a running daemon to update through its
+T3 service launcher, preserving the service's environment. This also works with
+an externally installed launcher service, such as an OpenRC package. Run the CLI
+as the service user, with `--base-dir` if it uses a custom T3 home.
+
+Installation, removal, and service-manager repairs still use the platform support
+listed below. To repair a running systemd or launchd service definition, use
+`service install`.
+
 Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
 ## Platform support
 
-Linux needs systemd user services. Setup enables lingering so T3 Code starts at
+The built-in Linux installer needs systemd user services. Setup enables lingering so T3 Code starts at
 boot and keeps running after logout. If this needs administrator permission,
 setup prints a recovery command before changing the service.
 

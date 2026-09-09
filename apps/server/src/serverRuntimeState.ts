@@ -2,6 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
@@ -11,6 +12,7 @@ import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
+  launcherPid: Schema.optional(Schema.Int),
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
@@ -20,6 +22,22 @@ export const PersistedServerRuntimeState = Schema.Struct({
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
+
+export const serviceRuntimeStatePath = (baseDir: string) =>
+  Effect.map(Path.Path, (path) => path.join(baseDir, "runtime", "server-runtime.json"));
+
+/** Retained during child restarts; discovery checks the supervisor is still alive. */
+export const persistServiceRuntimeState = (input: {
+  readonly baseDir: string;
+  readonly state: PersistedServerRuntimeState;
+  readonly launcherPid: number;
+}) =>
+  Effect.gen(function* () {
+    yield* persistServerRuntimeState({
+      path: yield* serviceRuntimeStatePath(input.baseDir),
+      state: { ...input.state, launcherPid: input.launcherPid },
+    });
+  });
 
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",

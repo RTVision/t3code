@@ -10,6 +10,7 @@ import * as BootService from "../cloud/bootService.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { updateRunningService } from "./serviceUpdate.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
@@ -142,19 +143,29 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
     "Update or repair the background service using this CLI version. Use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update` for the latest release.",
   ),
   Command.withHandler((flags) =>
-    runServiceCommand(
-      flags,
-      Effect.gen(function* () {
-        const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
-        if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
-          return;
-        }
+    Effect.gen(function* () {
+      const logLevel = yield* GlobalFlag.LogLevel;
+      const config = yield* resolveCliAuthConfig(flags, logLevel);
+      if (yield* updateRunningService(config, packageJson.version, flags.allowDowngrade)) {
         yield* Console.log(
-          `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          `T3 Code daemon accepted t3@${packageJson.version}. The service launcher handles the restart.`,
         );
-      }),
-    ),
+        return;
+      }
+      return yield* runServiceCommand(
+        flags,
+        Effect.gen(function* () {
+          const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
+          if (!result.changed) {
+            yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
+            return;
+          }
+          yield* Console.log(
+            `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+          );
+        }),
+      );
+    }),
   ),
 );
 

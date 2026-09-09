@@ -132,6 +132,7 @@ import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
+  persistServiceRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -607,6 +608,14 @@ export const makeServerLayer = Layer.unwrap(
             config,
             port: address.port,
           });
+          const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+          if (launcher.managed) {
+            yield* persistServiceRuntimeState({
+              baseDir: config.baseDir,
+              state,
+              launcherPid: process.ppid,
+            });
+          }
           yield* persistServerRuntimeState({
             path: config.serverRuntimeStatePath,
             state,
@@ -765,7 +774,7 @@ export const makeServerLayer = Layer.unwrap(
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,
-      runtimeStateLayer,
+      runtimeStateLayer.pipe(Layer.provide(launcherLayer)),
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );
