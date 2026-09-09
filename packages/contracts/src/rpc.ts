@@ -127,6 +127,8 @@ import {
   PullRequestThreadCommentsResult,
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
+  PullRequestViewedFiles,
+  PullRequestSetFileViewedInput,
   PullRequestUnavailableError,
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
@@ -357,6 +359,8 @@ export const WS_METHODS = {
   pullRequestsUpdateComment: "pullRequests.updateComment",
   pullRequestsSubmitReview: "pullRequests.submitReview",
   pullRequestsReplyToThread: "pullRequests.replyToThread",
+  pullRequestsViewedFiles: "pullRequests.viewedFiles",
+  pullRequestsSetFileViewed: "pullRequests.setFileViewed",
   pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
   pullRequestsSetReaction: "pullRequests.setReaction",
   pullRequestsInvalidate: "pullRequests.invalidate",
@@ -713,6 +717,18 @@ const WsPullRequestsSubmitReviewRpc = Rpc.make(WS_METHODS.pullRequestsSubmitRevi
 
 const WsPullRequestsReplyToThreadRpc = Rpc.make(WS_METHODS.pullRequestsReplyToThread, {
   payload: PullRequestThreadReplyInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsViewedFilesRpc = Rpc.make(WS_METHODS.pullRequestsViewedFiles, {
+  payload: PullRequestRef,
+  success: PullRequestViewedFiles,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsSetFileViewedRpc = Rpc.make(WS_METHODS.pullRequestsSetFileViewed, {
+  payload: PullRequestSetFileViewedInput,
   success: Schema.Void,
   error: PullRequestRpcError,
 });
@@ -1241,6 +1257,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsUpdateCommentRpc,
   WsPullRequestsSubmitReviewRpc,
   WsPullRequestsReplyToThreadRpc,
+  WsPullRequestsViewedFilesRpc,
+  WsPullRequestsSetFileViewedRpc,
   WsPullRequestsSetThreadResolutionRpc,
   WsPullRequestsSetReactionRpc,
   WsPullRequestsInvalidateRpc,

@@ -1265,6 +1265,94 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect("reads and updates the host's viewed files", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response({ head_sha: "head", files: [{ path: "src/a.ts", viewed: true }] }),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(response(null)));
+      const api = yield* GiteaPullRequestApi.make;
+      const input = { host: "forge.example.test", repository: "acme/web", number: 7 };
+      expect(yield* api.getViewedFiles(input)).toEqual({
+        headSha: "head",
+        files: [{ path: "src/a.ts", viewed: true }],
+      });
+      expect(callAt(0).path).toBe("/repos/acme/web/pulls/7/viewed-files");
+      for (const viewed of [false, true]) {
+        yield* api.setFileViewed({ ...input, headSha: "head", path: "src/a.ts", viewed });
+        const call = mockedRequest.mock.calls.at(-1)![0];
+        expect(call.method).toBe("PUT");
+        expect(decodeJson(call.body!)).toEqual({ head_sha: "head", files: { "src/a.ts": viewed } });
+      }
+    }),
+  );
+
+  it.effect("retains verdicts without prose and excludes pending reviews", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path === "/repos/acme/web/pulls/7/reviews?page=1&limit=50") {
+          return Effect.succeed(
+            response(
+              [
+                { id: 1, state: "APPROVED", body: "", stale: false },
+                { id: 2, state: "REQUEST_CHANGES", body: null, stale: true },
+                { id: 3, state: "APPROVED", dismissed: true },
+                { id: 4, state: "PENDING", body: "Private draft" },
+                { id: 5, state: "COMMENT", body: "" },
+              ].map((review) => ({
+                ...review,
+                submitted_at: "2026-09-03T11:00:00Z",
+                user: { login: `reviewer-${review.id}` },
+              })),
+            ),
+          );
+        }
+        if (/\/reviews\/[1235]\/comments\?/.test(input.path)) return Effect.succeed(response([]));
+        return Effect.die(`unexpected request: ${input.path}`);
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const result = yield* api.listReviews({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+      expect(
+        result.comments.map(({ id, body, reviewState, reviewStale, author }) => ({
+          id,
+          body,
+          reviewState,
+          reviewStale,
+          login: author?.login,
+        })),
+      ).toEqual([
+        {
+          id: "review:1",
+          body: "",
+          reviewState: "approved",
+          reviewStale: false,
+          login: "reviewer-1",
+        },
+        {
+          id: "review:2",
+          body: "",
+          reviewState: "changes-requested",
+          reviewStale: true,
+          login: "reviewer-2",
+        },
+        {
+          id: "review:3",
+          body: "",
+          reviewState: "dismissed",
+          reviewStale: undefined,
+          login: "reviewer-3",
+        },
+      ]);
+    }),
+  );
+
   it.effect("reads reviews and anchors resolved stale comments to the correct diff side", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -1320,7 +1408,8 @@ layer("GiteaPullRequestApi", (it) => {
       expect(activity.comments).toEqual([
         expect.objectContaining({
           id: "review:21",
-          reviewState: "request changes",
+          reviewState: "changes-requested",
+          reviewStale: true,
         }),
         expect.objectContaining({
           id: "review-comment:31",

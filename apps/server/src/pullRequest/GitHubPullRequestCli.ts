@@ -7,6 +7,7 @@ import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
   type PullRequestActor,
+  type PullRequestViewedFiles,
   type PullRequestInvolvement,
   type PullRequestListFilters,
   type PullRequestListState,
@@ -645,6 +646,21 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
+    readonly getViewedFiles: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<PullRequestViewedFiles, GitHubPullRequestCliError>;
+    readonly setFileViewed: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly path: string;
+      readonly viewed: boolean;
+      readonly headSha: string;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
     readonly submitReview: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -984,6 +1000,40 @@ function actionArgs(
       throw new Error("Workflow approval requires run discovery");
   }
 }
+
+const viewedFilesPageSchema = Schema.fromJsonString(
+  Schema.Struct({
+    data: Schema.Struct({
+      repository: Schema.Struct({
+        pullRequest: Schema.Struct({
+          id: Schema.String,
+          headRefOid: Schema.String,
+          files: Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({
+                path: Schema.String,
+                viewerViewedState: Schema.Literals(["VIEWED", "UNVIEWED", "DISMISSED"]),
+              }),
+            ),
+            pageInfo: Schema.Struct({
+              hasNextPage: Schema.Boolean,
+              endCursor: Schema.NullOr(Schema.String),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }),
+);
+
+const VIEWED_FILES_QUERY = `query PullRequestViewedFiles($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id headRefOid
+      files(first: 100, after: $cursor) { nodes { path viewerViewedState } pageInfo { hasNextPage endCursor } }
+    }
+  }
+}`;
 
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
@@ -2202,6 +2252,94 @@ export const make = Effect.gen(function* () {
           stdin: input.body,
         })
         .pipe(Effect.asVoid),
+
+    getViewedFiles: Effect.fn("GitHubPullRequestCli.getViewedFiles")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const files: Array<PullRequestViewedFiles["files"][number]> = [];
+      let cursor: string | null = null;
+      let headSha: string | undefined;
+      for (let page = 0; page < 100; page += 1) {
+        const response: typeof viewedFilesPageSchema.Type = yield* graphqlRead({
+          ...input,
+          operation: "getViewedFiles",
+          query: VIEWED_FILES_QUERY,
+          variables: [
+            ["-f", `owner=${owner}`],
+            ["-f", `name=${name}`],
+            ["-F", `number=${input.number}`],
+            cursorVariable(cursor),
+          ],
+          decode: Schema.decodeUnknownResult(viewedFilesPageSchema),
+        });
+        const pull = response.data.repository.pullRequest;
+        if (headSha !== undefined && headSha !== pull.headRefOid) {
+          return yield* new GitHubPullRequestReadError({
+            command: "gh",
+            cwd: input.cwd,
+            operation: "getViewedFiles",
+            cause: "The pull request changed while loading viewed files. Refresh and try again.",
+          });
+        }
+        headSha = pull.headRefOid;
+        files.push(
+          ...pull.files.nodes.map((file) => ({
+            path: file.path,
+            viewed: file.viewerViewedState === "VIEWED",
+          })),
+        );
+        if (!pull.files.pageInfo.hasNextPage) return { headSha, files };
+        const next = pull.files.pageInfo.endCursor;
+        if (next === null || next === cursor) break;
+        cursor = next;
+      }
+      return yield* new GitHubPullRequestReadError({
+        command: "gh",
+        cwd: input.cwd,
+        operation: "getViewedFiles",
+        cause: "The complete viewed-file state could not be loaded.",
+      });
+    }),
+
+    setFileViewed: Effect.fn("GitHubPullRequestCli.setFileViewed")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const response = yield* graphqlRead({
+        ...input,
+        operation: "setFileViewed",
+        allowReserve: true,
+        query: `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { id headRefOid } } }`,
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        decode: Schema.decodeUnknownResult(
+          Schema.fromJsonString(
+            Schema.Struct({
+              data: Schema.Struct({
+                repository: Schema.Struct({
+                  pullRequest: Schema.Struct({ id: Schema.String, headRefOid: Schema.String }),
+                }),
+              }),
+            }),
+          ),
+        ),
+      });
+      const pull = response.data.repository.pullRequest;
+      if (pull.headRefOid !== input.headSha) {
+        return yield* new GitHubPullRequestReadError({
+          command: "gh",
+          cwd: input.cwd,
+          operation: "setFileViewed",
+          cause: "The pull request changed. Refresh the diff before marking files as viewed.",
+        });
+      }
+      const mutation = input.viewed ? "markFileAsViewed" : "unmarkFileAsViewed";
+      yield* graphql({
+        ...input,
+        query: `mutation($pullRequestId: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $pullRequestId, path: $path }) { clientMutationId } }`,
+        variables: { pullRequestId: pull.id, path: input.path },
+      });
+    }),
 
     submitReview: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

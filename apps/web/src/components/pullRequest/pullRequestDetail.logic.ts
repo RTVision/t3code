@@ -316,7 +316,7 @@ export function latestPullRequestReviewOutcomes(
       actor: comment.author,
       outcome,
       at: comment.createdAt,
-      stale: isPullRequestVerdictStale(comment.createdAt, newestCommitAt),
+      stale: comment.reviewStale ?? isPullRequestVerdictStale(comment.createdAt, newestCommitAt),
     });
   }
   return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
@@ -339,6 +339,7 @@ export interface PullRequestTimelineEvent {
   readonly deletions: number | null;
   readonly path: string | null;
   readonly reviewState: string | null;
+  readonly reviewStale?: boolean;
   /** Empty for everything but a comment, which is the only entry a host lets anyone react to. */
   readonly reactions: ReadonlyArray<PullRequestReaction>;
 }
@@ -450,6 +451,7 @@ export function buildPullRequestTimeline(
       deletions: null,
       path: comment.path,
       reviewState: comment.reviewState,
+      ...(comment.reviewStale === undefined ? {} : { reviewStale: comment.reviewStale }),
       reactions: comment.reactions ?? [],
     })),
     ...(detail.mergedAt

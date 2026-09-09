@@ -49,6 +49,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
           repository: "owner/repository",
           number: 42,
           cursor: "next-page",
+          headSha: "reviewed-head",
         },
       }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
 
@@ -77,6 +78,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
         repository: "owner/repository",
         number: 42,
         cursor: "next-page",
+        headSha: "reviewed-head",
       });
     }),
   );

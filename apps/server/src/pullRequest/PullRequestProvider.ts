@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
   PullRequestActor,
+  PullRequestViewedFiles,
   PullRequestBaseComparison,
   PullRequestCapabilities,
   PullRequestChecksState,
@@ -401,6 +402,19 @@ export interface PullRequestProviderApi {
   readonly getViewerPermissions: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<PullRequestViewerPermissions, PullRequestProviderError>;
+
+  /** Per-account review progress stored by the host. */
+  readonly getViewedFiles?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestViewedFiles, PullRequestProviderError>;
+  readonly setFileViewed?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly path: string;
+      readonly viewed: boolean;
+      readonly headSha: string;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
 
   /**
    * One slice of the patch. Only called when `capabilities.diff` is true. A provider that can

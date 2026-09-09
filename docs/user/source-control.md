@@ -107,6 +107,11 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+In the Code tab, mark files as **Viewed** to save your progress to the connected host account.
+Uncheck a file to review it again. Progress follows that account across devices, and the host
+marks changed files as needing another look. This is available on GitHub and Gitea servers
+that support viewed-file access, when viewing all commits.
+
 When the host can confirm that one pull request targets another pull request's branch, its review
 panel shows the dependency chain. Select a related pull request there to open its usual review
 panel. T3 marks incomplete discovery instead of guessing whether a release branch or another

@@ -625,7 +625,7 @@ export function PullRequestTimelineTab({
                   key={event.id}
                   event={event}
                   outcome={outcome}
-                  stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
+                  stale={event.reviewStale ?? isPullRequestVerdictStale(event.at, newestCommitAt)}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
                   reactions={reactions}

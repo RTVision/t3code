@@ -6,6 +6,7 @@ export function giteaForkCapabilities(
 ): PullRequestCapabilities {
   return {
     ...base,
+    fileViewedState: features.includes("pull-viewed-files"),
     actions: base.actions.filter((action) =>
       action === "approve-workflows"
         ? features.includes("actions-run-approve")

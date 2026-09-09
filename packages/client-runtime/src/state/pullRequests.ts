@@ -268,6 +268,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         refreshes({ environmentId, input: { kind: "repository", reference: input } }),
     }),
     activity,
+    viewedFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:viewed-files",
+      tag: WS_METHODS.pullRequestsViewedFiles,
+      staleTimeMs: 15_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
+    }),
+    setFileViewed: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-file-viewed",
+      tag: WS_METHODS.pullRequestsSetFileViewed,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
       tag: WS_METHODS.pullRequestsThreadComments,

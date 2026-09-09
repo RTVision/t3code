@@ -248,6 +248,30 @@ describe("review verdicts", () => {
     expect(pullRequestReviewOutcome("DISMISSED")).toBe("dismissed");
   });
 
+  it("uses the host's stale assessment in summaries and the timeline", () => {
+    const review = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      kind: "review" as const,
+      body: "",
+      reviewState: "approved",
+      reviewStale: true,
+    };
+    expect(latestPullRequestReviewOutcomes([review])[0]?.stale).toBe(true);
+    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments: [review] });
+    expect(events.find((event) => event.id === review.id)).toMatchObject({
+      kind: "review",
+      body: null,
+      reviewState: "approved",
+      reviewStale: true,
+    });
+    expect(
+      latestPullRequestReviewOutcomes(
+        [{ ...review, reviewStale: false }],
+        [{ oid: "new", messageHeadline: "new", committedDate: "2099-01-01T00:00:00Z" }],
+      )[0]?.stale,
+    ).toBe(false);
+  });
+
   it("is not a verdict where the review only carried remarks", () => {
     expect(pullRequestReviewOutcome("COMMENTED")).toBeNull();
     expect(pullRequestReviewOutcome("PENDING")).toBeNull();
