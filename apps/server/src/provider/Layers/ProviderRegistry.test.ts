@@ -299,7 +299,7 @@ function makeCodexProbeSnapshot(
         email: "test@example.com",
         planType: "pro",
       },
-      requiresOpenaiAuth: false,
+      requiresOpenaiAuth: true,
     },
     models: [
       {
@@ -365,11 +365,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
+      it.effect("does not count proxy rate limits as a native subscription", () =>
+        Effect.gen(function* () {
+          for (const account of [
+            null,
+            { type: "chatgpt" as const, email: "test@example.com", planType: "pro" as const },
+          ]) {
+            const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  account: { account, requiresOpenaiAuth: false },
+                  rateLimits: {
+                    snapshot: {
+                      primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 },
+                    },
+                    rateLimitsByLimitId: null,
+                    resetCredits: null,
+                  },
+                }),
+              ),
+            );
+            assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+            assert.deepStrictEqual(status.usageLimits?.windows, []);
+          }
+        }),
+      );
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
+                accountId: "workspace-a",
+                rateLimits: {
+                  snapshot: {
+                    primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1789436313 },
+                  },
+                  rateLimitsByLimitId: null,
+                  resetCredits: null,
+                },
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -389,6 +422,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
+          assert.strictEqual(status.auth.accountId, "workspace-a");
+          assert.strictEqual(status.usageLimits?.unavailable, undefined);
+          assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 42);
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",

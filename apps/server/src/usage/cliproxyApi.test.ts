@@ -47,7 +47,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      (typeof accounts)[number] & {
+        disabled?: boolean;
+        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -119,6 +124,7 @@ describe("CLIProxyAPI built-in management API", () => {
         const test = fixture();
         const api = yield* test.api;
         const result = yield* api.readAccounts(config);
+        expect(result.map((account) => account.accountId)).toEqual(["account-a", "account-b"]);
         expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
@@ -139,6 +145,31 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("skips blank plan fields when falling back to account metadata", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: accounts.map((account, index) => ({
+          ...account,
+          id_token: {
+            ...account.id_token,
+            plan_type: index === 0 ? " pro " : "  ",
+            chatgpt_plan_type: "business",
+          },
+        })),
+        upstream: () => ({
+          status: 200,
+          body: { plan_type: " ", rate_limit: { primary_window: { used_percent: 12 } } },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.plan)).toEqual([
+        "ChatGPT Pro 20x Subscription",
+        "ChatGPT Business Subscription",
+      ]);
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
