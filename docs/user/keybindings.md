@@ -12,6 +12,9 @@ leave input. Expand **Customize Vim shortcuts** to change sequences, modes, or
 the pending-key guide and its timing. Server keybindings remain available where
 an active Vim binding does not override them.
 
+The pending-key guide stays open until you choose a command, press `Esc`, or
+move focus. Sequence timeout applies to counts and shortcuts without the guide.
+
 Existing threads open in Normal mode. Press `i` to write a prompt and `Esc` to
 return to navigation. `Ctrl+C` also leaves the composer unless text is selected
 for copying. New threads open ready to type; sending returns to navigation.
