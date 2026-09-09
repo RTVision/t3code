@@ -2333,9 +2333,7 @@ export const make = Effect.gen(function* () {
           cause: "The pull request changed. Refresh the diff before marking files as viewed.",
         });
       }
-      const mutation = input.viewed
-        ? "markPullRequestFileAsViewed"
-        : "unmarkPullRequestFileAsViewed";
+      const mutation = input.viewed ? "markFileAsViewed" : "unmarkFileAsViewed";
       yield* graphql({
         ...input,
         query: `mutation($pullRequestId: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $pullRequestId, path: $path }) { clientMutationId } }`,

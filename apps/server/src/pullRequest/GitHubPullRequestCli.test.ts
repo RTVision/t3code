@@ -257,9 +257,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         yield* cli.setFileViewed({ ...input, viewed });
         const body = JSON.parse(mockedExecute.mock.calls.at(-1)![0].stdin!);
         expect(body.variables).toEqual({ pullRequestId: "PR_7", path: input.path });
-        expect(body.query).toContain(
-          viewed ? "markPullRequestFileAsViewed" : "unmarkPullRequestFileAsViewed",
-        );
+        expect(body.query).toContain(viewed ? "markFileAsViewed" : "unmarkFileAsViewed");
       }
       mockedExecute.mockReturnValueOnce(Effect.succeed(identity));
       const result = yield* cli
