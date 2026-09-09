@@ -42,10 +42,11 @@ export const requestServiceUpdate = Effect.fn("cli.service.requestUpdate")(funct
     });
   }
   const installedVersion = config.environment.serverVersion;
-  if (!allowDowngrade && compareExactServiceVersions(targetVersion, installedVersion) < 0) {
+  if (compareExactServiceVersions(targetVersion, installedVersion) < 0) {
+    if (allowDowngrade) return false;
     return yield* new BootServiceDowngradeRefusedError({ installedVersion, targetVersion });
   }
-  if (installedVersion === targetVersion) return { targetVersion, method: "boot-service" as const };
+  if (installedVersion === targetVersion) return "current" as const;
   return yield* client.update(targetVersion);
 });
 
@@ -133,12 +134,9 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
   });
   if (!alive) return false;
   const origin = new URL(state.origin);
-  if (
-    origin.protocol !== "http:" ||
-    !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)
-  ) {
+  if (origin.protocol !== "http:") {
     return yield* new ServiceUpdateConnectionError({
-      message: "The daemon runtime record must point to a local HTTP server.",
+      message: "The daemon runtime record must point to an HTTP server.",
     });
   }
   const token = yield* issueServiceUpdateToken(config.baseDir).pipe(
@@ -166,9 +164,9 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
     Layer.provide(Socket.layerWebSocket(wsUrl.toString()).pipe(Layer.provide(constructorLayer))),
     Layer.provide(RpcSerialization.layerJson),
   );
-  yield* Effect.gen(function* () {
+  const result = yield* Effect.gen(function* () {
     const client = yield* RpcClient.make(WsRpcGroup);
-    yield* requestServiceUpdate(
+    return yield* requestServiceUpdate(
       {
         config: client[WS_METHODS.serverGetConfig]({}).pipe(Effect.timeout(Duration.seconds(10))),
         update: (version) => client[WS_METHODS.serverUpdateServer]({ targetVersion: version }),
@@ -177,5 +175,5 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
       allowDowngrade,
     );
   }).pipe(Effect.provide(protocol), Effect.timeout(Duration.minutes(10)), Effect.scoped);
-  return true;
+  return result === false ? false : result === "current" ? "current" : "updating";
 });

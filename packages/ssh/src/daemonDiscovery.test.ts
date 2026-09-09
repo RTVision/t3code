@@ -119,3 +119,18 @@ it("reuses its own SSH-managed server without killing or reclassifying it", asyn
     expect(await NodeFSP.readFile(NodePath.join(dir, "pid"), "utf8")).toBe(`${pid}\n`);
   });
 });
+
+it("does not replace a daemon that is bound to a non-loopback host", async () => {
+  await fixture(async (home, pid) => {
+    await NodeFSP.writeFile(
+      NodePath.join(home, ".t3/runtime/server-runtime.json"),
+      JSON.stringify({ pid, launcherPid: pid, port: 1, origin: "http://192.0.2.1:1" }),
+    );
+    await expect(launch(home)).rejects.toMatchObject({
+      stderr: expect.stringContaining("daemon is restarting or unavailable"),
+    });
+    await expect(
+      NodeFSP.stat(NodePath.join(home, ".t3/ssh-launch/test/pid")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});

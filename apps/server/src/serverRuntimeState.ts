@@ -5,6 +5,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import {
+  parseServiceState,
+  SERVICE_STATE_FILE,
+  SERVICE_STOP_MARKER_FILE,
+} from "./cloud/serviceProtocol.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
@@ -44,6 +50,58 @@ export const persistServiceRuntimeState = (input: {
       ),
     );
   });
+
+/** Publish discovery for this server and retain daemon ownership only during handoff. */
+export const acquireServerRuntimeState = Effect.fn("server.acquireRuntimeState")(function* (input: {
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "baseDir" | "serverRuntimeStatePath">;
+  readonly state: PersistedServerRuntimeState;
+}) {
+  const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+  yield* Effect.acquireRelease(
+    Effect.gen(function* () {
+      if (launcher.managed) {
+        yield* persistServiceRuntimeState({
+          baseDir: input.config.baseDir,
+          state: input.state,
+          launcherPid: process.ppid,
+        });
+      }
+      yield* persistServerRuntimeState({
+        path: input.config.serverRuntimeStatePath,
+        state: input.state,
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to persist server runtime state", { cause }),
+        ),
+      );
+    }),
+    () =>
+      Effect.gen(function* () {
+        yield* clearPersistedServerRuntimeState(
+          input.config.serverRuntimeStatePath,
+          input.state.pid,
+        );
+        if (!launcher.managed) return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const runtimeDir = path.join(input.config.baseDir, "runtime");
+        const service = yield* fs.readFileString(path.join(runtimeDir, SERVICE_STATE_FILE)).pipe(
+          Effect.map(parseServiceState),
+          Effect.orElseSucceed(() => undefined),
+        );
+        const stopping = yield* fs.exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE));
+        if (service?.update?.status === "pending" && !stopping) return;
+        yield* clearPersistedServerRuntimeState(
+          yield* serviceRuntimeStatePath(input.config.baseDir),
+          input.state.pid,
+        );
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to clear server runtime state", { cause }),
+        ),
+      ),
+  );
+});
 
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
@@ -103,9 +161,13 @@ export const persistServerRuntimeState = (input: {
     ),
   );
 
-export const clearPersistedServerRuntimeState = (path: string) =>
+export const clearPersistedServerRuntimeState = (path: string, expectedPid?: number) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    if (expectedPid !== undefined) {
+      const current = yield* readPersistedServerRuntimeState(path);
+      if (Option.isNone(current) || current.value.pid !== expectedPid) return;
+    }
     yield* fs.remove(path, { force: true }).pipe(
       Effect.mapError(
         (cause) =>

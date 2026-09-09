@@ -146,10 +146,14 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      if (yield* updateRunningService(config, packageJson.version, flags.allowDowngrade)) {
+      const update = yield* updateRunningService(config, packageJson.version, flags.allowDowngrade);
+      if (update !== false) {
         yield* Console.log(
-          `T3 Code daemon accepted t3@${packageJson.version}. The service launcher handles the restart.`,
+          update === "current"
+            ? `T3 Code daemon is already using t3@${packageJson.version}.`
+            : `T3 Code daemon accepted t3@${packageJson.version}. The service launcher handles the restart.`,
         );
+
         return;
       }
       return yield* Effect.gen(function* () {

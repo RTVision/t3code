@@ -40,7 +40,7 @@ it.effect("updates a launcher-managed daemon using its RPC", () =>
       "0.0.43",
     );
     expect(versions).toEqual(["0.0.43"]);
-    expect(result.method).toBe("boot-service");
+    expect(result).toMatchObject({ method: "boot-service" });
   }),
 );
 
@@ -67,22 +67,22 @@ it.effect("keeps downgrade protection before requesting a daemon update", () =>
     const result = yield* requestServiceUpdate(
       {
         config: Effect.succeed(config("0.0.44")),
-        update: (targetVersion) =>
-          Effect.succeed({ targetVersion, method: "boot-service" as const }),
+        update: () => Effect.die("downgrades must use native reconciliation"),
       },
       "0.0.43",
       true,
     );
-    expect(result.targetVersion).toBe("0.0.43");
+    expect(result).toBe(false);
   }),
 );
 
 it.effect("does not restart a daemon already on the requested version", () =>
   Effect.gen(function* () {
-    yield* requestServiceUpdate(
+    const result = yield* requestServiceUpdate(
       { config: Effect.succeed(config()), update: () => Effect.die("must not update") },
       "0.0.42",
     );
+    expect(result).toBe("current");
   }),
 );
 
@@ -152,7 +152,7 @@ it.effect("authenticates with the installed CLI before any new-version migration
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect.each(["absent", "daemon-record", "unreadable"] as const)(
+it.effect.each(["absent", "daemon-record", "unreadable", "lan-origin"] as const)(
   "handles %s service state without replacing a known daemon",
   (mode) =>
     Effect.gen(function* () {
@@ -165,7 +165,7 @@ it.effect.each(["absent", "daemon-record", "unreadable"] as const)(
         version: 1,
         pid: process.pid,
         port: 1,
-        origin: "http://127.0.0.1:1",
+        origin: mode === "lan-origin" ? "http://192.0.2.1:1" : "http://127.0.0.1:1",
         startedAt: "2026-09-09T00:00:00Z",
       };
       const serverRuntimeStatePath = path.join(baseDir, "userdata", "server-runtime.json");
@@ -179,7 +179,7 @@ it.effect.each(["absent", "daemon-record", "unreadable"] as const)(
         yield* fs.makeDirectory(path.join(baseDir, "runtime", "service-state.json"));
       }
       const run = updateRunningService({ baseDir, serverRuntimeStatePath }, "0.0.44");
-      if (mode === "absent") expect(yield* run).toBe(false);
+      if (mode === "absent" || mode === "lan-origin") expect(yield* run).toBe(false);
       else {
         const error = yield* run.pipe(Effect.flip);
         expect(error._tag).toBe(

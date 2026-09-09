@@ -824,6 +824,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       .remove(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     yield* runSteps(manager.finalize);
+    yield* fs
+      .remove(path.join(input.baseDir, "runtime", "server-runtime.json"), { force: true })
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 

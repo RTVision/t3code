@@ -28,7 +28,12 @@ as the service user, with `--base-dir` if it uses a custom T3 home.
 
 Installation, removal, and service-manager repairs still use the platform support
 listed below. To repair a running systemd or launchd service definition, use
-`service install`.
+`service install`. Explicit downgrades also use that native installation path;
+externally packaged services follow their package's downgrade procedure.
+
+SSH keeps an external daemon selected while it is unavailable. To switch back to
+an SSH-launched server after removing the daemon, disconnect the SSH environment
+in Settings → Connections, then connect again.
 
 Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow

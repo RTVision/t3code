@@ -520,7 +520,7 @@ try {
 	    process.exit(1);
 	  }
   const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+  if (origin.protocol !== "http:" || (runtime.launcherPid === undefined && !["127.0.0.1", "localhost"].includes(origin.hostname))) {
     process.exit(1);
   }
   process.kill(runtime.launcherPid ?? pid, 0);

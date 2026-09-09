@@ -129,10 +129,8 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
-  clearPersistedServerRuntimeState,
+  acquireServerRuntimeState,
   makePersistedServerRuntimeState,
-  persistServerRuntimeState,
-  persistServiceRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -594,44 +592,15 @@ export const makeServerLayer = Layer.unwrap(
       }),
     );
     const runtimeStateLayer = Layer.effectDiscard(
-      Effect.acquireRelease(
-        Effect.gen(function* () {
-          yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
-          yield* awaitActivation;
-          const server = yield* HttpServer.HttpServer;
-          const address = server.address;
-          if (typeof address === "string" || !("port" in address)) {
-            return;
-          }
-
-          const state = yield* makePersistedServerRuntimeState({
-            config,
-            port: address.port,
-          });
-          const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-          if (launcher.managed) {
-            yield* persistServiceRuntimeState({
-              baseDir: config.baseDir,
-              state,
-              launcherPid: process.ppid,
-            });
-          }
-          yield* persistServerRuntimeState({
-            path: config.serverRuntimeStatePath,
-            state,
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to persist server runtime state", { cause }),
-            ),
-          );
-        }),
-        () =>
-          clearPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to clear server runtime state", { cause }),
-            ),
-          ),
-      ),
+      Effect.gen(function* () {
+        yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
+        yield* awaitActivation;
+        const server = yield* HttpServer.HttpServer;
+        const address = server.address;
+        if (typeof address === "string" || !("port" in address)) return;
+        const state = yield* makePersistedServerRuntimeState({ config, port: address.port });
+        yield* acquireServerRuntimeState({ config, state });
+      }),
     );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
