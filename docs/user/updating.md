@@ -39,8 +39,10 @@ npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version> 
 
 Replace `<client-version>` with the version shown in the notice. Using
 `@latest` only resolves the mismatch if your client is on that release. An older
-service launcher may require this local update before it supports remote updates
-and rollback.
+service launcher may need repair before it supports remote updates and rollback.
+For the built-in systemd or launchd service, run the matching CLI's `service install`
+command to repair it. For an externally packaged service, use its package upgrade
+instructions.
 
 For a foreground server, the copied command is `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version>`. Add
 `serve` if you normally run without a browser, and preserve options such as

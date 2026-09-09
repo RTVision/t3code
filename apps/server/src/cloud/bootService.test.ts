@@ -336,7 +336,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* fs.writeFileString(statePath, pendingState);
       expect((yield* service.status).current).toBe(false);
+      const runtimeRecord = `${plan.baseDir}/runtime/server-runtime.json`;
+      yield* fs.writeFileString(runtimeRecord, "stale daemon discovery");
       expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(runtimeRecord)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("npm "))).toBe(false);
       // The stop can block up to systemd's 90s TimeoutStopSec; the runner's
@@ -553,7 +556,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         current: true,
         installedVersion: "1.2.3",
       });
+      const runtimeRecord = `${plan.baseDir}/runtime/server-runtime.json`;
+      yield* fs.writeFileString(runtimeRecord, "stale daemon discovery");
       expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(runtimeRecord)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("npm "))).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);

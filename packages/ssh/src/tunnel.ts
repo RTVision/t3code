@@ -509,7 +509,7 @@ wait_for_pid_exit() {
   done
 }
 resolve_default_runtime_port() {
-  node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
+  node - "\${1:-$DEFAULT_RUNTIME_FILE}" <<'NODE'
 const fs = require("node:fs");
 const runtimePath = process.argv[2] ?? "";
 try {
@@ -520,10 +520,10 @@ try {
 	    process.exit(1);
 	  }
   const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+  if (origin.protocol !== "http:" || (runtime.launcherPid === undefined && !["127.0.0.1", "localhost"].includes(origin.hostname))) {
     process.exit(1);
   }
-  process.kill(pid, 0);
+  process.kill(runtime.launcherPid ?? pid, 0);
   process.stdout.write(\`\${pid} \${port}\`);
 } catch {
   process.exit(1);
@@ -533,18 +533,22 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
-DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" 2>/dev/null || true)"
+DEFAULT_RUNTIME_INFO="$SERVICE_RUNTIME_INFO"
+if [ -z "$DEFAULT_RUNTIME_INFO" ]; then
+  DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+fi
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+if [ -n "$DEFAULT_REMOTE_PORT" ] && { [ "$REMOTE_MANAGED" != "managed" ] || [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; }; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; then
+      PID_TO_STOP="$REMOTE_PID"
       if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
         kill "$PID_TO_STOP" 2>/dev/null || true
         wait_for_pid_exit "$PID_TO_STOP"
@@ -562,6 +566,10 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_MANAGED="external"
     fi
   else
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      printf 'The T3 daemon is unavailable on 127.0.0.1:%s. Wait for it to restart, or bind it to loopback or a wildcard host.\\n' "$REMOTE_PORT" >&2
+      exit 1
+    fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
@@ -569,9 +577,8 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
   if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
+    printf 'The external T3 server is unavailable. Retry after it has restarted.\\n' >&2
+    exit 1
   fi
 elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
