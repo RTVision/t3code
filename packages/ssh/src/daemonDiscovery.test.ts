@@ -75,7 +75,7 @@ it("does not launch an SSH replacement while the daemon child is restarting", as
       JSON.stringify({ pid, launcherPid: pid, port: 1, origin: "http://127.0.0.1:1" }),
     );
     await expect(launch(home)).rejects.toMatchObject({
-      stderr: expect.stringContaining("daemon is restarting or unavailable"),
+      stderr: expect.stringContaining("daemon is unavailable on 127.0.0.1:1"),
     });
     await expect(
       NodeFSP.stat(NodePath.join(home, ".t3/ssh-launch/test/pid")),
@@ -127,7 +127,7 @@ it("does not replace a daemon that is bound to a non-loopback host", async () =>
       JSON.stringify({ pid, launcherPid: pid, port: 1, origin: "http://192.0.2.1:1" }),
     );
     await expect(launch(home)).rejects.toMatchObject({
-      stderr: expect.stringContaining("daemon is restarting or unavailable"),
+      stderr: expect.stringContaining("bind it to loopback or a wildcard host"),
     });
     await expect(
       NodeFSP.stat(NodePath.join(home, ".t3/ssh-launch/test/pid")),

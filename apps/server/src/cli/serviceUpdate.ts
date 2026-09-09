@@ -38,7 +38,7 @@ export const requestServiceUpdate = Effect.fn("cli.service.requestUpdate")(funct
   if (config.environment.capabilities.serverSelfUpdate !== "boot-service") {
     return yield* new ServiceUpdateConnectionError({
       message:
-        "The running server is not managed by the T3 service launcher. Connect to the daemon before updating it.",
+        "The running server is not managed by the T3 service launcher. Stop the foreground server or desktop host, then start the daemon before updating it.",
     });
   }
   const installedVersion = config.environment.serverVersion;

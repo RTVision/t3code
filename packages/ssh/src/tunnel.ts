@@ -567,7 +567,7 @@ if [ -n "$DEFAULT_REMOTE_PORT" ] && { [ "$REMOTE_MANAGED" != "managed" ] || [ "$
     fi
   else
     if [ -n "$SERVICE_RUNTIME_INFO" ]; then
-      printf 'The T3 daemon is restarting or unavailable. Retry the connection.\\n' >&2
+      printf 'The T3 daemon is unavailable on 127.0.0.1:%s. Wait for it to restart, or bind it to loopback or a wildcard host.\\n' "$REMOTE_PORT" >&2
       exit 1
     fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
