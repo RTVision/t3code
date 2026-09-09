@@ -75,6 +75,10 @@ export function VimSettingsPanel() {
             </label>
           ))}
           <p className="text-xs text-muted-foreground">
+            The guide stays open until you choose a command or cancel. Sequence timeout applies to
+            counts and shortcuts without the guide.
+          </p>
+          <p className="text-xs text-muted-foreground">
             Separate strokes with spaces, alternatives with commas. Use uppercase letters for Shift,
             such as G. Empty keys disable a command. Vim wins over ordinary shortcuts only in the
             selected modes.

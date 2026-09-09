@@ -272,12 +272,16 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
           dispatchAppCommand(supported, event);
         }
       } else {
-        timeout.current = setTimeout(clear, settings.sequenceTimeoutMs);
-        if (settings.guideEnabled && result.candidates)
+        // Guided sequences wait for a choice. Expiring them while someone reads
+        // the guide makes the next key run as an unrelated command.
+        if (settings.guideEnabled && result.candidates?.length) {
           guideTimeout.current = setTimeout(
             () => setGuide(result.candidates ?? []),
             settings.guideDelayMs,
           );
+        } else {
+          timeout.current = setTimeout(clear, settings.sequenceTimeoutMs);
+        }
       }
     }
     window.addEventListener("keydown", keydown, true);
@@ -302,7 +306,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
   const shown = help ? bindings : guide;
   return (
     <div
-      className="fixed bottom-2 left-2 z-[60] max-w-sm rounded border bg-popover px-2 py-1 text-xs text-popover-foreground shadow"
+      className="relative shrink-0 border-t bg-popover px-3 py-1 text-xs text-popover-foreground"
       data-vim-status
     >
       <div aria-live="polite">
@@ -310,7 +314,11 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
         {pending && <span className="ml-3 font-mono">{pending}</span>}
       </div>
       {shown.length > 0 && (
-        <div className="mt-2 max-h-72 overflow-auto" aria-label="Vim shortcuts">
+        <div
+          className="absolute bottom-full left-0 z-50 max-h-[min(18rem,60dvh)] w-max max-w-full overflow-auto rounded-t border bg-popover p-3 shadow"
+          aria-label="Vim shortcuts"
+        >
+          <p className="mb-2 text-muted-foreground">Choose a shortcut or press Esc to cancel.</p>
           {shown
             .filter((binding) => binding.keys.length > 0 && binding.modes.includes(mode))
             .map((binding) => (

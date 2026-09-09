@@ -244,7 +244,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <VimNavigation isOnSettings={isOnSettings} />
         <ProjectProjectionRetention />
         <Sidebar
           side="left"
@@ -275,7 +274,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {children}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
+          <VimNavigation isOnSettings={isOnSettings} />
+        </div>
         <SidebarControl />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
