@@ -26,7 +26,6 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -272,6 +271,8 @@ function PullRequestCodeTab({
     [viewedQuery.data],
   );
   const diffHeadSha = viewedQuery.data?.headSha;
+  const isWaitingForViewedFiles =
+    canTrackViewedFiles && viewedQuery.data === null && viewedQuery.error === null;
   const setFileViewed = useAtomCommand(pullRequestEnvironment.setFileViewed, {
     reportFailure: false,
   });
@@ -298,8 +299,8 @@ function PullRequestCodeTab({
             type: "error",
             title: "Viewed progress could not be saved. Refresh and try again.",
           });
+          refreshViewedFiles();
         }
-        refreshViewedFiles();
       } finally {
         viewedInFlight.current = false;
         setViewedPending(false);
@@ -326,15 +327,17 @@ function PullRequestCodeTab({
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
   const diffQuery = useEnvironmentQuery(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: {
-        ...reference,
-        ...(cursor === null ? {} : { cursor }),
-        ...(commit === null ? {} : { commit }),
-        ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
-      },
-    }),
+    isWaitingForViewedFiles
+      ? null
+      : pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(cursor === null ? {} : { cursor }),
+            ...(commit === null ? {} : { commit }),
+            ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
+          },
+        }),
   );
   // Each answer is kept as its own slice. Concatenating the patches and re-parsing the growing
   // text would cost more with every slice, which is the wall the slicing exists to remove.
@@ -380,15 +383,17 @@ function PullRequestCodeTab({
   }, [cursor, diffQuery.data, scopeKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
-  const refreshFirstDiffPage = useAtomRefresh(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: {
-        ...reference,
-        ...(commit === null ? {} : { commit }),
-        ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
-      },
-    }),
+  const { refresh: refreshFirstDiffPage } = useEnvironmentQuery(
+    isWaitingForViewedFiles
+      ? null
+      : pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(commit === null ? {} : { commit }),
+            ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
+          },
+        }),
   );
   const appliedRefreshToken = useRef(refreshToken);
   useEffect(() => {
@@ -1332,7 +1337,7 @@ function PullRequestCodeTab({
 
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
-  if (diffQuery.isPending && loadedSlices.length === 0) {
+  if ((isWaitingForViewedFiles || diffQuery.isPending) && loadedSlices.length === 0) {
     return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
