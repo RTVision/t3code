@@ -98,7 +98,6 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
-import { makeGitHubNativeStackRead } from "./gitHubNativeStack.ts";
 import type { ProviderChangeRequestSummary, ProviderListCursor } from "./PullRequestProvider.ts";
 
 /**
@@ -416,8 +415,6 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
-    readonly getNativeDependencyMembership: ReturnType<typeof makeGitHubNativeStackRead>;
-
     readonly getViewerLogin: (input: {
       readonly cwd: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
@@ -1523,7 +1520,6 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
-    getNativeDependencyMembership: makeGitHubNativeStackRead(github.execute),
     getViewerLogin: (input) =>
       github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
         Effect.flatMap((result) => {

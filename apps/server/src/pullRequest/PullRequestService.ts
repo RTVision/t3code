@@ -74,7 +74,6 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestPage,
   type ProviderListCursor,
-  type ProviderNativeDependencyMembership,
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
@@ -147,7 +146,6 @@ const DIFF_CACHE_CAPACITY = 128;
 const VIEWER_CACHE_CAPACITY = 32;
 const DEPENDENCY_CACHE_CAPACITY = 64;
 const DEPENDENCY_RELATIONSHIP_LIMIT = 200;
-const NATIVE_DEPENDENCY_MEMBER_LIMIT = 100;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
 
@@ -510,14 +508,6 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
-    ...(api.getNativeDependencyMembership === undefined
-      ? {}
-      : {
-          getNativeDependencyMembership: wrap(
-            "getNativeDependencyMembership",
-            api.getNativeDependencyMembership,
-          ),
-        }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -1457,7 +1447,7 @@ export const make = Effect.gen(function* () {
               ...capabilities,
               dependencies: {
                 branchRelationships: true,
-                nativeMembership: project.api.getNativeDependencyMembership !== undefined,
+                nativeMembership: false,
               },
             },
             projectId: project.project.id,
@@ -1542,44 +1532,6 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((project) =>
         Effect.gen(function* () {
           const branchRead = yield* dependencyRelationships(project);
-          const nativeProviderRead = yield* project.api.getNativeDependencyMembership === undefined
-            ? Effect.succeed({ _tag: "Unsupported" as const })
-            : project.api
-                .getNativeDependencyMembership({
-                  cwd: project.project.workspaceRoot,
-                  host: project.host,
-                  repository: project.repository,
-                  number: input.number,
-                  limit: NATIVE_DEPENDENCY_MEMBER_LIMIT,
-                })
-                .pipe(
-                  Effect.map((membership: ProviderNativeDependencyMembership) => ({
-                    _tag: "Success" as const,
-                    membership,
-                  })),
-                  Effect.orElseSucceed(() => ({ _tag: "Failure" as const })),
-                );
-          const nativeRead: PullRequestDependencyContext["native"] =
-            nativeProviderRead._tag === "Unsupported"
-              ? undefined
-              : nativeProviderRead._tag === "Failure"
-                ? { status: "unavailable" }
-                : nativeProviderRead.membership.status === "none"
-                  ? { status: "none" }
-                  : {
-                      status: "present",
-                      id: nativeProviderRead.membership.id,
-                      members: nativeProviderRead.membership.members
-                        .slice(0, NATIVE_DEPENDENCY_MEMBER_LIMIT)
-                        .map((member) => member.number),
-                      coverage:
-                        nativeProviderRead.membership.coverage === "partial" ||
-                        nativeProviderRead.membership.members.length >
-                          NATIVE_DEPENDENCY_MEMBER_LIMIT
-                          ? "partial"
-                          : "complete",
-                    };
-
           let rows: ProviderDependencyNode[] = [];
           let branchComplete = false;
           let branchUnavailable = false;
@@ -1595,16 +1547,9 @@ export const make = Effect.gen(function* () {
                 branchRead.page.cursorAdvance !== branchRead.page.items.length);
             branchComplete = !budgetExhausted;
             if (!rows.some((row) => row.number === input.number)) {
-              const nativeFocus =
-                nativeProviderRead._tag === "Success" &&
-                nativeProviderRead.membership.status === "present"
-                  ? (nativeProviderRead.membership.members.find(
-                      (member) => member.number === input.number,
-                    ) ?? null)
-                  : null;
               const summaryRead = project.api.getChangeRequestSummary;
               const summary =
-                nativeFocus !== null || summaryRead === undefined
+                summaryRead === undefined
                   ? null
                   : yield* summaryRead({
                       cwd: project.project.workspaceRoot,
@@ -1613,8 +1558,7 @@ export const make = Effect.gen(function* () {
                       number: input.number,
                     }).pipe(Effect.orElseSucceed(() => null));
               const focus: ProviderDependencyNode | null =
-                nativeFocus ??
-                (summary === null
+                summary === null
                   ? null
                   : {
                       number: summary.number,
@@ -1625,7 +1569,7 @@ export const make = Effect.gen(function* () {
                       headBranch: summary.headBranch,
                       headRepositoryNameWithOwner: null,
                       baseBranch: summary.baseBranch,
-                    });
+                    };
               if (focus === null) {
                 branchComplete = false;
                 branchUnavailable = true;
@@ -1652,34 +1596,6 @@ export const make = Effect.gen(function* () {
             complete: branchComplete,
           });
 
-          const nativeMembership =
-            nativeProviderRead._tag === "Success" &&
-            nativeProviderRead.membership.status === "present"
-              ? nativeProviderRead.membership.members.slice(0, NATIVE_DEPENDENCY_MEMBER_LIMIT)
-              : [];
-          const nodesByNumber = new Map(topology.nodes.map((node) => [node.ref.number, node]));
-          for (const member of nativeMembership) {
-            if (nodesByNumber.has(member.number)) continue;
-            nodesByNumber.set(member.number, {
-              ref: {
-                projectId: project.project.id,
-                repository: project.repository,
-                number: member.number,
-              },
-              title: member.title,
-              url: member.url,
-              state: member.state,
-              isDraft: member.isDraft,
-              baseBranch: member.baseBranch,
-              head:
-                member.headRepositoryNameWithOwner == null
-                  ? null
-                  : {
-                      repository: member.headRepositoryNameWithOwner,
-                      branch: member.headBranch,
-                    },
-            });
-          }
           const issues = [...topology.issues];
           if (budgetExhausted && !issues.some((issue) => issue.reason === "budget")) {
             issues.push({ reason: "budget" });
@@ -1690,14 +1606,13 @@ export const make = Effect.gen(function* () {
           return {
             ...topology,
             ...(input.host === undefined ? {} : { focus: input }),
-            nodes: [...nodesByNumber.values()].map((node) =>
+            nodes: topology.nodes.map((node) =>
               input.host === undefined
                 ? node
                 : { ...node, ref: { ...input, number: node.ref.number } },
             ),
             coverage: branchRead._tag === "Failure" ? "unavailable" : topology.coverage,
             issues,
-            ...(nativeRead === undefined ? {} : { native: nativeRead }),
           };
         }),
       ),
@@ -3007,7 +2922,6 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) =>
         Exit.isSuccess(exit) &&
         exit.value.coverage !== "unavailable" &&
-        exit.value.native?.status !== "unavailable" &&
         !exit.value.issues.some((issue) => issue.reason === "host-unavailable")
           ? DEPENDENCY_CACHE_TTL
           : Duration.zero,

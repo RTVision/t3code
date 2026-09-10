@@ -271,7 +271,7 @@ describe("PullRequestCapabilities", () => {
 });
 
 describe("PullRequestDependencyContext", () => {
-  it("round-trips bounded branch and native membership data through the RPC codec", () => {
+  it("round-trips branch relationships and ignores older servers native membership through the RPC codec", () => {
     const projectId = "p1" as PullRequestDependencyContext["focus"]["projectId"];
     const value: PullRequestDependencyContext = {
       focus: { projectId, repository: "acme/web", number: 2 },
@@ -292,11 +292,15 @@ describe("PullRequestDependencyContext", () => {
       edges: [{ child: 2, parent: 1, certainty: "confirmed" }],
       coverage: "complete",
       issues: [],
-      native: { status: "present", id: "STACK_1", members: [1, 2], coverage: "complete" },
     };
     const codec = Schema.toCodecJson(PullRequestDependencyContext);
 
     expect(Schema.decodeUnknownSync(codec)(Schema.encodeUnknownSync(codec)(value))).toEqual(value);
+    const legacy = {
+      ...value,
+      native: { status: "present", id: "STACK_1", members: [1, 2], coverage: "complete" },
+    };
+    expect(Schema.decodeUnknownSync(codec)(legacy)).toEqual(value);
   });
 });
 

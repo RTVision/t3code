@@ -1,7 +1,13 @@
-import type { PullRequestDependencyContext } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { pullRequestStackView } from "./pullRequestStackSnapshot";
+import type { PullRequestDependencyContext, PullRequestStack } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestDependencyNavigation } from "./pullRequestDependencyNavigation.logic";
+import {
+  pullRequestDependencyNavigation,
+  shouldReadInferredPullRequestRelationships,
+} from "./pullRequestDependencyNavigation.logic";
 
 function context(
   overrides: Partial<PullRequestDependencyContext> = {},
@@ -42,9 +48,6 @@ describe("pull request dependency navigation", () => {
     expect(navigation).toMatchObject({
       status: "ready",
       path: [{ number: 41 }, { number: 42 }, { number: 43 }],
-      focusIndex: 1,
-      parent: 41,
-      child: 43,
       rootBase: "main",
     });
   });
@@ -57,7 +60,7 @@ describe("pull request dependency navigation", () => {
         ],
       }),
     );
-    expect(navigation).toMatchObject({ status: "ready", child: null, siblings: [{ number: 44 }] });
+    expect(navigation).toMatchObject({ status: "ready", siblings: [{ number: 44 }] });
   });
   it("does not turn a candidate parent into a root base or navigation", () => {
     const navigation = view(
@@ -66,7 +69,6 @@ describe("pull request dependency navigation", () => {
     expect(navigation).toMatchObject({
       status: "ready",
       rootBase: null,
-      parent: null,
       possibleParents: [{ number: 41 }],
     });
   });
@@ -136,22 +138,19 @@ describe("pull request dependency navigation", () => {
     ).toMatchObject({ status: "ready", rootBase: "main", parentAmbiguous: false });
   });
 
-  it("keeps native membership navigable when a member was not loaded", () => {
-    const navigation = view(
-      context({
-        nodes: [],
-        native: { status: "present", id: "stack", members: [40, 42], coverage: "partial" },
+  it("keeps inferred navigation visible with a warning when refresh fails", () => {
+    const stale = context({ edges: [{ parent: 41, child: 42, certainty: "confirmed" }] });
+    expect(
+      pullRequestDependencyNavigation({
+        supported: true,
+        context: stale,
+        pending: false,
+        failed: true,
       }),
-    );
-    expect(navigation).toMatchObject({
+    ).toMatchObject({
       status: "ready",
-      native: {
-        status: "present",
-        members: [
-          { number: 40, title: null },
-          { number: 42, title: null },
-        ],
-      },
+      coverage: "unavailable",
+      path: [{ number: 41 }, { number: 42 }],
     });
   });
   it("shows partial and unavailable empty results instead of claiming no dependencies", () => {
@@ -188,21 +187,6 @@ describe("pull request dependency navigation", () => {
       ),
     ).toMatchObject({ status: "ready", cycleAfter: true });
   });
-  it("keeps native membership visible when branch relationship coverage is unavailable", () => {
-    const navigation = view(
-      context({
-        coverage: "unavailable",
-        nodes: [],
-        native: { status: "present", id: "stack", members: [40, 42], coverage: "complete" },
-      }),
-    );
-    expect(navigation).toMatchObject({
-      status: "ready",
-      coverage: "unavailable",
-      rootBase: null,
-      native: { status: "present" },
-    });
-  });
   it("turns multiple confirmed parents into an explicit choice", () => {
     const navigation = view(
       context({
@@ -214,7 +198,6 @@ describe("pull request dependency navigation", () => {
     );
     expect(navigation).toMatchObject({
       status: "ready",
-      parent: null,
       rootBase: null,
       possibleParents: [{ number: 41 }, { number: 44 }],
     });
@@ -222,7 +205,6 @@ describe("pull request dependency navigation", () => {
   it("withholds a root base when the host only flags an ambiguous parent", () => {
     expect(view(context({ issues: [{ reason: "ambiguous-parent" }] }))).toMatchObject({
       status: "ready",
-      parent: null,
       parentAmbiguous: true,
       rootBase: null,
       possibleParents: [],
@@ -275,5 +257,99 @@ describe("pull request dependency navigation", () => {
     if (navigation.status !== "ready") throw new Error("expected ready navigation");
     expect(navigation.path).toHaveLength(20);
     expect(navigation.path.at(-1)?.number).toBe(27);
+  });
+});
+
+describe("native stack precedence", () => {
+  const lookup = {
+    supported: true,
+    nativeStackSupported: true,
+    hasNativeStack: false,
+    nativeStackSettled: true,
+  };
+  it("uses inference after a successful native lookup reports no stack", () => {
+    expect(shouldReadInferredPullRequestRelationships(lookup)).toBe(true);
+  });
+  it("does not query or show inference beside fresh or saved native membership", () => {
+    for (const nativeStackSettled of [true, false]) {
+      expect(
+        shouldReadInferredPullRequestRelationships({
+          ...lookup,
+          hasNativeStack: true,
+          nativeStackSettled,
+        }),
+      ).toBe(false);
+    }
+  });
+  it("waits for the initial native lookup before querying inference", () => {
+    expect(
+      shouldReadInferredPullRequestRelationships({ ...lookup, nativeStackSettled: false }),
+    ).toBe(false);
+  });
+  it("keeps inference available on Gitea and servers without native stack support", () => {
+    expect(
+      shouldReadInferredPullRequestRelationships({
+        ...lookup,
+        nativeStackSupported: false,
+        nativeStackSettled: false,
+      }),
+    ).toBe(true);
+  });
+  it("does not call the dependency RPC on older servers that omit its capability", () => {
+    expect(shouldReadInferredPullRequestRelationships({ ...lookup, supported: false })).toBe(false);
+  });
+});
+
+describe("inferred navigation through native refreshes", () => {
+  const nativeStack: PullRequestStack = {
+    id: "stack",
+    number: 1,
+    url: "https://github.com/acme/web/stacks/1",
+    base: "main",
+    layers: [{ number: 42, headBranch: "feature", state: "open" }],
+  };
+  function navigation(result: AsyncResult.AsyncResult<PullRequestStack | null, string>) {
+    const query = {
+      data: Option.getOrNull(AsyncResult.value(result)),
+      isSuccess: AsyncResult.isSuccess(result),
+      isPending: result.waiting,
+      error: AsyncResult.isFailure(result) ? "Refresh failed" : null,
+    };
+    const stack = pullRequestStackView(query, null);
+    return {
+      nativeFresh: stack.isFresh,
+      inferred: shouldReadInferredPullRequestRelationships({
+        supported: true,
+        nativeStackSupported: true,
+        hasNativeStack: stack.data !== null,
+        nativeStackSettled: query.isSuccess || query.error !== null,
+      }),
+    };
+  }
+  it("keeps inferred navigation through a pending or failed refresh of native absence", () => {
+    const absent = AsyncResult.success<PullRequestStack | null>(null);
+    expect(navigation(AsyncResult.initial(true)).inferred).toBe(false);
+    expect(navigation(absent).inferred).toBe(true);
+    expect(navigation(AsyncResult.waiting(absent))).toEqual({ nativeFresh: false, inferred: true });
+    expect(
+      navigation(AsyncResult.fail("Offline", { previousSuccess: Option.some(absent) })),
+    ).toEqual({ nativeFresh: false, inferred: true });
+  });
+  it("uses read-only inference if the first native lookup fails", () => {
+    expect(navigation(AsyncResult.fail("Unavailable"))).toEqual({
+      nativeFresh: false,
+      inferred: true,
+    });
+  });
+  it("switches to native navigation when membership arrives and retains it through refreshes", () => {
+    const present = AsyncResult.success(nativeStack);
+    expect(navigation(present)).toEqual({ nativeFresh: true, inferred: false });
+    expect(navigation(AsyncResult.waiting(present))).toEqual({
+      nativeFresh: false,
+      inferred: false,
+    });
+    expect(
+      navigation(AsyncResult.fail("Offline", { previousSuccess: Option.some(present) })),
+    ).toEqual({ nativeFresh: false, inferred: false });
   });
 });

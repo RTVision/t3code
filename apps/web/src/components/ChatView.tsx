@@ -202,7 +202,6 @@ import {
 } from "../previewMiniPlayerStore";
 import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
-import { usePanelPullRequestNavigation } from "./pullRequest/usePanelPullRequestNavigation";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -4166,11 +4165,6 @@ export default function ChatView(props: ChatViewProps) {
         linkedThreadPullRequest.number,
       ])
     : null;
-  const openPanelPullRequest = usePanelPullRequestNavigation(
-    activeThreadRef,
-    renderedRightPanelSurface,
-    supportsPullRequests,
-  );
   const observedThreadPullRequestRef = useRef<{
     readonly threadKey: string;
     readonly reference: ThreadLinkedPullRequest | null;
@@ -8142,7 +8136,6 @@ export default function ChatView(props: ChatViewProps) {
             : "page"
         }
         composerDraftTarget={composerDraftTarget}
-        onOpenPullRequest={openPanelPullRequest}
         onBack={
           activeThreadRef !== null && supportsThreadPullRequests
             ? addPullRequestsSurface
