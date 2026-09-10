@@ -164,6 +164,11 @@ function PullRequestRowImpl({
           )}
         </span>
         <PullRequestMetaLine className="@container/pr-row-meta col-start-1 row-start-2 overflow-hidden text-xs text-muted-foreground/70">
+          {entry.viewerReviewRequested && entry.state === "open" ? (
+            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 text-amber-700 dark:text-amber-400">
+              Your review requested
+            </span>
+          ) : null}
           {matchedElsewhere ? (
             <Tooltip>
               <TooltipTrigger

@@ -684,6 +684,7 @@ export function PullRequestSummaryTab({
                   environmentId={environmentId}
                   reference={reference}
                   allowed={detail.viewerPermissions.requestReviewers}
+                  comments={detail.comments}
                   onRequested={onRefresh}
                 />
               ) : null}
