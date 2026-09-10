@@ -34,7 +34,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
           const bin = path.join(fixture, "bin");
           const cliPath = path.join(fixture, "installed cli.mjs");
           const callsPath = path.join(fixture, "package-manager-calls.jsonl");
-          const packageSpec = "t3@0.0.35";
+          const packageSpec = "@rtvision/t3@0.0.35";
           yield* fs.makeDirectory(bin);
           yield* fs.symlink(process.execPath, path.join(bin, "node"));
           yield* fs.writeFileString(
@@ -153,6 +153,8 @@ if (args.includes("--package")) {
           const expectedCall = [
             ...(packageManager === "npm" ? ["exec"] : []),
             "--yes",
+            "--registry",
+            "https://npm-registry.rtvision.com/",
             "--package",
             packageSpec,
             "--",
@@ -303,7 +305,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
           "empty-success",
           "success",
           "failed-with-path",
-          "existing-cli",
+          "unmanaged-cli",
           "node-override",
         ] as const
       ).map((mode) => ({ packageManager, mode })),
@@ -318,7 +320,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
         const bin = path.join(fixture, "bin");
         const cliPath = path.join(fixture, "installed cli.mjs");
         const callsPath = path.join(fixture, "installer-calls.jsonl");
-        const packageSpec = "t3@0.0.39-nightly.20260905.1286";
+        const packageSpec = "@rtvision/t3@0.0.39-nightly.20260905.1286";
         const args = ["serve", "a path with spaces"];
         yield* fs.makeDirectory(bin);
         yield* fs.symlink(process.execPath, path.join(bin, "node"));
@@ -336,7 +338,7 @@ process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");
 const fs = require("node:fs");
 fs.appendFileSync(process.env.T3_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
 const mode = process.env.T3_TEST_MODE;
-if (mode === "success" || mode === "failed-with-path") {
+if (mode === "success" || mode === "failed-with-path" || mode === "unmanaged-cli") {
   process.stdout.write(process.env.T3_TEST_CLI + "\\n");
 }
 if (mode === "etarget" || mode === "failed-with-path") {
@@ -349,7 +351,7 @@ if (mode === "etarget" || mode === "failed-with-path") {
 `,
         );
         yield* fs.chmod(path.join(bin, packageManager), 0o700);
-        if (mode === "existing-cli") yield* fs.symlink(cliPath, path.join(bin, "t3"));
+        if (mode === "unmanaged-cli") yield* fs.symlink(cliPath, path.join(bin, "t3"));
 
         const child = yield* spawner.spawn(
           ChildProcess.make("/bin/sh", ["-s", "--", ...args], {
@@ -404,6 +406,8 @@ if (mode === "etarget" || mode === "failed-with-path") {
         const expectedCall = [
           ...(packageManager === "npm" ? ["exec"] : []),
           "--yes",
+          "--registry",
+          "https://npm-registry.rtvision.com/",
           "--package",
           packageSpec,
           "--",
@@ -411,7 +415,7 @@ if (mode === "etarget" || mode === "failed-with-path") {
           "-c",
           "command -v t3",
         ];
-        const usesInstaller = mode !== "existing-cli" && mode !== "node-override";
+        const usesInstaller = mode !== "node-override";
         const calls = yield* fs.readFileString(callsPath);
         if (usesInstaller) {
           assert.deepEqual(
