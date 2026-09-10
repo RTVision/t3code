@@ -100,6 +100,10 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  PullRequestCiRuns,
+  PullRequestCiJobs,
+  PullRequestCiRunInput,
+  PullRequestCiRerunInput,
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -353,6 +357,9 @@ export const WS_METHODS = {
   pullRequestsStack: "pullRequests.stack",
   pullRequestsLinkedThreads: "pullRequests.linkedThreads",
   pullRequestsDetail: "pullRequests.detail",
+  pullRequestsCiRuns: "pullRequests.ciRuns",
+  pullRequestsCiJobs: "pullRequests.ciJobs",
+  pullRequestsRerunCi: "pullRequests.rerunCi",
   pullRequestsDependencyContext: "pullRequests.dependencyContext",
   pullRequestsActivity: "pullRequests.activity",
   pullRequestsThreadComments: "pullRequests.threadComments",
@@ -674,6 +681,24 @@ const WsPullRequestsLinkedThreadsRpc = Rpc.make(WS_METHODS.pullRequestsLinkedThr
 const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
   payload: PullRequestRef,
   success: PullRequestDetail,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsCiRunsRpc = Rpc.make(WS_METHODS.pullRequestsCiRuns, {
+  payload: PullRequestRef,
+  success: PullRequestCiRuns,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsCiJobsRpc = Rpc.make(WS_METHODS.pullRequestsCiJobs, {
+  payload: PullRequestCiRunInput,
+  success: PullRequestCiJobs,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsRerunCiRpc = Rpc.make(WS_METHODS.pullRequestsRerunCi, {
+  payload: PullRequestCiRerunInput,
+  success: Schema.Void,
   error: PullRequestRpcError,
 });
 
@@ -1265,6 +1290,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsStackRpc,
   WsPullRequestsLinkedThreadsRpc,
   WsPullRequestsDetailRpc,
+  WsPullRequestsCiRunsRpc,
+  WsPullRequestsCiJobsRpc,
+  WsPullRequestsRerunCiRpc,
   WsPullRequestsDependencyContextRpc,
   WsPullRequestsActivityRpc,
   WsPullRequestsThreadCommentsRpc,

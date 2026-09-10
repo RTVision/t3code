@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   PullRequestActionInput,
+  PullRequestCiRerunInput,
   PullRequestCapabilities,
   PullRequestDependencyContext,
   PullRequestListInput,
@@ -16,6 +17,21 @@ const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+
+it("requires a job ID for a job rerun and accepts opaque provider IDs", () => {
+  const decode = Schema.decodeUnknownSync(PullRequestCiRerunInput);
+  const input = {
+    projectId: "project",
+    repository: "acme/web",
+    number: 1,
+    runId: "pipeline-uuid",
+    headSha: "head",
+    attempt: 1,
+  };
+  expect(decode({ ...input, target: { kind: "failed" } }).runId).toBe("pipeline-uuid");
+  expect(decode({ ...input, target: { kind: "job", jobId: "job-uuid" } }).target.kind).toBe("job");
+  expect(() => decode({ ...input, target: { kind: "job" } })).toThrow();
+});
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },

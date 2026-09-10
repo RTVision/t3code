@@ -1707,6 +1707,9 @@ function PullRequestsRouteView() {
                     entry={entry}
                     showProjectTitle
                     showProvider={showProvider}
+                    showReviewRequest={
+                      group.key !== "reviewRequested" && search.involvement !== "reviewing"
+                    }
                     {...(capableEnvironments.length > 1 &&
                     environmentLabels.get(entry.environmentId) !== undefined
                       ? { environmentLabel: environmentLabels.get(entry.environmentId)! }

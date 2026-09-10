@@ -25,6 +25,10 @@ import {
   type OrchestrationProjectShell,
   type PullRequestAction,
   type PullRequestActionInput,
+  type PullRequestCiRuns,
+  type PullRequestCiJobs,
+  type PullRequestCiRunInput,
+  type PullRequestCiRerunInput,
   type PullRequestActivity,
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
@@ -178,6 +182,11 @@ export class PullRequestService extends Context.Service<
     readonly subscribeRefreshes: Stream.Stream<PullRequestRefresh>;
     readonly refreshAfterTurn: Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
+    readonly ciRuns: (input: PullRequestRef) => Effect.Effect<PullRequestCiRuns, PullRequestError>;
+    readonly ciJobs: (
+      input: PullRequestCiRunInput,
+    ) => Effect.Effect<PullRequestCiJobs, PullRequestError>;
+    readonly rerunCi: (input: PullRequestCiRerunInput) => Effect.Effect<void, PullRequestError>;
     readonly dependencyContext: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestDependencyContext, PullRequestError>;
@@ -508,6 +517,9 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.getCiRuns === undefined ? {} : { getCiRuns: wrap("getCiRuns", api.getCiRuns) }),
+    ...(api.getCiJobs === undefined ? {} : { getCiJobs: wrap("getCiJobs", api.getCiJobs) }),
+    ...(api.rerunCi === undefined ? {} : { rerunCi: interactive("rerunCi", api.rerunCi) }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -1668,6 +1680,53 @@ export const make = Effect.gen(function* () {
         },
       ),
     );
+
+  const ciProvider = Effect.fn("PullRequestService.ciProvider")(function* (input: PullRequestRef) {
+    const project = yield* requireProject(input);
+    const capabilities = yield* capabilitiesOf(project);
+    const { getCiRuns, getCiJobs, rerunCi } = project.api;
+    if (!capabilities.ciRuns || !getCiRuns || !getCiJobs || !rerunCi) {
+      return yield* new PullRequestOperationError({
+        operation: "ci",
+        detail: "This host does not support inline CI runs.",
+      });
+    }
+    return {
+      getCiRuns,
+      getCiJobs,
+      rerunCi,
+      reference: {
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+        repository: project.repository,
+        number: input.number,
+      },
+    };
+  });
+  const ciRuns: PullRequestService["Service"]["ciRuns"] = Effect.fn("PullRequestService.ciRuns")(
+    function* (input) {
+      const provider = yield* ciProvider(input);
+      return yield* provider
+        .getCiRuns(provider.reference)
+        .pipe(Effect.mapError(toPullRequestError("ciRuns")));
+    },
+  );
+  const ciJobs: PullRequestService["Service"]["ciJobs"] = Effect.fn("PullRequestService.ciJobs")(
+    function* (input) {
+      const provider = yield* ciProvider(input);
+      return yield* provider
+        .getCiJobs({ ...input, ...provider.reference })
+        .pipe(Effect.mapError(toPullRequestError("ciJobs")));
+    },
+  );
+  const rerunCi: PullRequestService["Service"]["rerunCi"] = Effect.fn("PullRequestService.rerunCi")(
+    function* (input) {
+      const provider = yield* ciProvider(input);
+      yield* provider
+        .rerunCi({ ...input, ...provider.reference })
+        .pipe(Effect.mapError(toPullRequestError("rerunCi")));
+    },
+  );
 
   const viewedFiles: PullRequestService["Service"]["viewedFiles"] = Effect.fn(
     "PullRequestService.viewedFiles",
@@ -3123,6 +3182,9 @@ export const make = Effect.gen(function* () {
     diff,
     viewedFiles,
     setFileViewed: invalidatedByMutation(setFileViewed, false),
+    ciRuns,
+    ciJobs,
+    rerunCi: invalidatedByMutation(rerunCi),
     diffFileContents,
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),

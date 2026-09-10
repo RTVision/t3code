@@ -154,6 +154,40 @@ export const PullRequestCheck = Schema.Struct({
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
+export const PullRequestCiRerunMode = Schema.Literals(["all", "failed"]);
+export const PullRequestCiRun = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  url: Schema.NullOr(Schema.String),
+  status: PullRequestCheckStatus,
+  /** Zero when the host does not expose a run attempt counter. */
+  attempt: NonNegativeInt,
+  rerunModes: Schema.Array(PullRequestCiRerunMode),
+});
+export type PullRequestCiRun = typeof PullRequestCiRun.Type;
+
+export const PullRequestCiJob = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  url: Schema.NullOr(Schema.String),
+  status: PullRequestCheckStatus,
+  canRerun: Schema.Boolean,
+});
+export type PullRequestCiJob = typeof PullRequestCiJob.Type;
+
+export const PullRequestCiRuns = Schema.Struct({
+  headSha: TrimmedNonEmptyString,
+  runs: Schema.Array(PullRequestCiRun),
+  truncated: Schema.Boolean,
+});
+export type PullRequestCiRuns = typeof PullRequestCiRuns.Type;
+
+export const PullRequestCiJobs = Schema.Struct({
+  jobs: Schema.Array(PullRequestCiJob),
+  truncated: Schema.Boolean,
+});
+export type PullRequestCiJobs = typeof PullRequestCiJobs.Type;
+
 /**
  * The reactions a remark can carry. GitHub's eight, which is also what the picker offers: GitLab
  * accepts any emoji as an award, and the ones outside this set are read as nothing rather than
@@ -430,6 +464,8 @@ export type PullRequestDependencyCapabilities = typeof PullRequestDependencyCapa
  * buttons.
  */
 export const PullRequestCapabilities = Schema.Struct({
+  /** Native CI runs and jobs can be read separately from external status checks. */
+  ciRuns: Schema.optional(Schema.Boolean),
   /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
   /** Viewed files can be read and saved to the connected host account. */
@@ -1095,6 +1131,26 @@ export const PullRequestActionInput = Schema.Struct({
   updateMethod: Schema.optional(PullRequestUpdateMethod),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
+
+export const PullRequestCiRunInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  runId: TrimmedNonEmptyString,
+  headSha: TrimmedNonEmptyString,
+  attempt: NonNegativeInt,
+});
+export type PullRequestCiRunInput = typeof PullRequestCiRunInput.Type;
+
+export const PullRequestCiRerunTarget = Schema.Union([
+  Schema.Struct({ kind: PullRequestCiRerunMode }),
+  Schema.Struct({ kind: Schema.Literal("job"), jobId: TrimmedNonEmptyString }),
+]);
+export type PullRequestCiRerunTarget = typeof PullRequestCiRerunTarget.Type;
+
+export const PullRequestCiRerunInput = Schema.Struct({
+  ...PullRequestCiRunInput.fields,
+  target: PullRequestCiRerunTarget,
+});
+export type PullRequestCiRerunInput = typeof PullRequestCiRerunInput.Type;
 
 // Not trimmed: the body is markdown, where leading spaces open a code block and two trailing
 // spaces are a line break. GitHub rejects bodies past 65536 characters, so that bound is

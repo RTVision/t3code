@@ -145,6 +145,78 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
+  it.effect("normalizes CI status links using the configured web root", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.succeed(
+          response({
+            statuses: [
+              {
+                context: "CI",
+                status: "failure",
+                target_url: "/gitea/acme/web/actions/runs/42/jobs/9",
+              },
+              {
+                context: "External",
+                status: "success",
+                target_url: "https://ci.example.test/build/1",
+              },
+            ],
+          }),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const checks = yield* api.listChecks({
+        host: "forge.example.test",
+        repository: "acme/web",
+        sha: "head",
+      });
+      expect(checks.map((check) => check.url)).toEqual([
+        "https://forge.example.test/gitea/acme/web/actions/runs/42/jobs/9",
+        "https://ci.example.test/build/1",
+      ]);
+    }),
+  );
+
+  it.effect("routes CI reads through configured Gitea auth and rejects another host", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) =>
+        Effect.succeed(
+          response(
+            input.path.endsWith("/pulls/1")
+              ? { head: { sha: "head" } }
+              : input.path === "/repos/acme/web"
+                ? { permissions: { push: true } }
+                : {
+                    total_count: 1,
+                    workflow_runs: [
+                      {
+                        id: 12,
+                        head_sha: "head",
+                        html_url: "acme/web/actions/runs/12",
+                        status: "queued",
+                      },
+                    ],
+                  },
+          ),
+        ),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const input = {
+        cwd: "/workspace",
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 1,
+      };
+      expect((yield* api.getCiRuns(input)).runs[0]?.url).toBe(
+        "https://forge.example.test/gitea/acme/web/actions/runs/12",
+      );
+      const calls = mockedRequest.mock.calls.length;
+      yield* api.getCiRuns({ ...input, host: "another.example.test" }).pipe(Effect.flip);
+      expect(mockedRequest).toHaveBeenCalledTimes(calls);
+    }),
+  );
+
   it.effect("preserves tracking rows while keeping dependency reads lightweight", () =>
     Effect.gen(function* () {
       mockedRequest.mockImplementation(() =>

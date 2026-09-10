@@ -27,6 +27,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import { makeActionsCi } from "./ActionsCi.ts";
+import type { ProviderCiApi } from "./PullRequestProvider.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
@@ -338,8 +340,13 @@ export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedError<G
   }
 }
 
+export class GitHubCiError extends Schema.TaggedError<GitHubCiError>()("GitHubCiError", {
+  detail: Schema.String,
+}) {}
+
 export type GitHubPullRequestCliError =
   | GitHubStackActionError
+  | GitHubCiError
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
   | GitHubDiffCursorError
@@ -731,7 +738,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly kind: "issue-comment" | "review-comment";
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
-  }
+  } & ProviderCiApi<GitHubPullRequestCliError>
 >()("t3/pullRequest/GitHubPullRequestCli") {}
 
 /**
@@ -1520,6 +1527,19 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
+    ...makeActionsCi<GitHubPullRequestCliError>({
+      kind: "github",
+      request: (input) =>
+        github
+          .execute({
+            cwd: input.cwd,
+            args: ["api", "--hostname", input.host, "--method", input.method, input.path],
+          })
+          .pipe(
+            Effect.map((result) => ({ body: result.stdout, truncated: result.stdoutTruncated })),
+          ),
+      fail: (detail) => new GitHubCiError({ detail }),
+    }),
     getViewerLogin: (input) =>
       github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
         Effect.flatMap((result) => {
