@@ -58,7 +58,8 @@ export function PullRequestReviewerPicker({
     () =>
       new Set(
         comments.flatMap((comment) =>
-          comment.kind === "review" && comment.author !== null
+          (comment.kind === "review" || comment.kind === "review-comment") &&
+          comment.author !== null
             ? [comment.author.login.toLowerCase()]
             : [],
         ),
@@ -150,7 +151,7 @@ export function PullRequestReviewerPicker({
           {candidate.isRequested ? (
             <>
               <span className="shrink-0 text-muted-foreground">Cancel request</span>
-              <CheckIcon aria-label="Review requested" className="size-3.5 shrink-0" />
+              <CheckIcon aria-hidden="true" className="size-3.5 shrink-0" />
             </>
           ) : (
             <span className="shrink-0 text-muted-foreground">
