@@ -10,7 +10,7 @@ import { useEditorDispatch } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { useRemoteOpenHint } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon, TerminalIcon } from "lucide-react";
+import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -19,6 +19,7 @@ import {
   CursorIcon,
   Icon,
   KiroIcon,
+  NeovimIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -264,7 +265,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         onClick={() => openInEditor(preferredEditor)}
       >
         {preferredEditor?.kind === "terminal" && (
-          <TerminalIcon aria-hidden="true" className="size-3.5" />
+          <NeovimIcon aria-hidden="true" className="size-3.5" />
         )}
         {primaryOption?.Icon && (
           <primaryOption.Icon
@@ -296,7 +297,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuPopup align="end">
           {terminalVisible && (
             <MenuItem onClick={() => openInEditor({ kind: "terminal", editor: "neovim" }, true)}>
-              <TerminalIcon aria-hidden="true" />
+              <NeovimIcon aria-hidden="true" />
               Neovim (Terminal)
               {preferredEditor?.kind === "terminal" && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
