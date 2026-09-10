@@ -41,6 +41,21 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
+// With --execArgv=--expose-gc, stress atom identity between turns when WeakRefs can clear.
+const collectGarbage = Effect.promise(
+  () =>
+    new Promise<void>((resolve) => {
+      const testRuntime = globalThis as typeof globalThis & {
+        setImmediate: (callback: () => void) => void;
+        gc?: () => void;
+      };
+      testRuntime.setImmediate(() => {
+        testRuntime.gc?.();
+        resolve();
+      });
+    }),
+);
+
 function session(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
@@ -329,6 +344,7 @@ for (const nextStatus of ["pending", "failure"] as const) {
           );
           yield* AtomRegistry.getResult(registry, runs);
           yield* subscribed.await;
+          yield* collectGarbage;
           const first = atoms.rerunCi.run(registry, {
             ...target,
             input: { ...target.input, target: { kind: "all" } },
@@ -336,6 +352,7 @@ for (const nextStatus of ["pending", "failure"] as const) {
           yield* started.await;
           expect(registry.get(otherView)).toBe("pending");
           expect(registry.get(otherHost)).toBe("idle");
+          yield* collectGarbage;
           yield* Effect.promise(() =>
             atoms.rerunCi.run(registry, {
               ...target,

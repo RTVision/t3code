@@ -244,18 +244,22 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
         number: input.number,
       },
     });
+  // Atom.family uses weak references; registry nodes retain atoms directly while mounted.
+  const submissions = Atom.family((_key: string) =>
+    Atom.make<
+      | { readonly phase: "pending" }
+      | { readonly phase: "requested"; readonly observed: PullRequestCiRuns | undefined }
+      | null
+    >(null).pipe(Atom.setIdleTTL(60_000)),
+  );
   const rerunState = Atom.family((key: string) => {
     const { environmentId, input } = JSON.parse(key) as {
       environmentId: EnvironmentId;
       input: PullRequestRef & { readonly runId: string };
     };
     const runs = ciRuns({ environmentId, input });
-    const submission = Atom.make<
-      | { readonly phase: "pending" }
-      | { readonly phase: "requested"; readonly observed: PullRequestCiRuns | undefined }
-      | null
-    >(null).pipe(Atom.setIdleTTL(60_000));
-    const state = Atom.make((get): "idle" | "pending" | "requested" => {
+    const submission = submissions(key);
+    return Atom.make((get): "idle" | "pending" | "requested" => {
       const current = get(submission);
       if (current === null) return "idle";
       if (current.phase === "pending") return "pending";
@@ -264,24 +268,21 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
       const observed = Option.getOrUndefined(AsyncResult.value(result));
       return observed === current.observed ? "requested" : "idle";
     });
-    return { submission, state, runs };
   });
-  const stateFor = (target: {
+  const stateKey = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: PullRequestCiRunInput;
   }) =>
-    rerunState(
-      JSON.stringify({
-        environmentId: target.environmentId,
-        input: {
-          projectId: target.input.projectId,
-          ...(target.input.host === undefined ? {} : { host: target.input.host }),
-          repository: target.input.repository,
-          number: target.input.number,
-          runId: target.input.runId,
-        },
-      }),
-    );
+    JSON.stringify({
+      environmentId: target.environmentId,
+      input: {
+        projectId: target.input.projectId,
+        ...(target.input.host === undefined ? {} : { host: target.input.host }),
+        repository: target.input.repository,
+        number: target.input.number,
+        runId: target.input.runId,
+      },
+    });
   const requestRerun = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:pull-requests:rerun-ci",
     tag: WS_METHODS.pullRequestsRerunCi,
@@ -291,8 +292,10 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
   const rerunCi: typeof requestRerun = {
     label: requestRerun.label,
     run: async (registry, target) => {
-      const { submission, state, runs } = stateFor(target);
-      if (registry.get(state) !== "idle") return AsyncResult.success(undefined);
+      const key = stateKey(target);
+      if (registry.get(rerunState(key)) !== "idle") return AsyncResult.success(undefined);
+      const submission = submissions(key);
+      const runs = ciRuns(target);
       const unmount = registry.mount(submission);
       registry.set(submission, { phase: "pending" });
       try {
@@ -311,7 +314,7 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
   };
   return {
     ciRuns,
-    ciRerunState: (target: Parameters<typeof stateFor>[0]) => stateFor(target).state,
+    ciRerunState: (target: Parameters<typeof stateKey>[0]) => rerunState(stateKey(target)),
     rerunCi,
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
