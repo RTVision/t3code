@@ -5345,6 +5345,12 @@ it.effect("does not call CI adapters without an advertised capability", () =>
     );
     assert.strictEqual(
       (yield* service
+        .ciJobs({ ...reference, headSha: "head", runId: "12", attempt: 1 })
+        .pipe(Effect.flip))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(
+      (yield* service
         .rerunCi({
           ...reference,
           headSha: "head",
