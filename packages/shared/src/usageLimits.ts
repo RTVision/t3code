@@ -175,19 +175,18 @@ function makeAccountKey(
     }
   }
   return (driver: ServerProvider["driver"], email: string | undefined, accountId?: string) => {
-    const id = accountId?.trim();
-    if (id) return `${driver}:account:${id}`;
     const key = emailKey(driver, email);
     const ids = key ? idsByEmail.get(key) : undefined;
     // Legacy reports can join a known workspace only when the email is unambiguous.
-    return ids?.size === 1 ? `${driver}:account:${ids.values().next().value}` : key;
+    const id = accountId?.trim() || (ids?.size === 1 ? ids.values().next().value : undefined);
+    return id ? `${driver}:account:${id}:${email?.trim().toLowerCase() ?? ""}` : key;
   };
 }
 
 /**
  * One subscription account as the pooled views see it, whichever way it was
- * reported. Provider account IDs identify quota buckets; email is a fallback
- * for providers and older servers that do not supply an account ID.
+ * reported. Workspace ID and email identify a Codex member's quota bucket.
+ * Email alone is a fallback for providers and older servers without an ID.
  */
 export interface LimitAccount {
   readonly key: string;

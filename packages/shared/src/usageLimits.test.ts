@@ -406,6 +406,89 @@ describe("pools", () => {
     },
   );
 
+  it("keeps members of one Business workspace separate across native and hub reports", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const native = provider({
+      driver,
+      auth: { status: "authenticated", email: "Primary@example.com", accountId: "business" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 71 }] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "primary.json",
+          accountId: "business",
+          driver,
+          email: "primary@example.com",
+          usageLimits: {
+            ...native.usageLimits!,
+            resetCredits: { availableCount: 1, nextCreditId: "primary-credit" },
+          },
+        },
+        {
+          id: "review.json",
+          accountId: "business",
+          driver,
+          email: "review@example.com",
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...weekly, usedPercent: 23 }],
+            resetCredits: { availableCount: 3, nextCreditId: "review-credit" },
+          },
+        },
+      ],
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [hub] } },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [] } },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(2);
+    expect(
+      accounts.map((account) => [
+        account.email?.toLowerCase(),
+        account.limits.windows[0]?.usedPercent,
+        account.limits.resetCredits?.availableCount,
+        account.redeem?.input,
+      ]),
+    ).toEqual([
+      [
+        "primary@example.com",
+        71,
+        1,
+        { sourceId: source.id, accountId: "primary.json", creditId: "primary-credit" },
+      ],
+      [
+        "review@example.com",
+        23,
+        3,
+        { sourceId: source.id, accountId: "review.json", creditId: "review-credit" },
+      ],
+    ]);
+    expect(accounts[0]?.environments).toHaveLength(2);
+    expect(collectLimitSources(input)[0]?.accounts.map((account) => account.id)).toEqual([
+      "review.json",
+    ]);
+    const report = collectProviderUsageLimits(
+      native.instanceId,
+      [native],
+      [hub],
+      Date.parse(checkedAt),
+    );
+    expect(report?.accounts).toHaveLength(2);
+    expect(report?.accounts.map((account) => account.resetCreditInput)).toEqual([
+      { sourceId: source.id, accountId: "primary.json", creditId: "primary-credit" },
+      { sourceId: source.id, accountId: "review.json", creditId: "review-credit" },
+    ]);
+  });
+
   it("keeps same-email Codex workspaces separate and merges only matching account IDs", () => {
     const driver = ProviderDriverKind.make("codex");
     const native = provider({
