@@ -151,11 +151,12 @@ export function wslArgs(route) {
 export function run(command, args, { input, timeout, cwd, capture = false, env } = {}) {
   return new Promise((resolve, reject) => {
     // Packaged Electron can inherit a pipe as fd 0 from PowerShell even in a
-    // terminal window. Open the console explicitly for the interactive child.
+    // terminal window. Open the console read/write for interactive children:
+    // WSL 2.2.4 rejects a read-only handle with Wsl/Service/E_ACCESSDENIED.
     const consoleInput =
       // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaged helper owns its platform-specific console handles.
       input === undefined && process.platform === "win32"
-        ? NodeFS.openSync("\\\\.\\CONIN$", "r")
+        ? NodeFS.openSync("\\\\.\\CONIN$", "r+")
         : undefined;
     let child;
     try {

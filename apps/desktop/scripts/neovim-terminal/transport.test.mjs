@@ -34,6 +34,76 @@ const request = (overrides = {}) => ({
   ...overrides,
 });
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Exercises native console handles in the standalone Windows helper.
+test.skipIf(process.platform !== "win32")(
+  "interactive children receive console input with read and write access",
+  async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-console-access-"));
+    const powershell = NodePath.join(
+      process.env.SystemRoot,
+      "System32/WindowsPowerShell/v1.0/powershell.exe",
+    );
+    const encode = (script) => Buffer.from(script, "utf16le").toString("base64");
+    const checkAccess = encode(`
+$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class InputAccess {
+  [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int id);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FlushConsoleInputBuffer(IntPtr handle);
+}
+'@
+$handle = [InputAccess]::GetStdHandle(-10)
+[uint32]$mode = 0
+if (-not [InputAccess]::GetConsoleMode($handle, [ref]$mode)) { throw 'Console read access is missing' }
+if (-not [InputAccess]::FlushConsoleInputBuffer($handle)) { throw 'Console write access is missing' }
+Write-Output 'console-read-write-ok'
+`);
+    // Allocate a private console so the access check never flushes a user's input.
+    const launch = encode(`
+$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System.Runtime.InteropServices;
+public static class PrivateConsole {
+  [DllImport("kernel32.dll")] public static extern bool FreeConsole();
+  [DllImport("kernel32.dll")] public static extern bool AllocConsole();
+}
+'@
+[PrivateConsole]::FreeConsole() | Out-Null
+if (-not [PrivateConsole]::AllocConsole()) { throw 'Could not allocate test console' }
+try {
+  $child = Start-Process -FilePath $env:T3_TEST_CONSOLE_RUNTIME -ArgumentList ('"' + $env:T3_TEST_CONSOLE_SCRIPT + '"') -NoNewWindow -Wait -PassThru
+  exit $child.ExitCode
+} finally { [PrivateConsole]::FreeConsole() | Out-Null }
+`);
+    try {
+      const script = NodePath.join(directory, "check.mjs");
+      const transport = new URL("transport.mjs", import.meta.url).href;
+      await NodeFSP.writeFile(
+        script,
+        `import { run } from ${JSON.stringify(transport)};
+console.log(await run(${JSON.stringify(powershell)}, ['-NoProfile', '-EncodedCommand', ${JSON.stringify(checkAccess)}], { capture: true, timeout: 15000 }));
+`,
+      );
+      const output = await run(powershell, ["-NoProfile", "-EncodedCommand", launch], {
+        input: "",
+        capture: true,
+        timeout: 30000,
+        env: {
+          ...process.env,
+          T3_TEST_CONSOLE_RUNTIME: process.execPath,
+          T3_TEST_CONSOLE_SCRIPT: script,
+        },
+      });
+      NodeAssert.match(output, /console-read-write-ok/u);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("target bytes remain data across token and Windows Terminal grammar", () => {
   for (const name of [
     "spaces here",
