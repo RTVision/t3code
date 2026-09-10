@@ -21,6 +21,7 @@ import {
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  ciRuns: true,
   diff: true,
   fileViewedState: true,
   comment: true,
@@ -213,6 +214,9 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
+    getCiRuns: (input) => cli.getCiRuns(input).pipe(Effect.mapError(fail("getCiRuns"))),
+    getCiJobs: (input) => cli.getCiJobs(input).pipe(Effect.mapError(fail("getCiJobs"))),
+    rerunCi: (input) => cli.rerunCi(input).pipe(Effect.mapError(fail("rerunCi"))),
 
     getNativeDependencyMembership: (input) => cli.getNativeDependencyMembership(input),
 

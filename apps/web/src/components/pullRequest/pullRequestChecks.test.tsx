@@ -122,8 +122,8 @@ describe("PullRequestRow checks indicator", () => {
     ).length;
   }
 
-  it("shows the indicator only for a row the host reported a rollup for", () => {
+  it("keeps checks accessible when the host omits its rollup", () => {
     expect(indicators(row({ checksState: "failing" }))).toBe(1);
-    expect(indicators(row({}))).toBe(0);
+    expect(indicators(row({}))).toBe(1);
   });
 });

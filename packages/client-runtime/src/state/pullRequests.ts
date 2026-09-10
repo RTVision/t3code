@@ -3,6 +3,8 @@ import {
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestSummary,
+  type PullRequestCiRuns,
+  type PullRequestCiRunInput,
   type PullRequestRef,
   type PullRequestRefresh,
   type EnvironmentId,
@@ -215,11 +217,128 @@ export function pullRequestDetailToVcsStatus(
   };
 }
 
-/**
- * Reopening a PR within a minute reuses detail and activity. Explicit refreshes and
- * turn notifications still revalidate. Mutations run serially per environment: actions on the same
- * pull request are order-sensitive, and the detail view refetches after each one.
- */
+/** CI reads and submission state shared by every mounted view in an environment. */
+export function createPullRequestCiEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  refreshes = createPullRequestRefreshAtomFamily(runtime),
+  commandScheduler = createAtomCommandScheduler(),
+) {
+  const serialPerEnvironment = {
+    mode: "serial",
+    key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
+  } as const;
+  const ciRunsQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:ciRuns",
+    tag: WS_METHODS.pullRequestsCiRuns,
+    staleTimeMs: 15_000,
+    refreshTrigger: ({ environmentId, input }) =>
+      refreshes({ environmentId, input: { kind: "reference", reference: input } }),
+  });
+  const ciRuns = ({ environmentId, input }: Parameters<typeof ciRunsQuery>[0]) =>
+    ciRunsQuery({
+      environmentId,
+      input: {
+        projectId: input.projectId,
+        ...(input.host === undefined ? {} : { host: input.host }),
+        repository: input.repository,
+        number: input.number,
+      },
+    });
+  // Atom.family uses weak references; registry nodes retain atoms directly while mounted.
+  const submissions = Atom.family((_key: string) =>
+    Atom.make<
+      | { readonly phase: "pending" }
+      | { readonly phase: "requested"; readonly observed: PullRequestCiRuns | undefined }
+      | null
+    >(null).pipe(Atom.setIdleTTL(60_000)),
+  );
+  const rerunState = Atom.family((key: string) => {
+    const { environmentId, input } = JSON.parse(key) as {
+      environmentId: EnvironmentId;
+      input: PullRequestRef & { readonly runId: string };
+    };
+    const runs = ciRuns({ environmentId, input });
+    const submission = submissions(key);
+    return Atom.make((get): "idle" | "pending" | "requested" => {
+      const current = get(submission);
+      if (current === null) return "idle";
+      if (current.phase === "pending") return "pending";
+      const result = get(runs);
+      // A fresh host response ends the acknowledgement even on hosts without run attempts.
+      const observed = Option.getOrUndefined(AsyncResult.value(result));
+      return observed === current.observed ? "requested" : "idle";
+    });
+  });
+  const stateKey = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestCiRunInput;
+  }) =>
+    JSON.stringify({
+      environmentId: target.environmentId,
+      input: {
+        projectId: target.input.projectId,
+        ...(target.input.host === undefined ? {} : { host: target.input.host }),
+        repository: target.input.repository,
+        number: target.input.number,
+        runId: target.input.runId,
+      },
+    });
+  const requestRerun = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:pull-requests:rerun-ci",
+    tag: WS_METHODS.pullRequestsRerunCi,
+    scheduler: commandScheduler,
+    concurrency: serialPerEnvironment,
+  });
+  const rerunCi: typeof requestRerun = {
+    label: requestRerun.label,
+    run: async (registry, target) => {
+      const key = stateKey(target);
+      if (registry.get(rerunState(key)) !== "idle") return AsyncResult.success(undefined);
+      const submission = submissions(key);
+      const runs = ciRuns(target);
+      const unmount = registry.mount(submission);
+      registry.set(submission, { phase: "pending" });
+      try {
+        const result = await requestRerun.run(registry, target);
+        const observed = Option.getOrUndefined(AsyncResult.value(registry.get(runs)));
+        registry.set(
+          submission,
+          result._tag === "Success" ? { phase: "requested", observed } : null,
+        );
+        return result;
+      } finally {
+        if (registry.get(submission)?.phase === "pending") registry.set(submission, null);
+        unmount();
+      }
+    },
+  };
+  return {
+    ciRuns,
+    ciRerunState: (target: Parameters<typeof stateKey>[0]) => rerunState(stateKey(target)),
+    rerunCi,
+    detail: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:detail",
+      tag: WS_METHODS.pullRequestsDetail,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
+    }),
+    ciJobs: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:ciJobs",
+      tag: WS_METHODS.pullRequestsCiJobs,
+      staleTimeMs: 15_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
+    }),
+    invalidate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:invalidate",
+      tag: WS_METHODS.pullRequestsInvalidate,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+  };
+}
+
 export function createPullRequestEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | PullRequestDiffLoader | R, E>,
 ) {
@@ -282,13 +401,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           input: { kind: "list", projectIds: input.refs.map((ref) => ref.projectId) },
         }),
     }),
-    detail: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:detail",
-      tag: WS_METHODS.pullRequestsDetail,
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId, input }) =>
-        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
-    }),
+    ...createPullRequestCiEnvironmentAtoms(runtime, refreshes, commandScheduler),
     /** One bounded repository relationship read for the open PR panel, never for list rows. */
     dependencyContext: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:dependency-context",
@@ -440,17 +553,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     setReaction: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-reaction",
       tag: WS_METHODS.pullRequestsSetReaction,
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-    }),
-    /**
-     * Explicit refresh: forget the server's cached answers, then re-run the reads. A separate
-     * request rather than a flag on a read, so only a person's refresh spends host requests
-     * while every silent re-read shares the cache.
-     */
-    invalidate: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:pull-requests:invalidate",
-      tag: WS_METHODS.pullRequestsInvalidate,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

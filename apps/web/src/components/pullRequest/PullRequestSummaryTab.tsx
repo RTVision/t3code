@@ -43,6 +43,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestCiRuns } from "./PullRequestCiRuns";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -788,6 +789,13 @@ export function PullRequestSummaryTab({
       </Section>
 
       <Section title="Checks" count={detail.checks.length}>
+        {detail.capabilities.ciRuns && (
+          <PullRequestCiRuns
+            environmentId={environmentId}
+            reference={reference}
+            threadRef={threadRef}
+          />
+        )}
         {detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (

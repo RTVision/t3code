@@ -29,6 +29,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  createPullRequestCiEnvironmentAtoms,
 } from "./pullRequests.ts";
 import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery } from "./runtime.ts";
@@ -39,6 +40,21 @@ const TARGET = new PrimaryConnectionTarget({
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
 });
+
+// With --execArgv=--expose-gc, stress atom identity between turns when WeakRefs can clear.
+const collectGarbage = Effect.promise(
+  () =>
+    new Promise<void>((resolve) => {
+      const testRuntime = globalThis as typeof globalThis & {
+        setImmediate: (callback: () => void) => void;
+        gc?: () => void;
+      };
+      testRuntime.setImmediate(() => {
+        testRuntime.gc?.();
+        resolve();
+      });
+    }),
+);
 
 function session(client: WsRpcProtocolClient): RpcSession {
   return {
@@ -90,7 +106,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (client: WsRpcPro
   const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
     Effect.sync(() => registry.dispose()),
   );
-  return { runtime, atoms, registry };
+  return { runtime, atoms, ciAtoms: createPullRequestCiEnvironmentAtoms(runtime), registry };
 });
 
 it.effect("keeps concurrent diff file reads on different hosts separate", () =>
@@ -137,6 +153,249 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
     }),
   ),
 );
+
+it.effect(
+  "refreshes runs, expanded jobs, and mobile checks after another client requests a rerun",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reference = {
+          projectId: ProjectId.make("project-1"),
+          host: "forge.test",
+          repository: "acme/web",
+          number: 1,
+        };
+        const events = yield* PubSub.unbounded<PullRequestRefresh>();
+        const subscribed = Latch.makeUnsafe();
+        let subscriptions = 0;
+        let attempt = 1;
+        const client = {
+          [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(events);
+                subscriptions += 1;
+                subscribed.openUnsafe();
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          [WS_METHODS.pullRequestsCiRuns]: () =>
+            Effect.sync(() => ({
+              headSha: "head",
+              truncated: false,
+              runs: [
+                {
+                  id: "12",
+                  name: "CI",
+                  url: null,
+                  status: attempt === 1 ? "failure" : "pending",
+                  attempt,
+                  rerunModes: [],
+                },
+              ],
+            })),
+          [WS_METHODS.pullRequestsCiJobs]: () =>
+            Effect.sync(() => ({
+              truncated: false,
+              jobs: [
+                {
+                  id: "93",
+                  name: "CI",
+                  url: null,
+                  status: attempt === 1 ? "failure" : "pending",
+                  canRerun: false,
+                },
+              ],
+            })),
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.sync(() => ({
+              checks: [{ name: "CI", status: attempt === 1 ? "failure" : "pending", url: null }],
+            })),
+        } as unknown as WsRpcProtocolClient;
+        const { ciAtoms: atoms, registry } = yield* makeTestRuntime(client);
+        const runs = atoms.ciRuns({ environmentId: TARGET.environmentId, input: reference });
+        const jobs = atoms.ciJobs({
+          environmentId: TARGET.environmentId,
+          input: { ...reference, runId: "12", headSha: "head", attempt: 1 },
+        });
+        const detail = atoms.detail({ environmentId: TARGET.environmentId, input: reference });
+        const mounted: ReadonlyArray<Atom.Atom<unknown>> = [runs, jobs, detail];
+        for (const atom of mounted) {
+          const unmount = registry.mount(atom);
+          yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        }
+        const initial = yield* Effect.promise(() => executeAtomQuery(registry, runs));
+        expect(AsyncResult.isSuccess(initial)).toBe(true);
+        yield* AtomRegistry.getResult(registry, jobs);
+        yield* AtomRegistry.getResult(registry, detail);
+        yield* subscribed.await;
+        const refreshed = Latch.makeUnsafe();
+        const stop = registry.subscribe(runs, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.runs[0]?.attempt === 2)
+            refreshed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(stop));
+        const jobsRefreshed = Latch.makeUnsafe();
+        const detailRefreshed = Latch.makeUnsafe();
+        const stopJobs = registry.subscribe(jobs, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.jobs[0]?.status === "pending")
+            jobsRefreshed.openUnsafe();
+        });
+        const stopDetail = registry.subscribe(detail, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.checks[0]?.status === "pending")
+            detailRefreshed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            stopJobs();
+            stopDetail();
+          }),
+        );
+        attempt = 2;
+        yield* PubSub.publish(events, { revision: 1, reference, listings: true });
+        yield* refreshed.await;
+        yield* jobsRefreshed.await;
+        yield* detailRefreshed.await;
+        expect(subscriptions).toBe(1);
+        expect((yield* AtomRegistry.getResult(registry, runs)).runs[0]?.status).toBe("pending");
+      }),
+    ),
+);
+
+for (const nextStatus of ["pending", "failure"] as const) {
+  it.effect(
+    `shares rerun submission state across views and clears it on a fresh ${nextStatus} response without an attempt change`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reference = {
+            projectId: ProjectId.make("project-1"),
+            host: "forge.test",
+            repository: "acme/web",
+            number: 1,
+          };
+          const target = {
+            environmentId: TARGET.environmentId,
+            input: { ...reference, runId: "12", headSha: "head", attempt: 0 },
+          };
+          const events = yield* PubSub.unbounded<PullRequestRefresh>();
+          const subscribed = Latch.makeUnsafe();
+          const started = Latch.makeUnsafe();
+          const finish = Latch.makeUnsafe();
+          let writes = 0;
+          let status: "pending" | "failure" = "failure";
+          const client = {
+            [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  const subscription = yield* PubSub.subscribe(events);
+                  subscribed.openUnsafe();
+                  return Stream.fromSubscription(subscription);
+                }),
+              ),
+            [WS_METHODS.pullRequestsCiRuns]: () =>
+              Effect.sync(() => ({
+                headSha: "head",
+                truncated: false,
+                runs: [
+                  {
+                    id: "12",
+                    name: "CI",
+                    url: null,
+                    status,
+                    attempt: 0,
+                    rerunModes: status === "failure" ? ["all", "failed"] : [],
+                  },
+                ],
+              })),
+            [WS_METHODS.pullRequestsRerunCi]: () =>
+              Effect.gen(function* () {
+                writes += 1;
+                started.openUnsafe();
+                yield* finish.await;
+              }),
+          } as unknown as WsRpcProtocolClient;
+          const { atoms, registry } = yield* makeTestRuntime(client);
+          const runs = atoms.ciRuns({
+            environmentId: target.environmentId,
+            input: {
+              number: reference.number,
+              repository: reference.repository,
+              projectId: reference.projectId,
+              host: reference.host,
+            },
+          });
+          const state = atoms.ciRerunState(target);
+          const otherHost = atoms.ciRerunState({
+            ...target,
+            input: { ...target.input, host: "another.test" },
+          });
+          const { number, ...otherInput } = target.input;
+          const otherView = atoms.ciRerunState({ ...target, input: { number, ...otherInput } });
+          const unmountRuns = registry.mount(runs);
+          const unmountState = registry.mount(state);
+          const unmountOther = registry.mount(otherView);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              unmountRuns();
+              unmountState();
+              unmountOther();
+            }),
+          );
+          yield* AtomRegistry.getResult(registry, runs);
+          yield* subscribed.await;
+          yield* collectGarbage;
+          const first = atoms.rerunCi.run(registry, {
+            ...target,
+            input: { ...target.input, target: { kind: "all" } },
+          });
+          yield* started.await;
+          expect(registry.get(otherView)).toBe("pending");
+          expect(registry.get(otherHost)).toBe("idle");
+          yield* collectGarbage;
+          yield* Effect.promise(() =>
+            atoms.rerunCi.run(registry, {
+              ...target,
+              input: { ...target.input, target: { kind: "failed" } },
+            }),
+          );
+          expect(writes).toBe(1);
+          const beforeRefresh = yield* AtomRegistry.getResult(registry, runs);
+          const refreshedWhilePending = Latch.makeUnsafe();
+          const stopPendingRefresh = registry.subscribe(runs, (result) => {
+            if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== beforeRefresh)
+              refreshedWhilePending.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stopPendingRefresh));
+          yield* PubSub.publish(events, { revision: 1, reference, listings: true });
+          yield* refreshedWhilePending.await;
+          expect(registry.get(otherView)).toBe("pending");
+          finish.openUnsafe();
+          const result = yield* Effect.promise(() => first);
+          expect(result._tag).toBe("Success");
+          expect(registry.get(state)).toBe("requested");
+          expect(registry.get(otherView)).toBe("requested");
+          yield* Effect.promise(() =>
+            atoms.rerunCi.run(registry, {
+              ...target,
+              input: { ...target.input, target: { kind: "all" } },
+            }),
+          );
+          expect(writes).toBe(1);
+          const refreshed = Latch.makeUnsafe();
+          const stop = registry.subscribe(state, (phase) => {
+            if (phase === "idle") refreshed.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stop));
+          status = nextStatus;
+          yield* PubSub.publish(events, { revision: 2, reference, listings: true });
+          yield* refreshed.await;
+          expect(registry.get(otherView)).toBe("idle");
+          expect((yield* AtomRegistry.getResult(registry, runs)).runs[0]?.status).toBe(nextStatus);
+        }),
+      ),
+  );
+}
 
 it.effect("refreshes pull request activity after a comment is updated", () =>
   Effect.scoped(
