@@ -2,6 +2,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestStackMembership,
+  PullRequestCiRuns,
+  PullRequestCiJobs,
+  PullRequestCiRunInput,
+  PullRequestCiRerunInput,
   PullRequestAction,
   PullRequestStackHead,
   PullRequestActor,
@@ -303,7 +307,19 @@ export interface ProviderRepositoryRef {
  * the neutral types above; anything a host cannot do is declared in `capabilities` rather than
  * failing at call time.
  */
-export interface PullRequestProviderApi {
+export interface ProviderCiApi<E> {
+  readonly getCiRuns: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestCiRuns, E>;
+  readonly getCiJobs: (
+    input: ProviderRepositoryRef & Omit<PullRequestCiRunInput, "projectId">,
+  ) => Effect.Effect<PullRequestCiJobs, E>;
+  readonly rerunCi: (
+    input: ProviderRepositoryRef & Omit<PullRequestCiRerunInput, "projectId">,
+  ) => Effect.Effect<void, E>;
+}
+
+export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullRequestProviderError>> {
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
   /** Host-discovered additions, read only when a caller needs to gate a capability. */

@@ -193,6 +193,41 @@ afterEach(() => {
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("addresses CI reads to the selected GitHub Enterprise host", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) => {
+        expect(input.args.slice(0, 5)).toEqual([
+          "api",
+          "--hostname",
+          "github.enterprise.test",
+          "--method",
+          "GET",
+        ]);
+        const path = input.args.at(-1)!;
+        return Effect.succeed(
+          output(
+            JSON.stringify(
+              path.endsWith("/pulls/1")
+                ? { head: { sha: "head" } }
+                : path === "/repos/acme/web"
+                  ? { permissions: { push: true } }
+                  : { total_count: 0, workflow_runs: [] },
+            ),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      expect(
+        (yield* cli.getCiRuns({
+          cwd: "/workspace",
+          host: "github.enterprise.test",
+          repository: "acme/web",
+          number: 1,
+        })).runs,
+      ).toEqual([]);
+    }),
+  );
+
   it.effect("pages saved viewed files and resets dismissed file state", () =>
     Effect.gen(function* () {
       const page = (nodes: unknown[], cursor: string | null) =>

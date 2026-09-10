@@ -2170,6 +2170,18 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsCiRuns]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsCiRuns, pullRequests.ciRuns(input), {
+            projectId: input.projectId,
+          }),
+        [WS_METHODS.pullRequestsCiJobs]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsCiJobs, pullRequests.ciJobs(input), {
+            projectId: input.projectId,
+          }),
+        [WS_METHODS.pullRequestsRerunCi]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsRerunCi, pullRequests.rerunCi(input), {
+            projectId: input.projectId,
+          }),
         [WS_METHODS.pullRequestsDetail]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsDetail, pullRequests.detail(input), {
             "rpc.aggregate": "pull-requests",

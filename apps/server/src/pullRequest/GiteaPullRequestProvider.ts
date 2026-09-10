@@ -13,6 +13,7 @@ import {
 } from "./PullRequestProvider.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  ciRuns: true,
   diff: true,
   comment: true,
   actions: [
@@ -156,6 +157,9 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "gitea",
     capabilities: CAPABILITIES,
+    getCiRuns: (input) => api.getCiRuns(input).pipe(Effect.mapError(fail("getCiRuns"))),
+    getCiJobs: (input) => api.getCiJobs(input).pipe(Effect.mapError(fail("getCiJobs"))),
+    rerunCi: (input) => api.rerunCi(input).pipe(Effect.mapError(fail("rerunCi"))),
     getCapabilities: () =>
       api.getFeatures().pipe(
         Effect.orElseSucceed(() => []),

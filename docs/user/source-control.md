@@ -128,6 +128,12 @@ branch updates, close/reopen, draft/ready changes, auto-merge controls, comment 
 reactions. Workflow approval and revert PRs are available when your Gitea server advertises
 support for them.
 
+In a pull request's checks, expand **CI runs** to see GitHub Actions or Gitea Actions runs and
+jobs for the current revision. You can open their details or rerun a completed run, its failed
+jobs, or a selected job when your account has write access. A job rerun may also run dependent
+jobs. Use **Refresh CI** to see subsequent progress. On mobile, open the thread's Git sheet and
+expand **CI runs and checks**.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket or Gitea,

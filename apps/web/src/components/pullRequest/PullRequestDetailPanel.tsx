@@ -18,7 +18,6 @@ import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
   BookOpenIcon,
-  CircleDotIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
   FileDiffIcon,
@@ -2467,15 +2466,14 @@ export function PullRequestDetailPanel({
                     className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
                     aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
                   >
-                    {checksState !== null ? (
-                      <PullRequestChecksPopover
-                        checks={detail.checks}
-                        checksState={checksState}
-                        threadRef={threadRef}
-                      />
-                    ) : (
-                      <CircleDotIcon aria-hidden className="size-3.5" />
-                    )}
+                    <PullRequestChecksPopover
+                      checks={detail.checks}
+                      checksState={checksState}
+                      ciRuns={detail.capabilities.ciRuns === true}
+                      environmentId={environmentId}
+                      reference={reference}
+                      threadRef={threadRef}
+                    />
                     {checksSummary}
                   </span>
                 )}

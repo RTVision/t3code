@@ -34,6 +34,8 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import { makeActionsCi, resolveCheckUrl } from "./ActionsCi.ts";
+import type { ProviderCiApi } from "./PullRequestProvider.ts";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
 import * as GiteaWorkflows from "./GiteaWorkflows.ts";
 import {
@@ -691,7 +693,7 @@ export class GiteaPullRequestApi extends Context.Service<
       content: PullRequestReactionContent;
       reacted: boolean;
     }) => Effect.Effect<void, GiteaPullRequestApiError>;
-  }
+  } & ProviderCiApi<GiteaPullRequestApiError>
 >()("t3/pullRequest/GiteaPullRequestApi") {}
 
 export const make = Effect.gen(function* () {
@@ -1647,7 +1649,10 @@ export const make = Effect.gen(function* () {
                         ? "skipped"
                         : "neutral",
               description: status.description?.trim() || null,
-              url: status.target_url?.trim() || null,
+              url: resolveCheckUrl(
+                status.target_url,
+                Option.getOrElse(gitea.baseUrl, () => `https://${input.host}`),
+              ),
             },
           },
         ];
@@ -1911,6 +1916,12 @@ export const make = Effect.gen(function* () {
   });
 
   return GiteaPullRequestApi.of({
+    ...makeActionsCi({
+      kind: "gitea",
+      ...(Option.isSome(gitea.baseUrl) ? { baseUrl: gitea.baseUrl.value } : {}),
+      request: (input) => request({ ...input, operation: "ci" }),
+      fail: (detail) => new GiteaPullRequestApiError({ operation: "ci", reason: "failed", detail }),
+    }),
     getFeatures: () => getFeatures,
     getWorkflowApprovals,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {

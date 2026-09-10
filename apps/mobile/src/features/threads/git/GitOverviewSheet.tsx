@@ -35,6 +35,7 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { PullRequestCiSection } from "./PullRequestCiSection";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -80,6 +81,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  const pullRequest = selectedThread?.linkedPullRequest ?? selectedThread?.branchPullRequest;
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
@@ -335,6 +337,17 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
                       });
                     }}
                   />
+                  {selectedThread !== null && (
+                    <PullRequestCiSection
+                      environmentId={environmentId}
+                      reference={{
+                        projectId: selectedThread.projectId,
+                        host: link.host,
+                        repository: link.repository,
+                        number: link.number,
+                      }}
+                    />
+                  )}
                 </View>
               ))}
             </View>
@@ -342,6 +355,13 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
+      {linkedPrChains.length === 0 && pullRequest && (
+        <PullRequestCiSection
+          key={`${environmentId}:${pullRequest.repository}:${pullRequest.number}`}
+          environmentId={environmentId}
+          reference={pullRequest}
+        />
+      )}
       {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
     </ScrollView>
   );

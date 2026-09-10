@@ -5280,6 +5280,84 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
   }),
 );
 
+it.effect("reruns CI through the selected host and refreshes the PR for other clients", () =>
+  Effect.gen(function* () {
+    let attempt = 1;
+    const provider = fakeProvider("gitea", {
+      getChangeRequest: () => Effect.succeed(hostedChangeRequest(`attempt ${attempt}`)),
+      getCiRuns: () => Effect.succeed({ headSha: "head", runs: [], truncated: false }),
+      getCiJobs: () => Effect.succeed({ jobs: [], truncated: false }),
+      rerunCi: (input) =>
+        Effect.sync(() => {
+          assert.strictEqual(input.host, "forge.test");
+          assert.strictEqual(input.repository, "acme/web");
+          assert.strictEqual(input.cwd, "/workspace");
+          attempt += 1;
+        }),
+    });
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "Web",
+          workspaceRoot: "/workspace",
+          repository: "acme/web",
+          provider: "gitea",
+          host: "forge.test",
+        }),
+      ],
+      providers: [{ ...provider, capabilities: { ...provider.capabilities, ciRuns: true } }],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.strictEqual((yield* service.detail(reference)).body, "attempt 1");
+    yield* service.rerunCi({
+      ...reference,
+      headSha: "head",
+      runId: "12",
+      attempt: 1,
+      target: { kind: "failed" },
+    });
+    assert.strictEqual((yield* service.detail(reference)).body, "attempt 2");
+    const refresh = yield* service.subscribeRefreshes.pipe(Stream.take(1), Stream.runHead);
+    assert.deepEqual(Option.getOrThrow(refresh).reference, reference);
+    assert.isTrue(Option.getOrThrow(refresh).listings);
+  }),
+);
+
+it.effect("does not call CI adapters without an advertised capability", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "Web", workspaceRoot: "/workspace", repository: "acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getCiRuns: () => Effect.die("unsupported read"),
+          getCiJobs: () => Effect.die("unsupported read"),
+          rerunCi: () => Effect.die("unsupported write"),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.strictEqual(
+      (yield* service.ciRuns(reference).pipe(Effect.flip))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(
+      (yield* service
+        .rerunCi({
+          ...reference,
+          headSha: "head",
+          runId: "12",
+          attempt: 1,
+          target: { kind: "all" },
+        })
+        .pipe(Effect.flip))._tag,
+      "PullRequestOperationError",
+    );
+  }),
+);
+
 it.effect("saves viewed progress through the selected host and refreshes other clients", () =>
   Effect.gen(function* () {
     const viewed = { headSha: "head", files: [{ path: "src/a.ts", viewed: false }] };

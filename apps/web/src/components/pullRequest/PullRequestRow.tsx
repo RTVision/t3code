@@ -151,17 +151,15 @@ function PullRequestRowImpl({
               {entry.reviewDecision === "approved" ? "Approved" : "Changes requested"}
             </span>
           ) : null}
-          {entry.checksState === undefined ? null : (
-            <PullRequestChecksPopover
-              checksState={entry.checksState}
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-            />
-          )}
+          <PullRequestChecksPopover
+            checksState={entry.checksState ?? null}
+            environmentId={entry.environmentId}
+            reference={{
+              projectId: entry.projectId,
+              repository: entry.repository,
+              number: entry.number,
+            }}
+          />
         </span>
         <PullRequestMetaLine className="@container/pr-row-meta col-start-1 row-start-2 overflow-hidden text-xs text-muted-foreground/70">
           {matchedElsewhere ? (
