@@ -20,6 +20,7 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import serverPackageJson from "../package.json" with { type: "json" };
+import { generateCliShrinkwrap, withCliShrinkwrap } from "./cliShrinkwrap.ts";
 import {
   ServerCliBuildAssetMissingError,
   ServerCliCommandExitError,
@@ -265,6 +266,7 @@ const publishCmd = Command.make(
             packageJsonString: yield* encodePackageJson(pkg),
             originalPackageJson: yield* fs.readFile(packageJsonPath),
             icons: yield* preparePublishIcons(repoRoot, serverDir, version),
+            shrinkwrap: yield* generateCliShrinkwrap(pkg),
           };
         }),
         // Use: pnpm publish from the workspace root so pnpm-only workspace
@@ -289,7 +291,13 @@ const publishCmd = Command.make(
                 shell: spawnCommand.shell,
               }),
             );
-          }),
+          }).pipe((publish) =>
+            withCliShrinkwrap(
+              path.join(serverDir, "npm-shrinkwrap.json"),
+              resource.shrinkwrap,
+              publish,
+            ),
+          ),
         // Release: restore every file even if applying overrides or publishing fails.
         (resource) =>
           Effect.gen(function* () {
