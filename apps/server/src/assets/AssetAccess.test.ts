@@ -62,10 +62,12 @@ describe("AssetAccess", () => {
       yield* TestClock.adjust("2 hours");
       expect(yield* resolveAsset(token, "image")).toBeNull();
     }).pipe(
-      Effect.provide(testLayer),
       Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { T3CODE_GITEA_BASE_URL: "https://forge.test" } }),
+        Layer.merge(
+          testLayer,
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_GITEA_BASE_URL: "https://forge.test" } }),
+          ),
         ),
       ),
     ),
