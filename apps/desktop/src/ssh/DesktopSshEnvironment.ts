@@ -154,6 +154,7 @@ export function prepareTargetForSshRunner(
   return Effect.succeed({ ...target, ...(identity === undefined ? {} : { runner: identity }) });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Effect.gen(function* () {
     const manager = yield* SshTunnel.SshEnvironmentManager;

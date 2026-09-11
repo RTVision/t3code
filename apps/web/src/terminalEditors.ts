@@ -102,11 +102,15 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
     [connection, generation],
   );
   const key = JSON.stringify(input);
-  const capability = useSyncExternalStore(subscribe, () => {
-    if (!connected || !input) return DISCONNECTED;
-    if (!window.desktopBridge?.probeTerminalEditor) return DESKTOP_REQUIRED;
-    return cache.get(key)?.value ?? CHECKING;
-  });
+  const capability = useSyncExternalStore(
+    subscribe,
+    () => {
+      if (!connected || !input) return DISCONNECTED;
+      if (!window.desktopBridge?.probeTerminalEditor) return DESKTOP_REQUIRED;
+      return cache.get(key)?.value ?? CHECKING;
+    },
+    () => DISCONNECTED,
+  );
   const refresh = useCallback(
     async (rescan = false) => {
       if (!connected || !input) return DISCONNECTED;

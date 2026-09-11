@@ -19,7 +19,3 @@ export function giteaForkCapabilities(
       : {}),
   };
 }
-
-export function giteaHasFeature(features: ReadonlyArray<string>, feature: string): boolean {
-  return features.includes(feature);
-}
