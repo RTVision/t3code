@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
   FetchHttpClient,
   HttpClient,
@@ -59,7 +60,14 @@ export const imageResponse = Effect.fn("GiteaAttachment.imageResponse")(function
   if (!contentType || !/^image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml)$/u.test(contentType)) {
     return HttpServerResponse.text("Unsupported image type", { status: 415 });
   }
-  return HttpServerResponse.stream(response.stream, {
+  const body = response.stream.pipe(
+    Stream.timeoutOrElse({
+      duration: "30 seconds",
+      orElse: () =>
+        Stream.fail(new GiteaAttachmentError({ detail: "Gitea image body timed out." })),
+    }),
+  );
+  return HttpServerResponse.stream(body, {
     contentType,
     headers: {
       "Cache-Control": "private, max-age=300",

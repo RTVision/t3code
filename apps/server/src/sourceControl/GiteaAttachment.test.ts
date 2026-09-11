@@ -1,8 +1,12 @@
 import { expect, it, vi } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import {
   FetchHttpClient,
   HttpClient,
@@ -54,6 +58,38 @@ it.effect("streams a private Gitea image using server credentials", () => {
     expect(web.headers.get("content-type")).toBe("image/png");
     expect(web.headers.get("authorization")).toBeNull();
     expect(web.headers.get("content-security-policy")).toContain("sandbox");
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("fails a stalled image body and cancels the upstream reader", () => {
+  const cancel = vi.fn();
+  const { layer } = httpLayer(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start: (controller) => controller.enqueue(new Uint8Array([137, 80, 78, 71])),
+        cancel,
+      }),
+      { headers: { "Content-Type": "image/png" } },
+    ),
+  );
+  return Effect.gen(function* () {
+    const response = yield* GiteaAttachment.imageResponse(url);
+    expect(response.status).toBe(200);
+    if (response.body._tag !== "Stream") return yield* Effect.die("Expected an image stream");
+    const receivedChunk = yield* Deferred.make<void>();
+    const read = yield* response.body.stream.pipe(
+      Stream.tap(() => Deferred.succeed(receivedChunk, undefined)),
+      Stream.runDrain,
+      Effect.flip,
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(receivedChunk);
+    yield* TestClock.adjust("30 seconds");
+    expect(yield* Fiber.join(read)).toMatchObject({
+      _tag: "GiteaAttachmentError",
+      detail: "Gitea image body timed out.",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
