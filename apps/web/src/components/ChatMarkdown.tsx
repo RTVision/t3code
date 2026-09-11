@@ -178,6 +178,11 @@ import {
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
+type MarkdownImageAssetResource = Extract<
+  AssetResource,
+  { readonly _tag: "attachment" | "workspace-file" | "media-file" | "source-control-image" }
+>;
+
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
@@ -199,6 +204,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** Host-backed images, such as private uploads in a pull request description. */
+  resolveImageAsset?: ((source: string) => MarkdownImageAssetResource | null) | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 }
@@ -1519,10 +1526,7 @@ function ChatMarkdownVideo(props: {
 /** Environment-hosted media loads through an exact-file signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<
-    AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
-  >;
+  readonly resource: MarkdownImageAssetResource;
   readonly kind?: "image" | "video";
   readonly alt: string;
   readonly copyMarkdown?: string;
@@ -1565,7 +1569,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     asset: { environmentId: props.environmentId, resource },
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "workspace-file" || resource._tag === "media-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -2157,6 +2161,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   imageBaseDir,
+  resolveImageAsset,
   onImageExpand,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
@@ -2551,6 +2556,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       imageBaseDir,
+      resolveImageAsset,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2578,6 +2584,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       imageBaseDir,
+      resolveImageAsset,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2969,7 +2976,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef } = use(ChatMarkdownRendererContext);
+    const { expandMedia, cwd, imageBaseDir, threadRef, environmentId, resolveImageAsset } = use(
+      ChatMarkdownRendererContext,
+    );
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
@@ -2984,6 +2993,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
+    const imageAsset = resolveImageAsset?.(classifiedSrc);
+    if (imageAsset && environmentId) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={imageAsset}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          style={authoredSizeStyle}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     if (imageSource._tag === "Direct") {

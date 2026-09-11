@@ -2491,6 +2491,7 @@ const makeWsRpcLayer = (
               const path = yield* Path.Path;
               // An absolute media path can be linked from a thread on another environment.
               if (
+                input.resource._tag === "source-control-image" ||
                 input.resource._tag === "attachment" ||
                 input.resource._tag === "native-app-icon" ||
                 (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))

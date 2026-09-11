@@ -1,8 +1,26 @@
+import type { AssetResource, SourceControlProviderKind } from "@t3tools/contracts";
+import { resolveGiteaAttachmentUrl } from "@t3tools/shared/giteaAttachments";
+
 import {
   findAndReplaceText,
   type MarkdownNode,
   type TextMatch,
 } from "~/vendor/mdast-find-and-replace";
+
+export function resolvePullRequestImageAsset(
+  source: string,
+  provider: SourceControlProviderKind | null | undefined,
+  repositoryUrl: string | null | undefined,
+): Extract<AssetResource, { _tag: "source-control-image" }> | null {
+  if (provider !== "gitea" || !repositoryUrl) return null;
+  try {
+    const baseUrl = new URL("../../", `${repositoryUrl.replace(/\/+$/u, "")}/`).href;
+    const url = resolveGiteaAttachmentUrl(source, baseUrl);
+    return url ? { _tag: "source-control-image", provider: "gitea", url } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
