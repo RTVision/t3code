@@ -1,8 +1,9 @@
 import { assert, it } from "@effect/vitest";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -11,74 +12,72 @@ import {
   resolveCodexAuthHome,
 } from "./CodexProvider.ts";
 
-it("resolves the selected or shadow home ahead of inherited credentials", () => {
-  const inherited = { CODEX_HOME: "/shared", HOME: "/user" };
-  assert.strictEqual(
-    resolveCodexAuthHome(
-      { homePath: "/shadow", environment: { CODEX_HOME: "/instance" } },
-      inherited,
-    ),
-    "/shadow",
-  );
-  assert.strictEqual(
-    resolveCodexAuthHome({ environment: { CODEX_HOME: "/instance" } }, inherited),
-    "/instance",
-  );
-  assert.strictEqual(resolveCodexAuthHome({}, inherited), "/shared");
-  assert.strictEqual(
-    resolveCodexAuthHome({ environment: { HOME: "/instance-user" } }, { HOME: "/user" }),
-    "/instance-user/.codex",
-  );
-  assert.strictEqual(resolveCodexAuthHome({}, { HOME: "/user" }), "/user/.codex");
-});
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it.effect("resolves the selected or shadow home ahead of inherited credentials", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const inherited = { CODEX_HOME: "/shared", HOME: "/user" };
+    assert.strictEqual(
+      yield* resolveCodexAuthHome(
+        { homePath: "/shadow", environment: { CODEX_HOME: "/instance" } },
+        inherited,
+      ),
+      "/shadow",
+    );
+    assert.strictEqual(
+      yield* resolveCodexAuthHome({ environment: { CODEX_HOME: "/instance" } }, inherited),
+      "/instance",
+    );
+    assert.strictEqual(yield* resolveCodexAuthHome({}, inherited), "/shared");
+    assert.strictEqual(
+      yield* resolveCodexAuthHome({ environment: { HOME: "/instance-user" } }, { HOME: "/user" }),
+      path.join("/instance-user", ".codex"),
+    );
+    assert.strictEqual(
+      yield* resolveCodexAuthHome({}, { HOME: "/user" }),
+      path.join("/user", ".codex"),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect(
   "reads workspace identity from the selected home without treating API keys as subscriptions",
   () =>
-    Effect.acquireUseRelease(
-      Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "codex-account-identity-")),
-      ),
-      (root) =>
-        Effect.gen(function* () {
-          for (const accountId of ["personal", "work"]) {
-            const home = NodePath.join(root, accountId);
-            yield* Effect.promise(() => NodeFSP.mkdir(home));
-            yield* Effect.promise(() =>
-              NodeFSP.writeFile(
-                NodePath.join(home, "auth.json"),
-                JSON.stringify({ tokens: { account_id: accountId } }),
-              ),
-            );
-            assert.strictEqual(yield* readCodexAccountId(home), accountId);
-          }
-          yield* Effect.promise(() =>
-            NodeFSP.writeFile(
-              NodePath.join(root, "auth.json"),
-              JSON.stringify({ OPENAI_API_KEY: "local-proxy" }),
-            ),
-          );
-          assert.strictEqual(yield* readCodexAccountId(root), undefined);
-          assert.strictEqual(yield* readCodexAccountId(NodePath.join(root, "missing")), undefined);
-          const payload = Buffer.from(
-            JSON.stringify({
-              "https://api.openai.com/auth": { chatgpt_account_id: "token-workspace" },
-            }),
-          ).toString("base64url");
-          for (const [tokens, expected] of [
-            [{ id_token: `header.${payload}.signature` }, "token-workspace"],
-            [{ account_id: null, id_token: `header.${payload}.signature` }, "token-workspace"],
-            [{ account_id: "explicit", id_token: `header.${payload}.signature` }, "explicit"],
-            [{ id_token: "malformed" }, undefined],
-          ] as const) {
-            yield* Effect.promise(() =>
-              NodeFSP.writeFile(NodePath.join(root, "auth.json"), JSON.stringify({ tokens })),
-            );
-            assert.strictEqual(yield* readCodexAccountId(root), expected);
-          }
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "codex-account-identity-" });
+      for (const accountId of ["personal", "work"]) {
+        const home = path.join(root, accountId);
+        yield* fs.makeDirectory(home);
+        yield* fs.writeFileString(
+          path.join(home, "auth.json"),
+          encodeJson({ tokens: { account_id: accountId } }),
+        );
+        assert.strictEqual(yield* readCodexAccountId(home), accountId);
+      }
+      yield* fs.writeFileString(
+        path.join(root, "auth.json"),
+        encodeJson({ OPENAI_API_KEY: "local-proxy" }),
+      );
+      assert.strictEqual(yield* readCodexAccountId(root), undefined);
+      assert.strictEqual(yield* readCodexAccountId(path.join(root, "missing")), undefined);
+      const payload = Buffer.from(
+        encodeJson({
+          "https://api.openai.com/auth": { chatgpt_account_id: "token-workspace" },
         }),
-      (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
-    ),
+      ).toString("base64url");
+      for (const [tokens, expected] of [
+        [{ id_token: `header.${payload}.signature` }, "token-workspace"],
+        [{ account_id: null, id_token: `header.${payload}.signature` }, "token-workspace"],
+        [{ account_id: "explicit", id_token: `header.${payload}.signature` }, "explicit"],
+        [{ id_token: "malformed" }, undefined],
+      ] as const) {
+        yield* fs.writeFileString(path.join(root, "auth.json"), encodeJson({ tokens }));
+        assert.strictEqual(yield* readCodexAccountId(root), expected);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it("maps current Codex model capability fields", () => {

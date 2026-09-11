@@ -1,6 +1,7 @@
-import * as NodeFSP from "node:fs/promises";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,7 +38,7 @@ import {
   COMPACT_SLASH_COMMAND,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
+import { expandHomePath, expandHomePathWith } from "../../pathExpansion.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   codexRateLimitsFailureMessage,
@@ -429,28 +430,27 @@ const decodeCodexIdTokenIdentity = Schema.decodeUnknownEffect(
   ),
 );
 
-export function resolveCodexAuthHome(
+export const resolveCodexAuthHome = Effect.fn("resolveCodexAuthHome")(function* (
   input: {
     readonly homePath?: string;
     readonly environment?: NodeJS.ProcessEnv;
   },
   inheritedEnvironment: NodeJS.ProcessEnv = process.env,
 ) {
-  return expandHomePath(
+  const path = yield* Path.Path;
+  return expandHomePathWith(
     input.homePath?.trim() ||
       input.environment?.CODEX_HOME ||
       inheritedEnvironment.CODEX_HOME ||
-      NodePath.join(
-        input.environment?.HOME || inheritedEnvironment.HOME || NodeOS.homedir(),
-        ".codex",
-      ),
+      path.join(input.environment?.HOME || inheritedEnvironment.HOME || NodeOS.homedir(), ".codex"),
+    path,
   );
-}
+});
 
 export const readCodexAccountId = Effect.fn("readCodexAccountId")(function* (homePath: string) {
-  return yield* Effect.tryPromise(() =>
-    NodeFSP.readFile(NodePath.join(homePath, "auth.json"), "utf8"),
-  ).pipe(
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(homePath, "auth.json")).pipe(
     Effect.flatMap(decodeCodexAccountIdentity),
     Effect.flatMap((auth) => {
       const accountId = auth.tokens.account_id?.trim();
@@ -486,7 +486,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   // the credentials in the same home used by this app-server instance.
   const accountId =
     accountResponse.account?.type === "chatgpt"
-      ? yield* readCodexAccountId(resolveCodexAuthHome(input))
+      ? yield* resolveCodexAuthHome(input).pipe(
+          Effect.flatMap(readCodexAccountId),
+          Effect.provide(NodeServices.layer),
+        )
       : undefined;
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
