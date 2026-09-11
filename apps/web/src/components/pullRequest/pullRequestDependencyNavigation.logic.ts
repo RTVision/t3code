@@ -6,6 +6,7 @@ export interface DependencyChip {
   readonly state: PullRequestState | null;
   readonly isDraft: boolean;
   readonly baseBranch: string | null;
+  readonly headBranch: string | null;
 }
 
 export type DependencyNavigation =
@@ -16,27 +17,17 @@ export type DependencyNavigation =
   | {
       readonly status: "ready";
       readonly path: ReadonlyArray<DependencyChip>;
-      readonly focusIndex: number;
       readonly rootBase: string | null;
       readonly truncatedBefore: boolean;
       readonly truncatedAfter: boolean;
       readonly cycleBefore: boolean;
       readonly cycleAfter: boolean;
-      readonly parent: number | null;
       readonly parentAmbiguous: boolean;
-      readonly child: number | null;
       readonly children: ReadonlyArray<DependencyChip>;
       readonly siblings: ReadonlyArray<DependencyChip>;
       readonly possibleParents: ReadonlyArray<DependencyChip>;
       readonly possibleChildren: ReadonlyArray<DependencyChip>;
       readonly coverage: "complete" | "partial" | "unavailable";
-      readonly native:
-        | { readonly status: "hidden" | "unavailable" }
-        | {
-            readonly status: "present";
-            readonly members: ReadonlyArray<DependencyChip>;
-            readonly coverage: "complete" | "partial";
-          };
     };
 
 const MAX_PATH_NODES = 20;
@@ -52,8 +43,9 @@ function chipFromNode(
         state: node.state,
         isDraft: node.isDraft,
         baseBranch: node.baseBranch,
+        headBranch: node.head?.branch ?? null,
       }
-    : { number, title: null, state: null, isDraft: false, baseBranch: null };
+    : { number, title: null, state: null, isDraft: false, baseBranch: null, headBranch: null };
 }
 
 function unique(numbers: ReadonlyArray<number>): number | null {
@@ -162,16 +154,6 @@ export function pullRequestDependencyNavigation(input: {
   const children = endChildren.length > 1 ? toChips(endChildren) : [];
   const siblings =
     parent === null ? [] : toChips((outgoing.get(parent) ?? []).filter((n) => n !== focus));
-  const native =
-    context.native?.status === "present"
-      ? {
-          status: "present" as const,
-          members: toChips(context.native.members),
-          coverage: context.native.coverage,
-        }
-      : context.native?.status === "unavailable"
-        ? { status: "unavailable" as const }
-        : { status: "hidden" as const };
   // Numbered diagnostics can describe another retained branch. Only mark this path for its own
   // cycle (or an unscoped host warning); traversal already locates cycles it encounters directly.
   const pathNumbers = new Set(path.map((node) => node.number));
@@ -197,11 +179,10 @@ export function pullRequestDependencyNavigation(input: {
     cycleBefore ||
     cycleAfter ||
     parentAmbiguous;
-  const hasNative = native.status !== "hidden";
   const unavailable =
     context.coverage === "unavailable" ||
     context.issues.some((issue) => issue.reason === "host-unavailable");
-  if (!hasGraph && !hasNative) {
+  if (!hasGraph) {
     if (unavailable || input.failed) return { status: "unavailable" };
     return context.coverage === "partial" ||
       context.issues.some((issue) => issue.reason === "budget")
@@ -211,7 +192,6 @@ export function pullRequestDependencyNavigation(input: {
   return {
     status: "ready",
     path,
-    focusIndex: keptAncestors.length,
     rootBase:
       possibleParents.length > 0 || parentAmbiguous || unresolvedRoot
         ? null
@@ -220,14 +200,25 @@ export function pullRequestDependencyNavigation(input: {
     truncatedAfter,
     cycleBefore,
     cycleAfter,
-    parent,
     parentAmbiguous,
-    child,
     children,
     siblings,
     possibleParents,
     possibleChildren,
-    coverage: context.coverage,
-    native,
+    coverage: input.failed || unavailable ? "unavailable" : context.coverage,
   };
+}
+
+/** Prefer known native membership; keep read-only inference usable through native refreshes. */
+export function shouldReadInferredPullRequestRelationships(input: {
+  supported: boolean;
+  nativeStackSupported: boolean;
+  hasNativeStack: boolean;
+  nativeStackSettled: boolean;
+}): boolean {
+  return (
+    input.supported &&
+    !input.hasNativeStack &&
+    (!input.nativeStackSupported || input.nativeStackSettled)
+  );
 }

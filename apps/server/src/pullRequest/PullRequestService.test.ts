@@ -3297,7 +3297,7 @@ it.effect(
     }),
 );
 
-it.effect("coalesces bounded dependency reads and invalidates them by repository", () =>
+it.effect("caches inferred reads by repository without fetching native stacks", () =>
   Effect.gen(function* () {
     let relationshipReads = 0;
     let nativeReads = 0;
@@ -3327,9 +3327,9 @@ it.effect("coalesces bounded dependency reads and invalidates them by repository
             assert.strictEqual(input.relationshipOnly, true);
             return Effect.succeed({ items: [parent, child], truncated: false, continues: false });
           },
-          getNativeDependencyMembership: () => {
+          getChangeRequestStack: () => {
             nativeReads += 1;
-            return Effect.succeed({ status: "none" });
+            return Effect.succeed(null);
           },
         }),
       ],
@@ -3341,23 +3341,25 @@ it.effect("coalesces bounded dependency reads and invalidates them by repository
     );
     assert.deepStrictEqual(first, second);
     assert.deepStrictEqual(first.edges, [{ child: 2, parent: 1, certainty: "confirmed" }]);
-    assert.deepStrictEqual(first.native, { status: "none" });
     assert.strictEqual(relationshipReads, 1);
-    assert.strictEqual(nativeReads, 1);
+    assert.strictEqual(nativeReads, 0);
 
     yield* service.dependencyContext({ ...reference, number: 1 });
     assert.strictEqual(relationshipReads, 1);
-    assert.strictEqual(nativeReads, 2);
+    assert.strictEqual(nativeReads, 0);
 
     yield* service.invalidate({ reference });
     yield* service.dependencyContext(reference);
     assert.strictEqual(relationshipReads, 2);
-    assert.strictEqual(nativeReads, 3);
+    assert.strictEqual(nativeReads, 0);
 
     yield* service.update({ ...reference, title: "Renamed" });
     yield* service.dependencyContext(reference);
     assert.strictEqual(relationshipReads, 3);
-    assert.strictEqual(nativeReads, 4);
+    assert.strictEqual(nativeReads, 0);
+    yield* service.stack(reference);
+    yield* service.stack(reference);
+    assert.strictEqual(nativeReads, 1);
     assert.isAbove(
       Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)).revision,
       0,
@@ -3458,55 +3460,26 @@ it.effect("retries a failed focus summary and caches the recovered context", () 
   }),
 );
 
-it.effect("retries unavailable native membership and caches the recovered context", () =>
+it.effect("retries failed native stack reads and caches a successful absence", () =>
   Effect.gen(function* () {
-    let relationshipReads = 0;
-    let nativeReads = 0;
+    let reads = 0;
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
-          listChangeRequests: () => {
-            relationshipReads += 1;
-            return Effect.succeed({
-              items: [
-                {
-                  ...changeRequest(1, "2026-07-02T00:00:00Z"),
-                  headBranch: "migration",
-                  headRepositoryNameWithOwner: "acme/web",
-                },
-                {
-                  ...changeRequest(2, "2026-07-03T00:00:00Z"),
-                  headBranch: "api",
-                  headRepositoryNameWithOwner: "acme/web",
-                  baseBranch: "migration",
-                },
-              ],
-              truncated: false,
-              continues: false,
-            });
-          },
-          getNativeDependencyMembership: () => {
-            nativeReads += 1;
-            return nativeReads === 1
-              ? Effect.fail(requestFailed)
-              : Effect.succeed({ status: "none" });
+          getChangeRequestStack: () => {
+            reads += 1;
+            return reads === 1 ? Effect.fail(requestFailed) : Effect.succeed(null);
           },
         }),
       ],
     });
-
-    const degraded = yield* service.dependencyContext(reference);
-    assert.deepStrictEqual(degraded.edges, [{ child: 2, parent: 1, certainty: "confirmed" }]);
-    assert.strictEqual(degraded.coverage, "complete");
-    assert.deepStrictEqual(degraded.native, { status: "unavailable" });
-    const recovered = yield* service.dependencyContext(reference);
-    assert.deepStrictEqual(recovered.native, { status: "none" });
-    assert.strictEqual(relationshipReads, 1);
-    assert.strictEqual(nativeReads, 2);
-    assert.deepStrictEqual(yield* service.dependencyContext(reference), recovered);
-    assert.strictEqual(nativeReads, 2);
+    const failure = yield* Effect.flip(service.stack(reference));
+    assert.strictEqual(failure._tag, "PullRequestOperationError");
+    assert.isNull(yield* service.stack(reference));
+    assert.isNull(yield* service.stack(reference));
+    assert.strictEqual(reads, 2);
   }),
 );
 
@@ -3628,53 +3601,58 @@ it.effect("keeps a merged focus visible without linking it to a reused live bran
   }),
 );
 
-it.effect("appends ordered native members as nodes without fabricating branch edges", () =>
+it.effect("keeps native stack members out of inferred branch relationships", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
-    const focus = {
-      ...changeRequest(2, "2026-07-03T00:00:00Z"),
-      headBranch: "api",
-      headRepositoryNameWithOwner: "acme/web",
-      baseBranch: "migration",
-    };
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("body")),
           listChangeRequests: () =>
-            Effect.succeed({ items: [focus], truncated: false, continues: false }),
-          getNativeDependencyMembership: () =>
             Effect.succeed({
-              status: "present",
-              id: "STACK_1",
-              coverage: "complete",
-              members: [
+              items: [
                 {
-                  number: 1,
-                  title: "Migration",
-                  url: "https://github.com/acme/web/pull/1",
-                  state: "merged",
-                  isDraft: false,
-                  headBranch: "migration",
+                  ...changeRequest(2, "2026-07-03T00:00:00Z"),
+                  headBranch: "api",
                   headRepositoryNameWithOwner: "acme/web",
-                  baseBranch: "main",
+                  baseBranch: "migration",
                 },
-                focus,
+              ],
+              truncated: false,
+              continues: false,
+            }),
+          getChangeRequestStack: () =>
+            Effect.succeed({
+              id: "STACK_1",
+              number: 1,
+              url: "https://github.com/acme/web/stacks/1",
+              base: "main",
+              layers: [
+                { number: 1, headBranch: "migration", state: "merged" },
+                { number: 2, headBranch: "api", state: "open" },
               ],
             }),
         }),
       ],
     });
-
-    const result = yield* service.dependencyContext(reference);
-    assert.deepStrictEqual(result.native, {
-      status: "present",
-      id: "STACK_1",
-      members: [1, 2],
-      coverage: "complete",
+    const stack = yield* service.stack(reference);
+    assert.deepStrictEqual(
+      stack?.layers.map((layer) => layer.number),
+      [1, 2],
+    );
+    const context = yield* service.dependencyContext(reference);
+    assert.deepStrictEqual(
+      context.nodes.map((node) => node.ref.number),
+      [2],
+    );
+    assert.deepStrictEqual(context.edges, []);
+    assert.notProperty(context, "native");
+    const detail = yield* service.detail(reference);
+    assert.deepStrictEqual(detail.capabilities.dependencies, {
+      branchRelationships: true,
+      nativeMembership: false,
     });
-    assert.deepStrictEqual(result.nodes.map((node) => node.ref.number).sort(), [1, 2]);
-    assert.deepStrictEqual(result.edges, []);
   }),
 );
 
@@ -5537,7 +5515,6 @@ it.effect(
                   continues: false,
                 };
               }),
-            getNativeDependencyMembership: () => Effect.succeed({ status: "none" }),
             getChangeRequestStack: () =>
               Effect.sync(() => {
                 stacks++;

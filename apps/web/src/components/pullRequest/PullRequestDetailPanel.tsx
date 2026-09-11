@@ -29,7 +29,6 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   HammerIcon,
-  LayersIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
@@ -78,7 +77,6 @@ import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -153,11 +151,11 @@ import {
   type PickableEnvironment,
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { PullRequestBranchMenu } from "./PullRequestBranchMenu";
 import {
-  PullRequestDependencyNavButtons,
-  PullRequestDependencyRow,
-} from "./PullRequestDependencyNavigator";
-import { pullRequestDependencyNavigation } from "./pullRequestDependencyNavigation.logic";
+  pullRequestDependencyNavigation,
+  shouldReadInferredPullRequestRelationships,
+} from "./pullRequestDependencyNavigation.logic";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
@@ -466,7 +464,6 @@ export function PullRequestDetailPanel({
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
-  onOpenPullRequest,
   context = "page",
   composerDraftTarget,
   onBack,
@@ -497,8 +494,6 @@ export function PullRequestDetailPanel({
   onActed?: () => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
-  /** Opens a same-repository dependency in the existing PR surface owner. */
-  onOpenPullRequest?: (number: number) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -727,29 +722,6 @@ export function PullRequestDetailPanel({
         detail.headRepositoryNameWithOwner,
       )
     : null;
-  const dependencyContextQuery = useEnvironmentQuery(
-    detail === null || detail.capabilities.dependencies?.branchRelationships !== true
-      ? null
-      : pullRequestEnvironment.dependencyContext({ environmentId, input: reference }),
-  );
-  const dependencyNavigation = pullRequestDependencyNavigation({
-    supported: detail?.capabilities.dependencies?.branchRelationships === true,
-    context: dependencyContextQuery.data ?? null,
-    pending: dependencyContextQuery.isPending,
-    failed: dependencyContextQuery.error !== null,
-  });
-  const dependencyHostLabel = detail
-    ? getSourceControlPresentationForKind(detail.provider).providerName
-    : "host";
-  const condensedDependencyIndicator =
-    dependencyNavigation.status === "ready" &&
-    (dependencyNavigation.path.length > 1 ||
-      dependencyNavigation.children.length > 0 ||
-      dependencyNavigation.native.status === "present");
-  const condensedDependencyTooltip =
-    dependencyNavigation.status !== "ready" || dependencyNavigation.path.length <= 1
-      ? "Stacked pull request"
-      : `Stacked pull request · ${dependencyNavigation.focusIndex + 1} of ${dependencyNavigation.path.length}${dependencyNavigation.coverage === "partial" ? " · partial" : ""}`;
   // The host's own stack, where it keeps one. Only asked for once the detail has landed so a
   // pull request nobody can read costs one request rather than two.
   const stackReference = useMemo(
@@ -761,6 +733,23 @@ export function PullRequestDetailPanel({
   );
   const nativeStackQuery = usePullRequestStack(environmentId, stackReference);
   const nativeStack = nativeStackQuery.data;
+  const readInferredRelationships = shouldReadInferredPullRequestRelationships({
+    supported: detail?.capabilities.dependencies?.branchRelationships === true,
+    nativeStackSupported: stackReference !== null,
+    hasNativeStack: nativeStack !== null,
+    nativeStackSettled: nativeStackQuery.isSuccess || nativeStackQuery.error !== null,
+  });
+  const dependencyContextQuery = useEnvironmentQuery(
+    readInferredRelationships
+      ? pullRequestEnvironment.dependencyContext({ environmentId, input: reference })
+      : null,
+  );
+  const dependencyNavigation = pullRequestDependencyNavigation({
+    supported: readInferredRelationships,
+    context: dependencyContextQuery.data,
+    pending: dependencyContextQuery.isPending,
+    failed: dependencyContextQuery.error !== null,
+  });
   const supportsStackActions =
     supportsThreadPullRequests &&
     detail?.capabilities.stacks === true &&
@@ -1630,7 +1619,7 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-              {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
+              {!nativeStack && stackReference !== null && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
@@ -1659,6 +1648,14 @@ export function PullRequestDetailPanel({
                     refreshDetail();
                     onActed?.();
                   }}
+                />
+              ) : onSelectPullRequest ? (
+                <PullRequestBranchMenu
+                  navigation={dependencyNavigation}
+                  reference={reference}
+                  refreshing={dependencyContextQuery.isPending}
+                  onSelect={onSelectPullRequest}
+                  onRetry={retryDependencies}
                 />
               ) : null}
               {context === "page" ? (
@@ -2158,19 +2155,12 @@ export function PullRequestDetailPanel({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                            {condensedDependencyIndicator ? (
-                              <LayersIcon aria-hidden className="size-3 shrink-0" />
-                            ) : null}
-                            <code className="min-w-0 truncate">{detail.baseBranch}</code>
-                          </span>
+                          <code className="min-w-0 max-w-[40%] shrink-0 truncate">
+                            {detail.baseBranch}
+                          </code>
                         }
                       />
-                      <TooltipPopup side="top">
-                        {condensedDependencyIndicator
-                          ? condensedDependencyTooltip
-                          : detail.baseBranch}
-                      </TooltipPopup>
+                      <TooltipPopup side="top">{detail.baseBranch}</TooltipPopup>
                     </Tooltip>
                     {freshness ? (
                       <PullRequestBaseFreshnessWarning
@@ -2195,13 +2185,6 @@ export function PullRequestDetailPanel({
                     </Tooltip>
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-[11px]">
-                    {onOpenPullRequest ? (
-                      <PullRequestDependencyNavButtons
-                        navigation={dependencyNavigation}
-                        refreshing={dependencyContextQuery.isPending}
-                        onOpenPullRequest={onOpenPullRequest}
-                      />
-                    ) : null}
                     <span
                       className="inline-flex items-center gap-1 tabular-nums"
                       aria-label={`${detail.changedFiles.toLocaleString()} changed ${
@@ -2386,15 +2369,6 @@ export function PullRequestDetailPanel({
                     />
                   </span>
                 </div>
-                {onOpenPullRequest ? (
-                  <PullRequestDependencyRow
-                    navigation={dependencyNavigation}
-                    hostLabel={dependencyHostLabel}
-                    refreshing={dependencyContextQuery.isPending}
-                    onOpenPullRequest={onOpenPullRequest}
-                    onRetry={retryDependencies}
-                  />
-                ) : null}
               </div>
             ) : null}
           </div>

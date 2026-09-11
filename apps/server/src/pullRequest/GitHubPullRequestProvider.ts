@@ -218,8 +218,6 @@ export const make = Effect.gen(function* () {
     getCiJobs: (input) => cli.getCiJobs(input).pipe(Effect.mapError(fail("getCiJobs"))),
     rerunCi: (input) => cli.rerunCi(input).pipe(Effect.mapError(fail("rerunCi"))),
 
-    getNativeDependencyMembership: (input) => cli.getNativeDependencyMembership(input),
-
     getViewer: (input) =>
       cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
 

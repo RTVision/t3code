@@ -2071,22 +2071,6 @@ function PullRequestsRouteView() {
                 // Mutations already invalidate the host's affected caches.
                 refreshListAndStats(undefined, panelEnvironmentId);
               }}
-              onOpenPullRequest={(number) => {
-                if (rightPanelRef === null) return;
-                const nextSelection = {
-                  environmentId: panelEnvironmentId,
-                  projectId: renderedPullRequestSurface.projectId as ProjectId,
-                  repository: renderedPullRequestSurface.repository,
-                  number,
-                };
-                useRightPanelStore.getState().openPullRequest(rightPanelRef, nextSelection);
-                updateSearch({
-                  repository: nextSelection.repository,
-                  number: nextSelection.number,
-                  selectedProjectId: nextSelection.projectId,
-                  selectedEnvironmentId: nextSelection.environmentId,
-                });
-              }}
             />
           </RightPanelTabs>
         ) : null}

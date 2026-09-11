@@ -450,7 +450,7 @@ export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabili
 export const PullRequestDependencyCapabilities = Schema.Struct({
   /** Ordinary pull requests can be related by their repository-qualified head and base refs. */
   branchRelationships: Schema.Boolean,
-  /** The host can additionally report an explicit, ordered native stack membership. */
+  /** Always false on new servers. Retained for clients that require this capability field. */
   nativeMembership: Schema.Boolean,
 });
 export type PullRequestDependencyCapabilities = typeof PullRequestDependencyCapabilities.Type;
@@ -796,32 +796,16 @@ export const PullRequestDependencyIssue = Schema.Struct({
 });
 export type PullRequestDependencyIssue = typeof PullRequestDependencyIssue.Type;
 
-export const PullRequestNativeDependencyMembership = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal("present"),
-    /** Opaque outside the provider and scoped to this context's host and repository. */
-    id: TrimmedNonEmptyString,
-    members: Schema.Array(PositiveInt).check(Schema.isMaxLength(100)),
-    coverage: Schema.Literals(["complete", "partial"]),
-  }),
-  Schema.Struct({ status: Schema.Literals(["none", "unavailable"]) }),
-]);
-export type PullRequestNativeDependencyMembership =
-  typeof PullRequestNativeDependencyMembership.Type;
-
 /** A bounded dependency read for one exact provider, host, and target repository. */
 export const PullRequestDependencyContext = Schema.Struct({
   focus: PullRequestRef,
   provider: SourceControlProviderKind,
   host: TrimmedNonEmptyString,
   repository: TrimmedNonEmptyString,
-  /** Up to 200 relationship rows plus 100 additional native members. */
   nodes: Schema.Array(PullRequestDependencyNode).check(Schema.isMaxLength(300)),
   edges: Schema.Array(PullRequestDependencyEdge).check(Schema.isMaxLength(400)),
   coverage: PullRequestDependencyCoverage,
   issues: Schema.Array(PullRequestDependencyIssue).check(Schema.isMaxLength(400)),
-  /** Omitted until a provider attempts a native membership read. */
-  native: Schema.optional(PullRequestNativeDependencyMembership),
 });
 export type PullRequestDependencyContext = typeof PullRequestDependencyContext.Type;
 export const PullRequestLinkedThreadsResult = Schema.Struct({

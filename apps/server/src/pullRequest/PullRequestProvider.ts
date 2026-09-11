@@ -165,29 +165,6 @@ export interface ProviderChangeRequestPage {
   readonly continues: boolean;
 }
 
-/** Optional host-native stack membership, independent from ordinary branch relationships. */
-export type ProviderNativeDependencyMembership =
-  | {
-      readonly status: "present";
-      readonly id: string;
-      /** Host-defined order. Every member carries enough data to render a lightweight node. */
-      readonly members: ReadonlyArray<
-        Pick<
-          ProviderChangeRequest,
-          | "number"
-          | "title"
-          | "url"
-          | "state"
-          | "isDraft"
-          | "headBranch"
-          | "baseBranch"
-          | "headRepositoryNameWithOwner"
-        >
-      >;
-      readonly coverage: "complete" | "partial";
-    }
-  | { readonly status: "none" };
-
 /**
  * Where a repository's next slice starts, as the provider that has to ask for it needs it. Built
  * by the service out of the slice it just handed over, so the boundary that decides whether a row
@@ -409,14 +386,6 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
-
-  /**
-   * Explicit stack membership reported by the host. Optional and independent from branch-chain
-   * discovery: an absent implementation or failed read must not disable ordinary relationships.
-   */
-  readonly getNativeDependencyMembership?: (
-    input: ProviderRepositoryRef & { readonly number: number; readonly limit: number },
-  ) => Effect.Effect<ProviderNativeDependencyMembership, PullRequestProviderError>;
 
   /**
    * The cheap live fields used by linked threads. Optional because a provider without a narrow
