@@ -221,17 +221,15 @@ function PullRequestRowImpl({
               Changes requested
             </span>
           ) : null}
-          {entry.checksState === undefined ? null : (
-            <PullRequestChecksPopover
-              checksState={entry.checksState}
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-            />
-          )}
+          <PullRequestChecksPopover
+            checksState={entry.checksState ?? null}
+            environmentId={entry.environmentId}
+            reference={{
+              projectId: entry.projectId,
+              repository: entry.repository,
+              number: entry.number,
+            }}
+          />
         </PullRequestMetaLine>
         <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
           <span className="hidden @sm/pr-row:inline">
