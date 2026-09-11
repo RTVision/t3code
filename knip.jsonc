@@ -25,7 +25,12 @@
         "src/provider/testFixtures/*.mjs",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.
-      "ignoreDependencies": ["msgpackr-extract", "@t3tools/web"],
+      "ignoreDependencies": [
+        "msgpackr-extract",
+        "@t3tools/web",
+        // Pins npm resolution; npm ignores overrides inside installed dependencies.
+        "@effect/platform-node-shared",
+      ],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.

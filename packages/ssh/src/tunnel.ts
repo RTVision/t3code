@@ -430,6 +430,40 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
+# Service updates install a complete, versioned runtime without adding it to
+# PATH or npm's cache. Reuse that exact package for pairing as well as startup.
+resolve_installed_cli() {
+  node - @@T3_PACKAGE_SPEC@@ <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+try {
+  const spec = process.argv[2];
+  const separator = spec.lastIndexOf("@");
+  const name = spec.slice(0, separator);
+  const version = spec.slice(separator + 1);
+  if (separator <= 0 || !/^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$/.test(version)) {
+    process.exit(1);
+  }
+  const runtimeDir = path.join(process.env.HOME, ".t3", "runtime", "versions", version);
+  if (fs.readFileSync(path.join(runtimeDir, ".install-complete"), "utf8").trim() !== version) {
+    process.exit(1);
+  }
+  const packageDir = path.join(runtimeDir, "node_modules", "t3");
+  const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  const entry = path.join(packageDir, "dist", "bin.mjs");
+  if (manifest.name !== name || manifest.version !== version || !fs.statSync(entry).isFile()) {
+    process.exit(1);
+  }
+  process.stdout.write(entry);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+T3_INSTALLED_CLI="$(resolve_installed_cli)" || true
+if [ -n "$T3_INSTALLED_CLI" ]; then
+  exec node "$T3_INSTALLED_CLI" "$@"
+fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
 # the npx cache without a t3 executable. \`npx --yes\` then exits 0 without
