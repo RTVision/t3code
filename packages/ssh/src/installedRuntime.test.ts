@@ -15,6 +15,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const version = "1.2.3";
 const packageName = "@rtvision/t3";
 
+/** Runs the generated runner against isolated installed-runtime and npm-fallback fixtures. */
 async function fixture(
   run: (input: {
     root: string;
