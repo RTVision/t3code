@@ -13,6 +13,8 @@ import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import * as ServerRuntimeState from "./serverRuntimeState.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const managedLauncher = ServiceLauncherClient.ServiceLauncherClient.of({
   managed: true,
   requestUpdate: () => Effect.die("unexpected update request"),
@@ -151,7 +153,7 @@ describe("serverRuntimeState", () => {
           if (mode === "handoff" || mode === "stop-during-handoff") {
             yield* fs.writeFileString(
               path.join(baseDir, "runtime", "service-state.json"),
-              JSON.stringify({
+              encodeJson({
                 protocol: SERVICE_LAUNCHER_PROTOCOL,
                 activeVersion: "1.0.0",
                 update: {

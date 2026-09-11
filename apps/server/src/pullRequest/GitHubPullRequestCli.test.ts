@@ -11,6 +11,14 @@ import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeViewedFileMutation = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Struct({ pullRequestId: Schema.String, path: Schema.String }),
+    }),
+  ),
+);
 
 const mockedExecute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
 const mockedStackMemberships = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>(() =>
@@ -291,7 +299,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         path: 'src/file with "quotes".ts',
       };
       const identity = output(
-        JSON.stringify({
+        encodeJson({
           data: { repository: { pullRequest: { id: "PR_7", headRefOid: "head" } } },
         }),
       );
@@ -300,7 +308,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           .mockReturnValueOnce(Effect.succeed(identity))
           .mockReturnValueOnce(Effect.succeed(output("{}")));
         yield* cli.setFileViewed({ ...input, viewed });
-        const body = JSON.parse(mockedExecute.mock.calls.at(-1)![0].stdin!);
+        const body = decodeViewedFileMutation(mockedExecute.mock.calls.at(-1)![0].stdin!);
         expect(body.variables).toEqual({ pullRequestId: "PR_7", path: input.path });
         expect(body.query).toContain(viewed ? "markFileAsViewed" : "unmarkFileAsViewed");
       }

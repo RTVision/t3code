@@ -11,7 +11,7 @@ Run these commands on the machine that will host T3 Code:
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | Install and start               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service install`   |
 | Inspect status and log location | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service status`    |
-| Update the running server                | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
+| Update the running server       | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
 | Stop and remove from startup    | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.

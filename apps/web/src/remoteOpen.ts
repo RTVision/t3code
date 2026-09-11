@@ -118,10 +118,6 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
   }, [presentation]);
 }
 
-export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
-  return useRemoteOpenResolution(environmentId).state;
-}
-
 /**
  * Editors offered in remote-link mode. The desktop app probes the machine the
  * renderer runs on; a browser cannot, so it offers VS Code only.

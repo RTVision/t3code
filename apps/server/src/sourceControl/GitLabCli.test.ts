@@ -185,6 +185,8 @@ layer("GitLabCli.layer", (it) => {
       assert.deepStrictEqual(result, {
         number: 44,
         title: "Same repository MR",
+        mergedAt: null,
+        closedAt: null,
         url: "https://gitlab.com/acme/web/-/merge_requests/44",
         baseRefName: "main",
         headRefName: "feature/same-repo",
@@ -226,6 +228,8 @@ layer("GitLabCli.layer", (it) => {
       assert.deepStrictEqual(result, {
         number: 46,
         title: "IDs-only same repository MR",
+        mergedAt: null,
+        closedAt: null,
         url: "https://gitlab.com/acme/web/-/merge_requests/46",
         baseRefName: "main",
         headRefName: "feature/ids-only",

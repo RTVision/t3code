@@ -3,7 +3,7 @@ import type { VimSettings } from "@t3tools/contracts/settings";
 export type VimMode = "normal" | "insert" | "terminal";
 export type VimScope = "chat" | "terminal" | "sidebar" | "diff" | "other";
 
-export const VIM_COMMANDS = [
+const VIM_COMMANDS = [
   ["input.enter", "Enter input", ["i"], ["normal"]],
   [
     "mode.normal",
@@ -107,7 +107,7 @@ export function resolveVimBindings(settings: VimSettings): VimBinding[] {
     return { command, label, keys: override?.keys ?? keys, modes: override?.modes ?? modes };
   });
 }
-export function commandAvailable(command: VimCommand, scope: VimScope): boolean {
+function commandAvailable(command: VimCommand, scope: VimScope): boolean {
   if (command.startsWith("message.") || command.startsWith("search.")) return scope === "chat";
   if (command.startsWith("hunk.")) return scope === "diff";
   if (command === "pane.close") return scope === "terminal" || scope === "diff";
