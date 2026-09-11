@@ -2199,7 +2199,13 @@ export const make = Effect.gen(function* () {
               : input.verdict === "request-changes"
                 ? "REQUEST_CHANGES"
                 : "COMMENT",
-          body: input.body,
+          // Gitea requires a summary for change requests even when inline comments are present.
+          body:
+            input.verdict === "request-changes" &&
+            input.body.trim().length === 0 &&
+            input.comments.length > 0
+              ? "See inline comments."
+              : input.body,
           comments: input.comments.map((comment) => ({
             body: comment.body,
             path: comment.path,

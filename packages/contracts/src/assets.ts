@@ -12,6 +12,10 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 const ASSET_PATH_MAX_LENGTH = 1024;
 
 export const AssetResource = Schema.Union([
+  Schema.TaggedStruct("source-control-image", {
+    provider: Schema.Literal("gitea"),
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -277,7 +281,17 @@ export class AssetSigningKeyLoadError extends Schema.TaggedError<AssetSigningKey
   }
 }
 
+export class AssetSourceControlImageError extends Schema.TaggedError<AssetSourceControlImageError>()(
+  "AssetSourceControlImageError",
+  { resource: AssetResource, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const AssetAccessError = Schema.Union([
+  AssetSourceControlImageError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   AssetWorkspaceRootNormalizationError,

@@ -1887,6 +1887,76 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
+  it.effect.each(["", " \n\t "])(
+    "submits inline change requests without a user-written summary: %j",
+    (body) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValueOnce(Effect.succeed(response({})));
+        const api = yield* GiteaPullRequestApi.make;
+        yield* api.submitReview({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          verdict: "request-changes",
+          body,
+          comments: [
+            {
+              body: "Keep this check.",
+              path: "src/a.ts",
+              position: { kind: "deleted", oldLine: 4 },
+            },
+            {
+              body: "Handle the empty result.",
+              path: "src/b.ts",
+              position: { kind: "added", newLine: 9 },
+            },
+          ],
+        });
+
+        expect(mockedRequest).toHaveBeenCalledTimes(1);
+        expect(callAt(0)).toMatchObject({
+          method: "POST",
+          path: "/repos/acme/web/pulls/7/reviews",
+        });
+        expect(decodeJson(callAt(0).body ?? "{}")).toEqual({
+          event: "REQUEST_CHANGES",
+          body: "See inline comments.",
+          comments: [
+            { body: "Keep this check.", path: "src/a.ts", old_position: 4 },
+            { body: "Handle the empty result.", path: "src/b.ts", new_position: 9 },
+          ],
+        });
+      }),
+  );
+
+  it.effect.each(["approve", "comment"] as const)(
+    "keeps the summary empty for an inline %s review",
+    (verdict) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValueOnce(Effect.succeed(response({})));
+        const api = yield* GiteaPullRequestApi.make;
+        yield* api.submitReview({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          verdict,
+          body: "",
+          comments: [
+            {
+              body: "Worth following up separately.",
+              path: "src/a.ts",
+              position: { kind: "added", newLine: 4 },
+            },
+          ],
+        });
+
+        expect(decodeJson(callAt(0).body ?? "{}")).toMatchObject({
+          event: verdict === "approve" ? "APPROVED" : "COMMENT",
+          body: "",
+        });
+      }),
+  );
+
   it.effect("maps native warning statuses to failing checks", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(

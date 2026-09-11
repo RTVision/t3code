@@ -6,6 +6,7 @@ import {
   AssetProjectFaviconNotFoundError,
   AssetProjectFaviconResolutionError,
   AssetSigningKeyLoadError,
+  AssetSourceControlImageError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
@@ -49,6 +50,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as GiteaAttachment from "../sourceControl/GiteaAttachment.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -79,6 +81,13 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
 ]);
 
 const AssetClaimsSchema = Schema.Union([
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("source-control-image"),
+    provider: Schema.Literal("gitea"),
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file"),
@@ -272,6 +281,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let imageDimensions: ImageDimensions | null = null;
 
   switch (input.resource._tag) {
+    case "source-control-image": {
+      const url = yield* GiteaAttachment.validateUrl(input.resource.url).pipe(
+        Effect.mapError(
+          () =>
+            new AssetSourceControlImageError({
+              resource: input.resource,
+              detail: "The image is not an attachment on the configured Gitea server.",
+            }),
+        ),
+      );
+      claims = { version: 1, kind: "source-control-image", provider: "gitea", url, expiresAt };
+      fileName = "image";
+      break;
+    }
     case "media-file": {
       let requestedPath = input.resource.path;
       if (!path.isAbsolute(requestedPath)) {
@@ -623,6 +646,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "source-control-image") {
+    if (relativePath !== "image") return null;
+    return { kind: "source-control-image" as const, url: claims.url };
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
