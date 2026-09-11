@@ -103,6 +103,7 @@ export function decodeGiteaResponse<S extends Schema.Top>(
   );
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* GiteaConfig;
   const client = yield* HttpClient.HttpClient;

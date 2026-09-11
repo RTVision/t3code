@@ -1,5 +1,4 @@
 import {
-  EDITORS,
   EditorChoice,
   EditorId,
   EnvironmentId,
@@ -16,7 +15,6 @@ import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";
@@ -99,24 +97,6 @@ export function useEditorChoice(
     [explicit, fallback, legacy, effectiveEditors],
   );
   return { choice, select, effectiveEditors, terminal, remote };
-}
-
-// Retained for menu labels and mixed-version callers; all launches use the dispatch hook below.
-export function usePreferredEditor(
-  availableEditors: readonly EditorId[],
-  environmentId: EnvironmentId | null = null,
-) {
-  const state = useEditorChoice(environmentId, availableEditors);
-  return [
-    state.choice?.editor ?? null,
-    (editor: EditorId) => state.select({ kind: "gui", editor }),
-  ] as const;
-}
-export function resolvePreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
-  return stored && availableEditors.includes(stored)
-    ? stored
-    : (EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null);
 }
 
 export function useEditorDispatch(

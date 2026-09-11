@@ -34,7 +34,7 @@ const Preferences = Schema.Struct({
 });
 const readPreferences = Schema.decodeUnknownSync(Preferences);
 
-export function classifyProbeFailure(message: string): TerminalEditorReason {
+function classifyProbeFailure(message: string): TerminalEditorReason {
   if (/T3NEOVIM_RUNTIME_MISSING/u.test(message)) return "missing-runtime";
   if (/timed out|timeout|ETIMEDOUT/iu.test(message)) return "timeout";
   if (

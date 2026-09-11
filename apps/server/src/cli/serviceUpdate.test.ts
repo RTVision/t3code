@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ServerSelfUpdateError, type ServerConfig } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -12,6 +13,8 @@ import {
   requestServiceUpdate,
   updateRunningService,
 } from "./serviceUpdate.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const config = (version = "0.0.42", managed = true): Pick<ServerConfig, "environment"> => ({
   environment: {
@@ -111,7 +114,7 @@ it.effect("authenticates with the installed CLI before any new-version migration
     );
     yield* fs.writeFileString(
       path.join(baseDir, "runtime", "service-state.json"),
-      JSON.stringify({ protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.41" }),
+      encodeJson({ protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.41" }),
     );
     const calls: ProcessRunInput[] = [];
     const token = yield* issueServiceUpdateToken(baseDir).pipe(
@@ -169,11 +172,11 @@ it.effect.each(["absent", "daemon-record", "unreadable", "lan-origin"] as const)
         startedAt: "2026-09-09T00:00:00Z",
       };
       const serverRuntimeStatePath = path.join(baseDir, "userdata", "server-runtime.json");
-      yield* fs.writeFileString(serverRuntimeStatePath, JSON.stringify(runtime));
+      yield* fs.writeFileString(serverRuntimeStatePath, encodeJson(runtime));
       if (mode === "daemon-record") {
         yield* fs.writeFileString(
           path.join(baseDir, "runtime", "server-runtime.json"),
-          JSON.stringify({ ...runtime, launcherPid: process.pid }),
+          encodeJson({ ...runtime, launcherPid: process.pid }),
         );
       } else if (mode === "unreadable") {
         yield* fs.makeDirectory(path.join(baseDir, "runtime", "service-state.json"));

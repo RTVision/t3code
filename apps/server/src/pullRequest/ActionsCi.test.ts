@@ -1,7 +1,12 @@
 import { expect, it, describe } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { actionsCiStatus, makeActionsCi, resolveCheckUrl } from "./ActionsCi.ts";
+
+class TestCiError extends Schema.TaggedError<TestCiError>()("TestCiError", {
+  message: Schema.String,
+}) {}
 
 const ref = { cwd: "/workspace", host: "forge.test", repository: "acme/web", number: 42 };
 const runRef = { ...ref, runId: "12", headSha: "head", attempt: 2 };
@@ -43,12 +48,12 @@ function fixture(
   const requests: Array<{ method: string; path: string }> = [];
   const api = makeActionsCi({
     kind: options.kind ?? "gitea",
-    fail: (detail) => new Error(detail),
+    fail: (detail) => new TestCiError({ message: detail }),
     request: (input) => {
       requests.push(input);
       if (input.method === "POST")
         return options.writeError
-          ? Effect.fail(new Error("HTTP 403"))
+          ? Effect.fail(new TestCiError({ message: "HTTP 403" }))
           : Effect.succeed({ body: "", truncated: false });
       let data: unknown;
       if (input.path.endsWith("/pulls/42"))
@@ -63,7 +68,7 @@ function fixture(
         const pages = options.jobPages ?? [[job]];
         data = { total_count: pages.flat().length, jobs: pages[page - 1] ?? [] };
       } else if (input.path.endsWith("/actions/jobs/93")) data = { ...job, ...options.currentJob };
-      else return Effect.fail(new Error(`Unexpected request: ${input.path}`));
+      else return Effect.fail(new TestCiError({ message: `Unexpected request: ${input.path}` }));
       return Effect.succeed({ body: JSON.stringify(data), truncated: false });
     },
   });
@@ -77,7 +82,7 @@ describe("Actions CI", () => {
       const { conclusion: _jobConclusion, ...queuedJob } = { ...job, status: "queued" };
       const api = makeActionsCi({
         kind: "gitea",
-        fail: (detail) => new Error(detail),
+        fail: (detail) => new TestCiError({ message: detail }),
         request: (input) => {
           const body = input.path.endsWith("/pulls/42")
             ? { head: { sha: "head" } }

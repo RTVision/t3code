@@ -40,6 +40,9 @@
         "src/preview-pick-preload.ts!",
         "src/preview-pip-preload.ts!",
         "src/preview/Annotation.css!",
+        // Packaged terminal diagnostic and the JavaScript helper's companion types.
+        "scripts/neovim-terminal/spike.mjs",
+        "scripts/neovim-terminal/transport.d.mts",
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.

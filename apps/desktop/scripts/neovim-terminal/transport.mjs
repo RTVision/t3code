@@ -28,7 +28,7 @@ function account(value, name) {
 }
 
 /** Validate desktop-resolved routes at the standalone helper boundary. */
-export function validateRequest(input) {
+function validateRequest(input) {
   if (!input || typeof input !== "object" || input.version !== 1) {
     throw new Error("Unsupported terminal-editor payload version.");
   }
