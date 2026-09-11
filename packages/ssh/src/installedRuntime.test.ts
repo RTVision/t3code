@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Executes generated shell scripts against real runtime installations on disk.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
