@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -57,8 +58,8 @@ import {
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
   type PullRequestSubmitReviewInput,
-  type PullRequestStack,
-  type PullRequestSummary,
+  PullRequestStack,
+  PullRequestSummary,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
   type PullRequestViewedFiles,
@@ -81,6 +82,7 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
+import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 import {
   buildPullRequestDependencyContext,
@@ -128,7 +130,6 @@ const REPOSITORY_SEARCH_CHUNK = 100;
  * `invalidate` rather than a flag on the read, so an ordinary read can never opt out.
  */
 const LIST_CACHE_TTL = Duration.seconds(30);
-const SUMMARY_CACHE_TTL = Duration.seconds(60);
 const DETAIL_CACHE_TTL = Duration.seconds(15);
 const DIFF_CACHE_TTL = Duration.seconds(60);
 /** A commit is content-addressed, so its own diff cannot change under its key. */
@@ -581,6 +582,7 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
+  const readCache = yield* PullRequestReadCache.PullRequestReadCache;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -2746,18 +2748,49 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const summaryCache = yield* Cache.makeWith(
-    (key: string) => {
-      return summaryUncached(refOfCacheKey(key));
-    },
-    {
-      capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
-    },
-  );
+  const persistedRead = Effect.fn("PullRequestService.persistedRead")(function* <A>(
+    input: PullRequestRef,
+    operation: string,
+    codec: Schema.Codec<A, string>,
+    read: Effect.Effect<A, PullRequestError>,
+  ) {
+    const project = yield* requireProject(input);
+    const key = [
+      operation,
+      project.api.kind,
+      project.host.toLowerCase(),
+      project.repository.toLowerCase(),
+      project.project.id,
+      project.project.workspaceRoot,
+      String(input.number),
+    ]
+      .map(encodeURIComponent)
+      .join(":");
+    const lookup = yield* Effect.cached(read);
+    const encodedRead = lookup.pipe(
+      Effect.flatMap((value) =>
+        Schema.encodeEffect(codec)(value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "cache",
+                detail: "Could not encode PR cache data.",
+                cause,
+              }),
+          ),
+        ),
+      ),
+    );
+    const payload = yield* readCache.get(key, encodedRead);
+    const decoded = yield* Schema.decodeUnknownEffect(codec)(payload).pipe(Effect.option);
+    return Option.isSome(decoded) ? decoded.value : yield* lookup;
+  });
+  const summaryCodec = Schema.fromJsonString(PullRequestSummary);
+  const stackCodec = Schema.fromJsonString(Schema.NullOr(PullRequestStack));
+
   const summary: PullRequestService["Service"]["summary"] = (input, options) => {
     const key = refCacheKey(input);
-    const cached = Cache.get(summaryCache, key);
+    const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
     return held !== undefined &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
@@ -2769,23 +2802,12 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  const stackCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [referenceKey, includeDetails] = JSON.parse(key) as [string, boolean];
-      return stackUncached(refOfCacheKey(referenceKey), { includeDetails });
-    },
-    {
-      capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
-    },
-  );
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
-    Cache.get(
-      stackCache,
-      JSON.stringify([
-        refCacheKey(input, repositoryEpoch(input)),
-        options?.includeDetails !== false,
-      ]),
+    persistedRead(
+      input,
+      `stack:${options?.includeDetails !== false}`,
+      stackCodec,
+      stackUncached(input, options),
     );
 
   // Keys serialize positionally and parse back in the lookup, so the cache is the only holder
@@ -3113,7 +3135,7 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return invalidateReference(reference, false);
+      return readCache.invalidate.pipe(Effect.andThen(invalidateReference(reference, false)));
     }
     return Effect.sync(() => {
       listingsEpoch = ++epochCounter;
@@ -3126,7 +3148,7 @@ export const make = Effect.gen(function* () {
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.suspend(() => {
     turnRefreshEpoch = listingsEpoch = ++epochCounter;
-    return publishRefresh();
+    return readCache.invalidate.pipe(Effect.andThen(() => publishRefresh()));
   });
 
   // A mutation's own client re-reads right after it, and every other client's next read must
@@ -3138,11 +3160,16 @@ export const make = Effect.gen(function* () {
       listings = true,
     ): ((input: I) => Effect.Effect<void, PullRequestError>) =>
     (input) =>
-      method(input).pipe(Effect.tap(() => invalidateReference(input, listings)));
+      readCache.invalidate.pipe(
+        Effect.andThen(method(input)),
+        Effect.ensuring(readCache.invalidate),
+        Effect.tap(() => invalidateReference(input, listings)),
+      );
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
-    const repository = yield* runAction(input);
+    yield* readCache.invalidate;
+    const repository = yield* runAction(input).pipe(Effect.ensuring(readCache.invalidate));
     yield* invalidateReference({ ...input, repository }, true);
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
