@@ -40,7 +40,6 @@ export function PullRequestReviewerPicker({
   reference,
   allowed,
   comments,
-  onRequested,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -48,8 +47,6 @@ export function PullRequestReviewerPicker({
    * hiding: the control disabled with a reason answers the question its absence would raise. */
   allowed: boolean;
   comments: ReadonlyArray<PullRequestComment>;
-  /** The detail carries who is requested, so it is re-read once the host has taken the change. */
-  onRequested: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -115,8 +112,6 @@ export function PullRequestReviewerPicker({
           ? `Review requested again from ${candidate.login}`
           : `Review requested from ${candidate.login}`,
     });
-    onRequested();
-    candidatesQuery.refresh();
   };
 
   return (
@@ -130,8 +125,8 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
-      isPending={candidatesQuery.isPending}
-      error={candidatesQuery.error}
+      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
+      error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."

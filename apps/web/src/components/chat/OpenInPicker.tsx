@@ -17,6 +17,8 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import {
   AntigravityIcon,
   CursorIcon,
+  FileExplorerIcon,
+  FinderIcon,
   Icon,
   KiroIcon,
   NeovimIcon,
@@ -40,7 +42,7 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
 import {
   isAtomCommandInterrupted,
@@ -55,7 +57,10 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+export const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -158,9 +163,13 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       kind: "brand",
     },
     {
-      Icon: FolderClosedIcon,
+      Icon: isMacPlatform(platform)
+        ? FinderIcon
+        : isWindowsPlatform(platform)
+          ? FileExplorerIcon
+          : FolderClosedIcon,
       value: "file-manager",
-      kind: "generic",
+      kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
@@ -205,14 +214,13 @@ export const OpenInPicker = memo(function OpenInPicker({
     terminal.state === "check-on-open" ||
     preferredEditor?.kind === "terminal";
   const options = useMemo(
-    () => resolveOptions(navigator.platform, dispatch.effectiveEditors),
+    () => resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors),
     [dispatch.effectiveEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
   const openInEditor = useCallback(
     async (editor: EditorChoice | null, explicit = false) => {
       if (!openInCwd || !editor) return;
-      if (explicit) dispatch.select(editor);
       const result = await dispatch.open(
         { kind: compact ? "file" : "directory", path: openInCwd },
         editor,
@@ -225,7 +233,10 @@ export const OpenInPicker = memo(function OpenInPicker({
           title: "Unable to open editor",
           description: error instanceof Error ? error.message : "The editor could not be opened.",
         });
-      } else if (remote.mode === "remote-links") markRemoteHintSeen();
+      } else {
+        if (explicit) dispatch.select(editor);
+        if (remote.mode === "remote-links") markRemoteHintSeen();
+      }
     },
     [compact, dispatch, markRemoteHintSeen, openInCwd, remote.mode],
   );

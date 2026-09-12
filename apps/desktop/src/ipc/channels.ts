@@ -110,3 +110,6 @@ export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PROBE_TERMINAL_EDITOR_CHANNEL = "desktop:probe-terminal-editor";
 export const OPEN_TERMINAL_EDITOR_CHANNEL = "desktop:open-terminal-editor";
 export const SET_TERMINAL_EDITOR_SETTINGS_CHANNEL = "desktop:set-terminal-editor-settings";
+export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
+
+export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";

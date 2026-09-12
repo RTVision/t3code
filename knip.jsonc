@@ -21,16 +21,13 @@
       "entry": [
         "src/bin.ts!",
         "src/service-launcher.ts!",
+        "src/claudeHistoryWorker.ts!",
         "scripts/cli.ts",
         "src/provider/testFixtures/*.mjs",
       ],
+      // Keep the transitive Effect runtime pinned for standalone npm installs.
       // Native msgpack acceleration and the Vite+ web build prerequisite.
-      "ignoreDependencies": [
-        "msgpackr-extract",
-        "@t3tools/web",
-        // Pins npm resolution; npm ignores overrides inside installed dependencies.
-        "@effect/platform-node-shared",
-      ],
+      "ignoreDependencies": ["@effect/platform-node-shared", "msgpackr-extract", "@t3tools/web"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
@@ -44,6 +41,7 @@
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",
         "src/preview-pip-preload.ts!",
+        "src/mac-permission-preload.ts!",
         "src/preview/Annotation.css!",
         // Packaged terminal diagnostic and the JavaScript helper's companion types.
         "scripts/neovim-terminal/spike.mjs",
