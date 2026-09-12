@@ -4,7 +4,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 
@@ -105,14 +105,14 @@ export function PullRequestMarkdownEditor({
           )}
         </div>
       ) : (
-        <Textarea
+        <MentionTextarea
           autoFocus
           disabled={saving}
           value={draft}
           rows={6}
           placeholder={placeholder}
           aria-label={label}
-          onChange={(event) => setDraft(event.target.value)}
+          onValueChange={setDraft}
         />
       )}
       <div className="flex justify-end gap-2">

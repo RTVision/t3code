@@ -30,7 +30,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -375,7 +375,7 @@ function CommentComposer({
 
   return (
     <div className="mt-3 space-y-2">
-      <Textarea
+      <MentionTextarea
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={submitting !== null || actionPending}
@@ -383,7 +383,7 @@ function CommentComposer({
         rows={3}
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
-        onChange={(event) => setBody(event.target.value)}
+        onValueChange={setBody}
       />
       <div className="flex justify-end gap-2">
         {followUpAction === null ? null : (

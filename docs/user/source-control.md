@@ -107,6 +107,10 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Type `@` in a review comment or reply to suggest people from the pull request and repository
+on GitHub, Gitea, and GitLab. Select a name with the arrow keys and Enter or Tab. The mention
+is sent when you submit the comment or review.
+
 In the Code tab, mark files as **Viewed** to save your progress to the connected host account.
 Uncheck a file to review it again. Progress follows that account across devices, and the host
 marks changed files as needing another look. This is available on GitHub and Gitea servers
