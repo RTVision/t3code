@@ -221,7 +221,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   const openInEditor = useCallback(
     async (editor: EditorChoice | null, explicit = false) => {
       if (!openInCwd || !editor) return;
-      if (explicit) dispatch.select(editor);
       const result = await dispatch.open(
         { kind: compact ? "file" : "directory", path: openInCwd },
         editor,
@@ -234,7 +233,10 @@ export const OpenInPicker = memo(function OpenInPicker({
           title: "Unable to open editor",
           description: error instanceof Error ? error.message : "The editor could not be opened.",
         });
-      } else if (remote.mode === "remote-links") markRemoteHintSeen();
+      } else {
+        if (explicit) dispatch.select(editor);
+        if (remote.mode === "remote-links") markRemoteHintSeen();
+      }
     },
     [compact, dispatch, markRemoteHintSeen, openInCwd, remote.mode],
   );
