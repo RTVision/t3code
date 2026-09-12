@@ -118,11 +118,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useEditorDispatch } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
@@ -191,6 +187,11 @@ import {
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
+type MarkdownImageAssetResource = Extract<
+  AssetResource,
+  { readonly _tag: "attachment" | "workspace-file" | "media-file" | "source-control-image" }
+>;
+
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
@@ -212,6 +213,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** Host-backed images, such as private uploads in a pull request description. */
+  resolveImageAsset?: ((source: string) => MarkdownImageAssetResource | null) | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
@@ -1563,10 +1566,7 @@ function ChatMarkdownVideo(props: {
 /** Environment-hosted media loads through an exact-file signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<
-    AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
-  >;
+  readonly resource: MarkdownImageAssetResource;
   readonly kind?: "image" | "video";
   readonly alt: string;
   readonly copyMarkdown?: string;
@@ -1609,7 +1609,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     asset: { environmentId: props.environmentId, resource },
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "workspace-file" || resource._tag === "media-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -2215,6 +2215,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   imageBaseDir,
+  resolveImageAsset,
   onImageExpand,
   renderContextReference,
 }: ChatMarkdownProps) {
@@ -2293,9 +2294,11 @@ function useChatMarkdownState({
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
   const availableEditors = serverConfig?.availableEditors ?? [];
-  const [preferredEditor] = usePreferredEditor(availableEditors);
-  const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const editorDispatch = useEditorDispatch(environmentId, availableEditors, cwd);
+  const preferredEditorMenuLabel = openInEditorMenuLabel(editorDispatch.choice?.editor ?? null);
+  const openInPreferredEditor = editorDispatch.open;
+  const canOpenPreferredEditor =
+    canUseShellActions || (environmentId !== null && editorDispatch.choice !== null);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -2567,7 +2570,7 @@ function useChatMarkdownState({
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
-          {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+          {...(canOpenPreferredEditor ? { onOpen: openInPreferredEditor } : {})}
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
@@ -2594,6 +2597,7 @@ function useChatMarkdownState({
     },
     [
       canUseShellActions,
+      canOpenPreferredEditor,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,
@@ -2616,6 +2620,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       imageBaseDir,
+      resolveImageAsset,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2644,6 +2649,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       imageBaseDir,
+      resolveImageAsset,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -3045,9 +3051,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef, renderContextReference } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      expandMedia,
+      cwd,
+      imageBaseDir,
+      threadRef,
+      environmentId,
+      resolveImageAsset,
+      renderContextReference,
+    } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
     if (contextReference) {
@@ -3071,6 +3083,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
+    const imageAsset = resolveImageAsset?.(classifiedSrc);
+    if (imageAsset && environmentId) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={imageAsset}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          style={authoredSizeStyle}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     if (imageSource._tag === "Direct") {

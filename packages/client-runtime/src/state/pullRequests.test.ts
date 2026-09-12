@@ -1,4 +1,11 @@
-import { EnvironmentId, ProjectId, WS_METHODS, type PullRequestStack } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  WS_METHODS,
+  type PullRequestRefresh,
+  type PullRequestRef,
+  type PullRequestStack,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -23,6 +30,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
+  createPullRequestCiEnvironmentAtoms,
 } from "./pullRequests.ts";
 import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery } from "./runtime.ts";
@@ -35,6 +43,21 @@ const TARGET = new PrimaryConnectionTarget({
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
 });
+
+// With --execArgv=--expose-gc, stress atom identity between turns when WeakRefs can clear.
+const collectGarbage = Effect.promise(
+  () =>
+    new Promise<void>((resolve) => {
+      const testRuntime = globalThis as typeof globalThis & {
+        setImmediate: (callback: () => void) => void;
+        gc?: () => void;
+      };
+      testRuntime.setImmediate(() => {
+        testRuntime.gc?.();
+        resolve();
+      });
+    }),
+);
 
 function session(client: WsRpcProtocolClient): RpcSession {
   return {
@@ -86,7 +109,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (client: WsRpcPro
   const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
     Effect.sync(() => registry.dispose()),
   );
-  return { runtime, atoms, registry };
+  return { runtime, atoms, ciAtoms: createPullRequestCiEnvironmentAtoms(runtime), registry };
 });
 
 it.effect("keeps concurrent diff file reads on different hosts separate", () =>
@@ -133,6 +156,249 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
     }),
   ),
 );
+
+it.effect(
+  "refreshes runs, expanded jobs, and mobile checks after another client requests a rerun",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reference = {
+          projectId: ProjectId.make("project-1"),
+          host: "forge.test",
+          repository: "acme/web",
+          number: 1,
+        };
+        const events = yield* PubSub.unbounded<PullRequestRefresh>();
+        const subscribed = Latch.makeUnsafe();
+        let subscriptions = 0;
+        let attempt = 1;
+        const client = {
+          [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(events);
+                subscriptions += 1;
+                subscribed.openUnsafe();
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          [WS_METHODS.pullRequestsCiRuns]: () =>
+            Effect.sync(() => ({
+              headSha: "head",
+              truncated: false,
+              runs: [
+                {
+                  id: "12",
+                  name: "CI",
+                  url: null,
+                  status: attempt === 1 ? "failure" : "pending",
+                  attempt,
+                  rerunModes: [],
+                },
+              ],
+            })),
+          [WS_METHODS.pullRequestsCiJobs]: () =>
+            Effect.sync(() => ({
+              truncated: false,
+              jobs: [
+                {
+                  id: "93",
+                  name: "CI",
+                  url: null,
+                  status: attempt === 1 ? "failure" : "pending",
+                  canRerun: false,
+                },
+              ],
+            })),
+          [WS_METHODS.pullRequestsDetail]: () =>
+            Effect.sync(() => ({
+              checks: [{ name: "CI", status: attempt === 1 ? "failure" : "pending", url: null }],
+            })),
+        } as unknown as WsRpcProtocolClient;
+        const { ciAtoms: atoms, registry } = yield* makeTestRuntime(client);
+        const runs = atoms.ciRuns({ environmentId: TARGET.environmentId, input: reference });
+        const jobs = atoms.ciJobs({
+          environmentId: TARGET.environmentId,
+          input: { ...reference, runId: "12", headSha: "head", attempt: 1 },
+        });
+        const detail = atoms.detail({ environmentId: TARGET.environmentId, input: reference });
+        const mounted: ReadonlyArray<Atom.Atom<unknown>> = [runs, jobs, detail];
+        for (const atom of mounted) {
+          const unmount = registry.mount(atom);
+          yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        }
+        const initial = yield* Effect.promise(() => executeAtomQuery(registry, runs));
+        expect(AsyncResult.isSuccess(initial)).toBe(true);
+        yield* AtomRegistry.getResult(registry, jobs);
+        yield* AtomRegistry.getResult(registry, detail);
+        yield* subscribed.await;
+        const refreshed = Latch.makeUnsafe();
+        const stop = registry.subscribe(runs, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.runs[0]?.attempt === 2)
+            refreshed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(stop));
+        const jobsRefreshed = Latch.makeUnsafe();
+        const detailRefreshed = Latch.makeUnsafe();
+        const stopJobs = registry.subscribe(jobs, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.jobs[0]?.status === "pending")
+            jobsRefreshed.openUnsafe();
+        });
+        const stopDetail = registry.subscribe(detail, (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.checks[0]?.status === "pending")
+            detailRefreshed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            stopJobs();
+            stopDetail();
+          }),
+        );
+        attempt = 2;
+        yield* PubSub.publish(events, { revision: 1, reference, listings: true });
+        yield* refreshed.await;
+        yield* jobsRefreshed.await;
+        yield* detailRefreshed.await;
+        expect(subscriptions).toBe(1);
+        expect((yield* AtomRegistry.getResult(registry, runs)).runs[0]?.status).toBe("pending");
+      }),
+    ),
+);
+
+for (const nextStatus of ["pending", "failure"] as const) {
+  it.effect(
+    `shares rerun submission state across views and clears it on a fresh ${nextStatus} response without an attempt change`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reference = {
+            projectId: ProjectId.make("project-1"),
+            host: "forge.test",
+            repository: "acme/web",
+            number: 1,
+          };
+          const target = {
+            environmentId: TARGET.environmentId,
+            input: { ...reference, runId: "12", headSha: "head", attempt: 0 },
+          };
+          const events = yield* PubSub.unbounded<PullRequestRefresh>();
+          const subscribed = Latch.makeUnsafe();
+          const started = Latch.makeUnsafe();
+          const finish = Latch.makeUnsafe();
+          let writes = 0;
+          let status: "pending" | "failure" = "failure";
+          const client = {
+            [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  const subscription = yield* PubSub.subscribe(events);
+                  subscribed.openUnsafe();
+                  return Stream.fromSubscription(subscription);
+                }),
+              ),
+            [WS_METHODS.pullRequestsCiRuns]: () =>
+              Effect.sync(() => ({
+                headSha: "head",
+                truncated: false,
+                runs: [
+                  {
+                    id: "12",
+                    name: "CI",
+                    url: null,
+                    status,
+                    attempt: 0,
+                    rerunModes: status === "failure" ? ["all", "failed"] : [],
+                  },
+                ],
+              })),
+            [WS_METHODS.pullRequestsRerunCi]: () =>
+              Effect.gen(function* () {
+                writes += 1;
+                started.openUnsafe();
+                yield* finish.await;
+              }),
+          } as unknown as WsRpcProtocolClient;
+          const { atoms, registry } = yield* makeTestRuntime(client);
+          const runs = atoms.ciRuns({
+            environmentId: target.environmentId,
+            input: {
+              number: reference.number,
+              repository: reference.repository,
+              projectId: reference.projectId,
+              host: reference.host,
+            },
+          });
+          const state = atoms.ciRerunState(target);
+          const otherHost = atoms.ciRerunState({
+            ...target,
+            input: { ...target.input, host: "another.test" },
+          });
+          const { number, ...otherInput } = target.input;
+          const otherView = atoms.ciRerunState({ ...target, input: { number, ...otherInput } });
+          const unmountRuns = registry.mount(runs);
+          const unmountState = registry.mount(state);
+          const unmountOther = registry.mount(otherView);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              unmountRuns();
+              unmountState();
+              unmountOther();
+            }),
+          );
+          yield* AtomRegistry.getResult(registry, runs);
+          yield* subscribed.await;
+          yield* collectGarbage;
+          const first = atoms.rerunCi.run(registry, {
+            ...target,
+            input: { ...target.input, target: { kind: "all" } },
+          });
+          yield* started.await;
+          expect(registry.get(otherView)).toBe("pending");
+          expect(registry.get(otherHost)).toBe("idle");
+          yield* collectGarbage;
+          yield* Effect.promise(() =>
+            atoms.rerunCi.run(registry, {
+              ...target,
+              input: { ...target.input, target: { kind: "failed" } },
+            }),
+          );
+          expect(writes).toBe(1);
+          const beforeRefresh = yield* AtomRegistry.getResult(registry, runs);
+          const refreshedWhilePending = Latch.makeUnsafe();
+          const stopPendingRefresh = registry.subscribe(runs, (result) => {
+            if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== beforeRefresh)
+              refreshedWhilePending.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stopPendingRefresh));
+          yield* PubSub.publish(events, { revision: 1, reference, listings: true });
+          yield* refreshedWhilePending.await;
+          expect(registry.get(otherView)).toBe("pending");
+          finish.openUnsafe();
+          const result = yield* Effect.promise(() => first);
+          expect(result._tag).toBe("Success");
+          expect(registry.get(state)).toBe("requested");
+          expect(registry.get(otherView)).toBe("requested");
+          yield* Effect.promise(() =>
+            atoms.rerunCi.run(registry, {
+              ...target,
+              input: { ...target.input, target: { kind: "all" } },
+            }),
+          );
+          expect(writes).toBe(1);
+          const refreshed = Latch.makeUnsafe();
+          const stop = registry.subscribe(state, (phase) => {
+            if (phase === "idle") refreshed.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stop));
+          status = nextStatus;
+          yield* PubSub.publish(events, { revision: 2, reference, listings: true });
+          yield* refreshed.await;
+          expect(registry.get(otherView)).toBe("idle");
+          expect((yield* AtomRegistry.getResult(registry, runs)).runs[0]?.status).toBe(nextStatus);
+        }),
+      ),
+  );
+}
 
 it.effect("refreshes pull request activity after a comment is updated", () =>
   Effect.scoped(
@@ -217,6 +483,164 @@ it.effect("refreshes pull request activity after a comment is updated", () =>
       ).toBe("after turn");
     }),
   ),
+);
+
+it.effect(
+  "scoped refreshes update matching clients without re-fetching unrelated active repositories",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshEvents = yield* PubSub.unbounded<PullRequestRefresh>();
+        const subscribed = Latch.makeUnsafe();
+        let revision = 0;
+        const activityReads = new Map<string, number>();
+        const listReads = new Map<string, number>();
+        const reference = {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/web",
+          number: 1,
+        };
+        const sibling = {
+          ...reference,
+          projectId: ProjectId.make("sibling"),
+          repository: "Acme/Web",
+        };
+        const unrelated = {
+          ...reference,
+          projectId: ProjectId.make("project-2"),
+          repository: "acme/api",
+        };
+        const client = {
+          [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(refreshEvents);
+                subscribed.openUnsafe();
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          [WS_METHODS.pullRequestsActivity]: (input: PullRequestRef) =>
+            Effect.sync(() => {
+              activityReads.set(input.projectId, (activityReads.get(input.projectId) ?? 0) + 1);
+              return {
+                author: null,
+                reviewers: [],
+                comments: [],
+                commentCount: revision,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+                reactions: [],
+              };
+            }),
+          [WS_METHODS.pullRequestsList]: (input: { projectId: string }) =>
+            Effect.sync(() => {
+              listReads.set(input.projectId, (listReads.get(input.projectId) ?? 0) + 1);
+              return {
+                entries: [],
+                providers: [],
+                viewers: {},
+                errors: [],
+                truncated: false,
+                nextCursors: {},
+              };
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const activityAtoms = [reference, sibling, unrelated].map((input) =>
+          atoms.activity({ environmentId: TARGET.environmentId, input }),
+        );
+        const listAtoms = [reference, unrelated].map((input) =>
+          atoms.list({
+            environmentId: TARGET.environmentId,
+            input: { state: "open", projectId: input.projectId },
+          }),
+        );
+        for (const atom of [...activityAtoms, ...listAtoms]) {
+          const unmount = registry.mount<unknown>(atom);
+          yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        }
+        for (const atom of activityAtoms)
+          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        for (const atom of listAtoms)
+          yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+        yield* subscribed.await;
+        const beforeActivity = new Map(activityReads);
+        const beforeLists = new Map(listReads);
+        const updated = [Latch.makeUnsafe(), Latch.makeUnsafe()];
+        for (const [index, atom] of activityAtoms.slice(0, 2).entries()) {
+          const stop = registry.subscribe(atom, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.commentCount === 1)
+              updated[index]!.openUnsafe();
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stop));
+        }
+        revision = 1;
+        yield* PubSub.publish(refreshEvents, {
+          revision,
+          reference,
+          projectIds: [reference.projectId, sibling.projectId],
+          listings: false,
+        });
+        for (const latch of updated) yield* latch.await;
+        expect(activityReads.get(reference.projectId)).toBe(
+          beforeActivity.get(reference.projectId)! + 1,
+        );
+        expect(activityReads.get(sibling.projectId)).toBe(
+          beforeActivity.get(sibling.projectId)! + 1,
+        );
+        expect(activityReads.get(unrelated.projectId)).toBe(
+          beforeActivity.get(unrelated.projectId),
+        );
+        expect(listReads).toEqual(beforeLists);
+
+        const listed = Latch.makeUnsafe();
+        const stop = registry.subscribe(listAtoms[0]!, (result) => {
+          if (
+            AsyncResult.isSuccess(result) &&
+            listReads.get(reference.projectId) === beforeLists.get(reference.projectId)! + 1
+          )
+            listed.openUnsafe();
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(stop));
+        const burstUpdated = [Latch.makeUnsafe(), Latch.makeUnsafe()];
+        for (const [index, atom] of [activityAtoms[0]!, activityAtoms[2]!].entries()) {
+          const stopActivity = registry.subscribe(atom, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.commentCount === 2) {
+              burstUpdated[index]!.openUnsafe();
+            }
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(stopActivity));
+        }
+        revision = 2;
+        // One chunk must retain both repositories and the earlier listing invalidation even
+        // when a later reaction on that reference does not affect listings.
+        yield* PubSub.publishAll(refreshEvents, [
+          {
+            revision: 2,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: true,
+          },
+          {
+            revision: 3,
+            reference,
+            projectIds: [reference.projectId, sibling.projectId],
+            listings: false,
+          },
+          { revision: 4, reference: unrelated, listings: false },
+        ]);
+        yield* listed.await;
+        for (const latch of burstUpdated) yield* latch.await;
+        expect(listReads.get(unrelated.projectId)).toBe(beforeLists.get(unrelated.projectId));
+        expect(activityReads.get(reference.projectId)).toBe(
+          beforeActivity.get(reference.projectId)! + 2,
+        );
+        expect(activityReads.get(unrelated.projectId)).toBe(
+          beforeActivity.get(unrelated.projectId)! + 1,
+        );
+      }),
+    ),
 );
 
 it.effect("updates cached labels after successful edits without rereading the host", () =>
@@ -461,7 +885,7 @@ it.effect("updates reviewer requests and enriched reviewers without rereading th
 it.effect("refreshes stack state after reopening and head SHAs after a turn", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const refreshEvents = yield* PubSub.unbounded<number>();
+      const refreshEvents = yield* PubSub.unbounded<number | PullRequestRefresh>();
       let state: "closed" | "open" = "closed";
       let headSha = "old-head";
       const client = {
@@ -507,6 +931,26 @@ it.effect("refreshes stack state after reopening and head SHAs after a turn", ()
           ?.state,
       ).toBe("open");
 
+      const scoped = Latch.makeUnsafe();
+      const stopScoped = registry.subscribe(stack, (result) => {
+        if (AsyncResult.isSuccess(result) && result.value?.layers[0]?.headSha === "scoped-head")
+          scoped.openUnsafe();
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stopScoped));
+      headSha = "scoped-head";
+      yield* PubSub.publish(refreshEvents, {
+        revision: 1,
+        reference: {
+          projectId: ProjectId.make("project-1"),
+          host: "github.com",
+          repository: "acme/web",
+          number: 2,
+        },
+        host: "github.com",
+        listings: false,
+      });
+      yield* scoped.await;
+
       const refreshed = Latch.makeUnsafe();
       const stop = registry.subscribe(stack, (result) => {
         if (AsyncResult.isSuccess(result) && result.value?.layers[0]?.headSha === "new-head") {
@@ -515,7 +959,7 @@ it.effect("refreshes stack state after reopening and head SHAs after a turn", ()
       });
       yield* Effect.addFinalizer(() => Effect.sync(stop));
       headSha = "new-head";
-      yield* PubSub.publish(refreshEvents, 1);
+      yield* PubSub.publish(refreshEvents, 2);
       yield* refreshed.await;
       expect((yield* AtomRegistry.getResult(registry, stack))?.layers[0]?.headSha).toBe("new-head");
     }),

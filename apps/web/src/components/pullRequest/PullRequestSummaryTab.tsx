@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
   ChevronDownIcon,
@@ -28,7 +29,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -41,6 +42,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestCiRuns } from "./PullRequestCiRuns";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -364,7 +366,7 @@ function CommentComposer({
 
   return (
     <div className="space-y-2">
-      <Textarea
+      <MentionTextarea
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={submitting !== null || actionPending}
@@ -372,7 +374,7 @@ function CommentComposer({
         rows={3}
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
-        onChange={(event) => setBody(event.target.value)}
+        onValueChange={setBody}
       />
       <div className="flex justify-end gap-2">
         {followUpAction === null ? null : (
@@ -677,6 +679,7 @@ export function PullRequestSummaryTab({
                   environmentId={environmentId}
                   reference={reference}
                   allowed={detail.viewerPermissions.requestReviewers}
+                  comments={detail.comments}
                 />
               ) : null}
             </span>
@@ -761,6 +764,13 @@ export function PullRequestSummaryTab({
       </section>
 
       <section aria-label="Checks" className="px-4 py-3">
+        {detail.capabilities.ciRuns && (
+          <PullRequestCiRuns
+            environmentId={environmentId}
+            reference={reference}
+            threadRef={threadRef}
+          />
+        )}
         {detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
@@ -883,7 +893,7 @@ export function PullRequestSummaryTab({
                           <PullRequestReactionBar
                             className="mt-2"
                             reactions={comment.reactions ?? []}
-                            canReact={detail.capabilities.reactions === true}
+                            canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
                             subjectId={comment.id}
                             environmentId={environmentId}
                             reference={reference}
@@ -912,7 +922,7 @@ export function PullRequestSummaryTab({
                   const reactionBar = (
                     <PullRequestReactionBar
                       reactions={comment.reactions ?? []}
-                      canReact={detail.capabilities.reactions === true}
+                      canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
                       subjectId={comment.id}
                       environmentId={environmentId}
                       reference={reference}

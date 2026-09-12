@@ -1,3 +1,5 @@
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { resolveDesktopSshRunner } from "./ssh/DesktopSshRunner.ts";
 import * as MacPermissions from "./permissions/MacPermissions.ts";
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
@@ -111,7 +113,18 @@ const desktopSshEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    const sshSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const resolveSshRunner = yield* Effect.cachedWithTTL(
+      settings.get.pipe(
+        Effect.flatMap(resolveDesktopSshRunner),
+        Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshSpawner),
+      ),
+      "5 seconds",
+    );
     return DesktopSshEnvironment.layer({
+      resolveSshRunner,
       resolveCliRunner: settings.get.pipe(
         Effect.map((currentSettings) => resolveDesktopSshCliRunner(environment, currentSettings)),
       ),

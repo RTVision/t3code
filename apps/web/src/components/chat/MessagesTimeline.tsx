@@ -1,3 +1,5 @@
+import { useClientSettings } from "../../hooks/useSettings";
+import { VimTimeline } from "../../vim/VimTimeline";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -402,6 +404,8 @@ interface MessagesTimelineProps {
   onContentOverflowChange?: (overflows: boolean) => void;
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
+  onVimBottom?: () => void;
+  vimHistoryError?: string | null;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -451,10 +455,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
+  onVimBottom,
+  vimHistoryError = null,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
@@ -896,6 +903,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
+          {vimEnabled && (
+            <VimTimeline
+              key={routeThreadKey}
+              entries={timelineEntries}
+              rows={rows}
+              listRef={listRef}
+              loadEarlier={loadEarlier}
+              historyError={vimHistoryError}
+              expandTurn={expandCitedTurn}
+              onManualNavigation={onManualNavigation}
+              onBottom={
+                onVimBottom ??
+                (() => {
+                  void listRef.current?.scrollToEnd({ animated: false });
+                })
+              }
+            />
+          )}
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar
               viewport={timelineViewportElement}

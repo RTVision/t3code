@@ -22,11 +22,10 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { shellEnvironment } from "../../state/shell";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -780,9 +779,7 @@ export function DiagnosticsSettingsPanel() {
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
-    reportFailure: false,
-  });
+  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors ?? []);
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -838,11 +835,6 @@ export function DiagnosticsSettingsPanel() {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-    if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
     if (environmentId === null) {
       setOpenLogsDirectoryError("No environment is selected.");
       return;
@@ -851,13 +843,7 @@ export function DiagnosticsSettingsPanel() {
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
     void (async () => {
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      });
+      const result = await openInEditor({ kind: "directory", path: logsDirectoryPath });
       setIsOpeningLogsDirectory(false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -866,7 +852,7 @@ export function DiagnosticsSettingsPanel() {
         );
       }
     })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+  }, [environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;

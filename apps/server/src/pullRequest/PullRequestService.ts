@@ -2701,11 +2701,11 @@ export const make = Effect.gen(function* () {
   ) {
     const route = yield* requireProject(reference).pipe(Effect.orElseSucceed(() => undefined));
     const host = route?.host ?? reference.host?.trim().toLowerCase();
-    const snapshot = yield* projections.getShellSnapshot().pipe(Effect.orElseSucceed(() => null));
+    const projects = yield* projections.getProjectShells().pipe(Effect.orElseSucceed(() => []));
     const projectIds = new Set(reference.host === undefined ? [reference.projectId] : []);
     // Hosted references can borrow any checkout. Their epoch belongs to the host and
     // repository; legacy references still need the epoch of each owning checkout.
-    for (const project of snapshot?.projects ?? []) {
+    for (const project of projects) {
       const identity = project.repositoryIdentity;
       const repository = sourceControlRepositorySelector(identity);
       if (

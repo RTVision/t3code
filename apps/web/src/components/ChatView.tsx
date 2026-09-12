@@ -1,3 +1,6 @@
+import { focusVimNormal, getVimMode, setVimMode, useVimAction, vimEnabled } from "../vim/runtime";
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -3657,6 +3660,12 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
+  useVimAction(({ command, scope }) => {
+    if (command !== "input.enter" || scope !== "chat") return;
+    setVimMode("insert");
+    focusComposer();
+    return true;
+  });
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -5369,13 +5378,24 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (vimEnabled() && !isLocalDraftThread) {
+      const frame = requestAnimationFrame(() => focusVimNormal());
+      return () => cancelAnimationFrame(frame);
+    }
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, isLocalDraftThread, terminalUiState.terminalOpen]);
+
+  useEffect(() => {
+    if (!vimEnabled() || isLocalDraftThread) return;
+    // Restored terminals must not take input focus when entering an existing thread.
+    const frame = requestAnimationFrame(() => focusVimNormal());
+    return () => cancelAnimationFrame(frame);
+  }, [routeThreadKey, isLocalDraftThread]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
@@ -5393,7 +5413,11 @@ export default function ChatView(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          if (shouldRefocusComposerOnWindowFocus(document.activeElement)) focusComposer();
+          if (
+            (!vimEnabled() || getVimMode() === "insert") &&
+            shouldRefocusComposerOnWindowFocus(document.activeElement)
+          )
+            focusComposer();
         });
       });
     };
@@ -6252,7 +6276,8 @@ export default function ChatView(props: ChatViewProps) {
     } else if (previous && !current) {
       terminalUiOpenByThreadRef.current[activeThreadKey] = current;
       const frame = window.requestAnimationFrame(() => {
-        focusComposer();
+        if (vimEnabled()) focusVimNormal();
+        else focusComposer();
       });
       return () => {
         window.cancelAnimationFrame(frame);
@@ -6263,7 +6288,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
 
   useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent) => {
+    const handler = (event: globalThis.KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -6278,8 +6303,12 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
-      const terminalFocusOwner = getTerminalFocusOwner();
-      if (event.defaultPrevented && terminalFocusOwner === null) {
+      const terminalFocusOwner = requestedCommand
+        ? (document.activeElement
+            ?.closest("[data-terminal-owner]")
+            ?.getAttribute("data-terminal-owner") as "drawer" | "right-panel" | null)
+        : getTerminalFocusOwner();
+      if (event.defaultPrevented && !requestedCommand && terminalFocusOwner === null) {
         return;
       }
       const shortcutContext = {
@@ -6291,6 +6320,8 @@ export default function ChatView(props: ChatViewProps) {
       };
 
       if (
+        !vimEnabled() &&
+        !requestedCommand &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -6302,9 +6333,11 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          context: shortcutContext,
+        });
       if (!command) return;
 
       if (command === "thread.copyReference") {
@@ -6475,8 +6508,12 @@ export default function ChatView(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
+    const unsubscribeCommand = onAppCommand(handler);
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [
     activeProject,
     activeRightPanelSurface,
@@ -6761,6 +6798,7 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    const focusAtSend = document.activeElement;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -7590,6 +7628,15 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     sendInFlightRef.current = false;
+    if (
+      turnStartSucceeded &&
+      vimEnabled() &&
+      resolvedSubmissionIntent !== "background" &&
+      currentRouteThreadKeyRef.current === routeThreadKey &&
+      document.activeElement === focusAtSend &&
+      promptRef.current.length === 0
+    )
+      focusVimNormal();
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -8636,6 +8683,8 @@ export default function ChatView(props: ChatViewProps) {
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
+        data-vim-pane="chat"
+        tabIndex={-1}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
         {/* Top bar */}
@@ -8727,6 +8776,10 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                onVimBottom={() => scrollToEnd(false)}
+                vimHistoryError={
+                  routeThreadState.error._tag === "Some" ? routeThreadState.error.value : null
+                }
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline

@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./giteaAttachments": {
+      "types": "./src/giteaAttachments.ts",
+      "import": "./src/giteaAttachments.ts"
+    },
+    "./releasePackage": {
+      "types": "./src/releasePackage.ts",
+      "import": "./src/releasePackage.ts"
+    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
