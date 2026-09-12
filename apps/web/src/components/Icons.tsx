@@ -2,48 +2,33 @@ import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
-// Official mark: https://neovim.io/logos/neovim-mark.svg
-export const NeovimIcon: Icon = (props) => {
-  const id = useId();
-  return (
-    <svg {...props} viewBox="0 0 602 734" fill="none">
-      <defs>
-        <linearGradient id={`${id}-left`} x1="50%" y1="0%" x2="50%" y2="100%">
-          <stop stopColor="#16B0ED" stopOpacity="0.800235524" offset="0%" />
-          <stop stopColor="#0F59B2" stopOpacity="0.83700023" offset="100%" />
-        </linearGradient>
-        <linearGradient id={`${id}-right`} x1="50%" y1="0%" x2="50%" y2="100%">
-          <stop stopColor="#7DB643" offset="0%" />
-          <stop stopColor="#367533" offset="100%" />
-        </linearGradient>
-        <linearGradient id={`${id}-cross`} x1="50%" y1="0%" x2="50%" y2="100%">
-          <stop stopColor="#88C649" stopOpacity="0.8" offset="0%" />
-          <stop stopColor="#439240" stopOpacity="0.84" offset="100%" />
-        </linearGradient>
-      </defs>
-      <g transform="translate(2, 3)" fillRule="evenodd">
-        <path
-          d="M0,155.5704 L155,-1 L154.999997,727 L0,572.237919 L0,155.5704 Z"
-          fill={`url(#${id}-left)`}
-        />
-        <path
-          d="M443.060403,156.982405 L600,-1 L596.818792,727 L442,572.219941 L443.060403,156.982405 Z"
-          fill={`url(#${id}-right)`}
-          transform="translate(521, 363.5) scale(-1, 1) translate(-521, -363.5)"
-        />
-        <path
-          d="M154.986294,0 L558,615.189696 L445.224605,728 L42,114.172017 L154.986294,0 Z"
-          fill={`url(#${id}-cross)`}
-        />
-        <path
-          d="M155,283.83232 L154.786754,308 L31,124.710606 L42.4619486,113 L155,283.83232 Z"
-          fillOpacity="0.13"
-          fill="#000000"
-        />
-      </g>
-    </svg>
-  );
-};
+export const FinderIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#36A9F5" />
+    <path
+      d="M13 2h5a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4h-6c-1-4-1-7 0-10H9c0-4 2-8 4-10Z"
+      fill="#D9F1FF"
+    />
+    <path
+      d="M7 7v2m10-2v2M6 15c3 3 9 3 12 0"
+      stroke="#163A59"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+export const FileExplorerIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <path
+      d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"
+      fill="#D99A16"
+    />
+    <path d="M2 9h20v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z" fill="#FFCE45" />
+    <path d="M8 14h8v7H8Z" fill="#58B8E8" />
+    <path d="M10 16h4v2h-4Z" fill="#1879B9" />
+  </svg>
+);
 
 // Apple brand mark from Simple Icons (CC0).
 export const AppleIcon: Icon = (props) => (

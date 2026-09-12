@@ -7,12 +7,11 @@ import {
   FolderOpenIcon,
   InfoIcon,
 } from "lucide-react";
-import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -23,15 +22,11 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerObservabilityAtom,
-  serverEnvironment,
-} from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
+import { shellEnvironment } from "../../state/shell";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -42,6 +37,7 @@ import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSettingsScope } from "./SettingsScopeContext";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -775,14 +771,18 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
-  const observability = useAtomValue(primaryServerObservabilityAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+  const { environment } = useSettingsScope();
+  // The boundary only mounts this page when the selection resolves to one
+  // connected environment, so the representative is the one to inspect.
+  const environmentId = environment?.environmentId ?? null;
+  const observability = environment?.serverConfig?.observability;
+  const availableEditors = environment?.serverConfig?.availableEditors;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors ?? []);
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -824,13 +824,25 @@ export function DiagnosticsSettingsPanel() {
   const signalingPidRef = useRef<number | null>(null);
   const environmentIdRef = useRef(environmentId);
   const processDataRef = useRef(processData);
-  environmentIdRef.current = environmentId;
-  processDataRef.current = processData;
+  useEffect(() => {
+    processDataRef.current = processData;
+  }, [processData]);
+  useEffect(() => {
+    environmentIdRef.current = environmentId;
+    return () => {
+      environmentIdRef.current = null;
+    };
+  }, [environmentId]);
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
+    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+    if (!editor) {
+      setOpenLogsDirectoryError("No available editors found.");
+      return;
+    }
     if (environmentId === null) {
       setOpenLogsDirectoryError("No environment is selected.");
       return;
@@ -839,7 +851,13 @@ export function DiagnosticsSettingsPanel() {
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
     void (async () => {
-      const result = await openInEditor({ kind: "directory", path: logsDirectoryPath });
+      const result = await openInEditor({
+        environmentId,
+        input: {
+          cwd: logsDirectoryPath,
+          editor,
+        },
+      });
       setIsOpeningLogsDirectory(false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -848,12 +866,15 @@ export function DiagnosticsSettingsPanel() {
         );
       }
     })();
-  }, [environmentId, observability?.logsDirectoryPath, openInEditor]);
+  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
   const signalProcess = useCallback(
     async (pid: number, signal: ServerProcessSignal) => {
+      const targetEnvironmentId = environmentIdRef.current;
+      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
+      if (targetEnvironmentId === null || process === undefined) return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
@@ -882,20 +903,21 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
       }
-      const currentEnvironmentId = environmentIdRef.current;
-      if (currentEnvironmentId === null) {
+      if (environmentIdRef.current !== targetEnvironmentId) {
         clearSignaling();
         return;
       }
-      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (process === undefined) {
+      if (
+        processDataRef.current?.processes.find((entry) => entry.pid === pid)?.startTimeMs !==
+        process.startTimeMs
+      ) {
         clearSignaling();
         return;
       }
 
       try {
         const result = await signalServerProcess({
-          environmentId: currentEnvironmentId,
+          environmentId: targetEnvironmentId,
           input: { pid, startTimeMs: process.startTimeMs, signal },
         });
         if (result._tag === "Failure") {
@@ -946,7 +968,7 @@ export function DiagnosticsSettingsPanel() {
 
   return (
     <SettingsPageContainer width="expanded" className="gap-10">
-      <ResourceTelemetryDiagnostics />
+      <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
         title="Live Processes"

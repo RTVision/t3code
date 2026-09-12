@@ -52,7 +52,13 @@ export function PullRequestMarkdown({
     [provider, repositoryUrl],
   );
   return (
-    <div className={cn("space-y-3", className)} data-image-gallery>
+    <div
+      className={cn(
+        "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
+        className,
+      )}
+      data-image-gallery
+    >
       {segments.map((segment) => {
         if (segment.kind === "markdown") {
           return (

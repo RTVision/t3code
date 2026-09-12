@@ -1,4 +1,4 @@
-import { SearchIcon, UserCheckIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
 
@@ -14,6 +14,7 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestApprovalGlyph,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
 
@@ -71,7 +72,6 @@ function PullRequestRowImpl({
   selected,
   showProjectTitle,
   showProvider,
-  showReviewRequest,
   environmentLabel,
   matchedElsewhere,
   statsKey,
@@ -83,8 +83,6 @@ function PullRequestRowImpl({
   showProjectTitle: boolean;
   /** Only when the list spans more than one host, where the repository alone is ambiguous. */
   showProvider: boolean;
-  /** The group heading or Reviewing filter may already identify outstanding requests. */
-  showReviewRequest: boolean;
   /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string;
   /**
@@ -106,7 +104,7 @@ function PullRequestRowImpl({
       aria-current={selected ? "true" : undefined}
       onClick={() => onSelect(entry)}
       className={cn(
-        "@container/pr-row grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "@container/pr-row grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         // Offscreen rows are skipped for style, layout and paint: a long list costs what the
         // viewport shows, not what the pages have loaded. The intrinsic size keeps the
         // scrollbar honest while a row is skipped.
@@ -140,6 +138,26 @@ function PullRequestRowImpl({
               }
             />
           ) : null}
+          {/* Only a verdict somebody has actually given: "review required" is the absence of
+              one, and saying so on every unreviewed row would say nothing. */}
+          {entry.reviewDecision === "approved" ? (
+            <PullRequestApprovalGlyph />
+          ) : entry.reviewDecision === "changes-requested" ? (
+            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
+              Changes requested
+            </span>
+          ) : null}
+          {entry.checksState === undefined ? null : (
+            <PullRequestChecksPopover
+              checksState={entry.checksState}
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+            />
+          )}
           <PullRequestDiffStat
             additions={entry.additions}
             deletions={entry.deletions}
@@ -147,11 +165,6 @@ function PullRequestRowImpl({
           />
         </span>
         <PullRequestMetaLine className="@container/pr-row-meta col-start-1 row-start-2 overflow-hidden text-xs text-muted-foreground/70">
-          {showReviewRequest && entry.viewerReviewRequested && entry.state === "open" ? (
-            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 text-amber-700 dark:text-amber-400">
-              Your review requested
-            </span>
-          ) : null}
           {matchedElsewhere ? (
             <Tooltip>
               <TooltipTrigger
@@ -203,33 +216,6 @@ function PullRequestRowImpl({
             labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
           />
           {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-          {/* Only a verdict somebody has actually given: "review required" is the absence of
-              one, and saying so on every unreviewed row would say nothing. */}
-          {entry.reviewDecision === "approved" ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                <UserCheckIcon
-                  aria-hidden
-                  className="size-3.5 text-emerald-600/90 dark:text-emerald-400/80"
-                />
-                <span className="sr-only">Approved</span>
-              </TooltipTrigger>
-              <TooltipPopup>Approved</TooltipPopup>
-            </Tooltip>
-          ) : entry.reviewDecision === "changes-requested" ? (
-            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
-              Changes requested
-            </span>
-          ) : null}
-          <PullRequestChecksPopover
-            checksState={entry.checksState ?? null}
-            environmentId={entry.environmentId}
-            reference={{
-              projectId: entry.projectId,
-              repository: entry.repository,
-              number: entry.number,
-            }}
-          />
         </PullRequestMetaLine>
         <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
           <span className="hidden @sm/pr-row:inline">

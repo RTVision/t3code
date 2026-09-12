@@ -7,7 +7,6 @@
  */
 import type {
   EnvironmentId,
-  PullRequestComment,
   PullRequestRef,
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
@@ -39,35 +38,16 @@ export function PullRequestReviewerPicker({
   environmentId,
   reference,
   allowed,
-  comments,
-  onRequested,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   /** False where the host would refuse this account's request, which is worth saying rather than
    * hiding: the control disabled with a reason answers the question its absence would raise. */
   allowed: boolean;
-  comments: ReadonlyArray<PullRequestComment>;
-  /** The detail carries who is requested, so it is re-read once the host has taken the change. */
-  onRequested: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const reviewedLogins = useMemo(
-    () =>
-      new Set(
-        comments.flatMap((comment) =>
-          (comment.kind === "review" || comment.kind === "review-comment") &&
-          comment.author !== null
-            ? [comment.author.login.toLowerCase()]
-            : [],
-        ),
-      ),
-    [comments],
-  );
-  const hasReviewed = (candidate: PullRequestReviewerCandidate) =>
-    candidate.kind === "user" && reviewedLogins.has(candidate.login.toLowerCase());
 
   // Mounted with the menu closed, so nothing is asked of the host until it opens.
   const candidatesQuery = useEnvironmentQuery(
@@ -111,18 +91,14 @@ export function PullRequestReviewerPicker({
       type: "success",
       title: candidate.isRequested
         ? `Review request to ${candidate.login} taken back`
-        : hasReviewed(candidate)
-          ? `Review requested again from ${candidate.login}`
-          : `Review requested from ${candidate.login}`,
+        : `Review requested from ${candidate.login}`,
     });
-    onRequested();
-    candidatesQuery.refresh();
   };
 
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Request or re-request a review"
+      label="Request a review"
       allowed={allowed}
       disabledReason="Asking someone to review needs write access on this repository"
       open={open}
@@ -130,8 +106,8 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
-      isPending={candidatesQuery.isPending}
-      error={candidatesQuery.error}
+      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
+      error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
@@ -149,15 +125,8 @@ export function PullRequestReviewerPicker({
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
           {candidate.isRequested ? (
-            <>
-              <span className="shrink-0 text-muted-foreground">Cancel request</span>
-              <CheckIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            </>
-          ) : (
-            <span className="shrink-0 text-muted-foreground">
-              {hasReviewed(candidate) ? "Re-request review" : "Request review"}
-            </span>
-          )}
+            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
+          ) : null}
         </>
       )}
     </PullRequestCandidatePicker>

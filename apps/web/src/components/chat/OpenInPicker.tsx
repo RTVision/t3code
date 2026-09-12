@@ -1,14 +1,19 @@
 import {
+  buildRemoteOpenUrl,
   EditorId,
-  type EditorChoice,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
-import { useEditorDispatch } from "../../editorPreferences";
+import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
-import { useRemoteOpenHint } from "../../remoteOpen";
+import {
+  openRemoteEditorUrl,
+  useRemoteCapableEditors,
+  useRemoteOpenHint,
+  useRemoteOpenState,
+} from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -17,9 +22,10 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import {
   AntigravityIcon,
   CursorIcon,
+  FileExplorerIcon,
+  FinderIcon,
   Icon,
   KiroIcon,
-  NeovimIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -40,13 +46,9 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
-import { cn } from "~/lib/utils";
-import { toastManager } from "../ui/toast";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { Link } from "@tanstack/react-router";
+import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { shellEnvironment } from "~/state/shell";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 type OpenInOption = {
   label: string;
@@ -55,7 +57,10 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+export const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -158,9 +163,13 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       kind: "brand",
     },
     {
-      Icon: FolderClosedIcon,
+      Icon: isMacPlatform(platform)
+        ? FinderIcon
+        : isWindowsPlatform(platform)
+          ? FileExplorerIcon
+          : FolderClosedIcon,
       value: "file-manager",
-      kind: "generic",
+      kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
@@ -178,7 +187,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
-  workspacePath,
   compact = false,
   enableShortcut = true,
 }: {
@@ -186,48 +194,65 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
-  workspacePath?: string;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
-  const dispatch = useEditorDispatch(
-    environmentId,
-    availableEditors,
-    workspacePath ?? (compact ? undefined : openInCwd),
-  );
-  const remote = dispatch.remote.state;
+  const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
+  const remote = useRemoteOpenState(environmentId);
+  const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
-  const preferredEditor = dispatch.choice;
-  const terminal = dispatch.terminal.capability;
-  const terminalVisible =
-    terminal.state === "available" ||
-    terminal.state === "check-on-open" ||
-    preferredEditor?.kind === "terminal";
+  // Remote mode ignores the server's PATH probe: what matters is what runs on
+  // the viewing machine, which only the desktop app can probe.
+  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
-    () => resolveOptions(navigator.platform, dispatch.effectiveEditors),
-    [dispatch.effectiveEditors],
+    () => resolveOpenInOptions(navigator.platform, effectiveEditors),
+    [effectiveEditors],
   );
-  const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+
   const openInEditor = useCallback(
-    async (editor: EditorChoice | null, explicit = false) => {
-      if (!openInCwd || !editor) return;
-      if (explicit) dispatch.select(editor);
-      const result = await dispatch.open(
-        { kind: compact ? "file" : "directory", path: openInCwd },
-        editor,
-      );
-      if (isAtomCommandInterrupted(result)) return;
-      if (result._tag === "Failure") {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          type: "error",
-          title: "Unable to open editor",
-          description: error instanceof Error ? error.message : "The editor could not be opened.",
+    (editorId: EditorId | null) => {
+      if (!openInCwd) return;
+      const editor = editorId ?? preferredEditor;
+      if (!editor) return;
+      if (remote.mode === "remote-unavailable") return;
+      if (remote.mode === "remote-links") {
+        const url = buildRemoteOpenUrl({
+          editor,
+          host: remote.host.host,
+          absolutePath: openInCwd,
         });
-      } else if (remote.mode === "remote-links") markRemoteHintSeen();
+        if (url === undefined) return;
+        // Only record hint-seen/preferred when the shell actually accepted
+        // the URL (an older desktop build can refuse the editor scheme).
+        void openRemoteEditorUrl(url).then((opened) => {
+          if (!opened) return;
+          markRemoteHintSeen();
+          setPreferredEditor(editor);
+        });
+        return;
+      }
+      const result = openInEditorMutation({
+        environmentId,
+        input: {
+          cwd: openInCwd,
+          editor,
+        },
+      });
+      setPreferredEditor(editor);
+      return result;
     },
-    [compact, dispatch, markRemoteHintSeen, openInCwd, remote.mode],
+    [
+      environmentId,
+      markRemoteHintSeen,
+      openInCwd,
+      openInEditorMutation,
+      preferredEditor,
+      remote,
+      setPreferredEditor,
+    ],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -256,17 +281,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         className="ps-[8.5px]"
         size="xs"
         variant="outline"
-        disabled={
-          !preferredEditor ||
-          !openInCwd ||
-          (preferredEditor.kind === "gui" && remote.mode === "remote-unavailable")
-        }
-        title={preferredEditor?.kind === "terminal" ? terminal.message : undefined}
+        disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
         onClick={() => openInEditor(preferredEditor)}
       >
-        {preferredEditor?.kind === "terminal" && (
-          <NeovimIcon aria-hidden="true" className="size-3.5" />
-        )}
         {primaryOption?.Icon && (
           <primaryOption.Icon
             aria-hidden="true"
@@ -284,47 +301,23 @@ export const OpenInPicker = memo(function OpenInPicker({
         </span>
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
-      <Menu
-        onOpenChange={(open) => {
-          if (open) void dispatch.terminal.refresh();
-        }}
-      >
+      <Menu>
         <MenuTrigger
           render={<Button aria-label="Choose editor" size="icon-xs" variant="outline" />}
         >
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {terminalVisible && (
-            <MenuItem onClick={() => openInEditor({ kind: "terminal", editor: "neovim" }, true)}>
-              <NeovimIcon aria-hidden="true" />
-              Neovim (Terminal)
-              {preferredEditor?.kind === "terminal" && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
-            </MenuItem>
-          )}
-          {terminalVisible && terminal.state !== "available" && (
-            <MenuItem disabled className="max-w-80 whitespace-normal">
-              {terminal.message}
-            </MenuItem>
-          )}
-          {terminalVisible && (
-            <MenuItem onClick={() => void dispatch.terminal.rescan()}>Rescan Neovim</MenuItem>
-          )}
           {remote.mode === "remote-unavailable" ? (
             <MenuItem disabled>No SSH route to {environmentLabel}</MenuItem>
           ) : (
             <>
               {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
               {options.map(({ label, Icon, value, kind }) => (
-                <MenuItem
-                  key={value}
-                  onClick={() => openInEditor({ kind: "gui", editor: value }, true)}
-                >
+                <MenuItem key={value} onClick={() => openInEditor(value)}>
                   <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
                   {label}
-                  {value === preferredEditor?.editor && openFavoriteEditorShortcutLabel && (
+                  {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                     <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
                   )}
                 </MenuItem>
@@ -334,7 +327,6 @@ export const OpenInPicker = memo(function OpenInPicker({
               )}
             </>
           )}
-          <MenuItem render={<Link to="/settings/editors" />}>Editor settings…</MenuItem>
         </MenuPopup>
       </Menu>
     </Group>
