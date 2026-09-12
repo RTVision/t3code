@@ -1,5 +1,6 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
+import { PullRequestMentionProvider } from "./PullRequestMentionProvider";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -1460,7 +1461,7 @@ export function PullRequestDetailPanel({
     return <PullRequestDetailGhost seed={matchingListEntry} />;
   }
 
-  return (
+  const content = (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
         <PullRequestThreadLinks
@@ -2692,5 +2693,20 @@ export function PullRequestDetailPanel({
         </AlertDialogPopup>
       </AlertDialog>
     </div>
+  );
+  return (
+    <PullRequestMentionProvider
+      key={JSON.stringify([
+        environmentId,
+        reference.projectId,
+        reference.repository,
+        reference.number,
+      ])}
+      environmentId={environmentId}
+      reference={reference}
+      detail={detail}
+    >
+      {content}
+    </PullRequestMentionProvider>
   );
 }

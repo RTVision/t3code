@@ -2,7 +2,7 @@ import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Textarea } from "~/components/ui/textarea";
+import { MentionTextarea } from "~/components/ui/mention-textarea";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -88,7 +88,7 @@ export function DiffCommentAnnotation({
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <Textarea
+      <MentionTextarea
         ref={textareaRef}
         autoFocus={focusOnMount}
         unstyled
@@ -97,7 +97,7 @@ export function DiffCommentAnnotation({
         value={displayedText}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
-        onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
+        onValueChange={onTextChange ?? setLocalDraftText}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
           event.currentTarget.setSelectionRange(end, end);

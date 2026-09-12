@@ -12,7 +12,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { toastManager } from "../ui/toast";
 import {
   pullRequestReviewKey,
@@ -124,13 +124,13 @@ export function PullRequestReviewBar({
           </Button>
         ) : null}
       </div>
-      <Textarea
+      <MentionTextarea
         size="sm"
         className="mt-2"
         value={body}
         placeholder="Summarize your review (optional)"
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onValueChange={(value) => setSummary(reviewKey, value)}
       />
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         {offered.map((verdict) => (

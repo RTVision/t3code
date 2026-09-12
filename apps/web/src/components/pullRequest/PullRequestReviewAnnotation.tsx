@@ -23,7 +23,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -329,13 +329,13 @@ export function ReviewThreadCard({
           {canReply ? (
             replying ? (
               <div className="mt-2">
-                <Textarea
+                <MentionTextarea
                   autoFocus
                   size="sm"
                   value={reply}
                   placeholder="Reply"
                   aria-label="Reply to this conversation"
-                  onChange={(event) => setReply(event.target.value)}
+                  onValueChange={setReply}
                   onKeyDown={submitKeys({
                     value: reply,
                     pending,
