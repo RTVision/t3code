@@ -112,6 +112,10 @@ Uncheck a file to review it again. Progress follows that account across devices,
 marks changed files as needing another look. This is available on GitHub and Gitea servers
 that support viewed-file access, when viewing all commits.
 
+Use **Whitespace** in the Code tab to hide indentation or spacing changes while reviewing a
+pull request or a single commit. Choose **Show all changes** to restore them. Comparisons with
+separate hunks may need to load both file revisions from the host.
+
 When the host can confirm that one pull request targets another pull request's branch, its review
 panel shows the dependency chain. Select a related pull request there to open its usual review
 panel. T3 marks incomplete discovery instead of guessing whether a release branch or another
