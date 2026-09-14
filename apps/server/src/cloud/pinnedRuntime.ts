@@ -322,6 +322,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
           ],
           timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
           maxOutputBytes: 64 * 1024,
+          outputMode: "truncate",
         })
         .pipe(
           Effect.mapError(
