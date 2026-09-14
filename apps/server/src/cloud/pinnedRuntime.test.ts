@@ -271,6 +271,62 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("keeps the installed archive if replacing it with npm fails validation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-switch-" });
+      const installed = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(installed.versionDir, { recursive: true });
+      yield* fs.writeFileString(installed.entryPath, "working archive");
+      yield* fs.writeFileString(installed.sentinelPath, `${version}\n`);
+      yield* ensurePinnedRuntimeInstalled({
+        distribution: "npm",
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: releaseHttpClient(""),
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            Effect.gen(function* () {
+              const staging = input.args[input.args.indexOf("--prefix") + 1]!;
+              const pkg = path.join(staging, "node_modules/t3");
+              yield* fs
+                .makeDirectory(path.join(pkg, "dist"), { recursive: true })
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(path.join(pkg, "dist/bin.mjs"), "broken replacement")
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(
+                  path.join(pkg, "package.json"),
+                  '{"name":"@rtvision/t3","version":"1.2.3"}',
+                )
+                .pipe(Effect.orDie);
+              return {
+                stdout: "",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+        validate: () =>
+          Effect.fail(new PinnedRuntimeInstallError({ step: "replacement preflight" })),
+      }).pipe(Effect.flip);
+      assert.equal(yield* fs.readFileString(installed.entryPath), "working archive");
+      assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+      assert.deepEqual(yield* fs.readDirectory(path.dirname(installed.versionDir)), [version]);
+    }),
+  );
+
   it.effect("replaces an incomplete pinned runtime", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
