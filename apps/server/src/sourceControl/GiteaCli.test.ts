@@ -5,12 +5,15 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../config.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as GiteaCli from "./GiteaCli.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const target = {
   command: "tea",
@@ -174,13 +177,13 @@ it.effect("passes a mounted Gitea review through ForgejoCli to tea with JSON on 
       operation: "review",
       method: "POST",
       path: "/repos/acme/web/pulls/42/reviews",
-      body: JSON.stringify(body),
+      body: encodeJson(body),
       maxBytes: 1024,
     });
     const call = f.run.mock.calls.find(([input]) => input.args[0] === "api")?.[0];
     expect(call).toMatchObject({
       command: "tea",
-      stdin: JSON.stringify(body),
+      stdin: encodeJson(body),
       maxOutputBytes: 1024,
     });
     expect(call?.args).toEqual([
@@ -194,7 +197,7 @@ it.effect("passes a mounted Gitea review through ForgejoCli to tea with JSON on 
       "@-",
       "https://forge.test/gitea/api/v1/repos/acme/web/pulls/42/reviews",
     ]);
-    expect(JSON.stringify(f.run.mock.calls)).not.toContain("unused-legacy-token");
+    expect(encodeJson(f.run.mock.calls)).not.toContain("unused-legacy-token");
     expect(response.body).toBe('{"id":42}');
     expect(response.headers).toEqual({ "x-total-count": "51", "retry-after": "120" });
   }).pipe(Effect.provide(f.layer), Effect.scoped);
