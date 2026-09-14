@@ -12,7 +12,7 @@ import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
@@ -239,6 +239,8 @@ export function matchForgejoLogin(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  const env = yield* HostProcessEnvironment;
+  const teaConfigHome = env.T3CODE_TEA_CONFIG_HOME?.trim();
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const authLock = yield* Semaphore.make(1);
@@ -249,6 +251,10 @@ export const make = Effect.gen(function* () {
         ...input,
         operation: "ForgejoCli.execute",
         command: input.command ?? "tea",
+        // Login-shell PATH hydration can bypass the service's tea wrapper.
+        ...(input.command !== "fj" && teaConfigHome
+          ? { env: { XDG_CONFIG_HOME: teaConfigHome } }
+          : {}),
         timeoutMs: input.timeoutMs ?? 30_000,
       })
       .pipe(
