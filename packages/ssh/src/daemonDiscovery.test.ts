@@ -8,6 +8,8 @@ import { expect, it } from "vite-plus/test";
 import { buildRemoteLaunchScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+// Discovery must reuse the fixture server without ever launching this script.
+const runner = { nodeScriptPath: "/unused/t3-discovery-test.mjs", nodeEngineRange: null };
 
 async function fixture(run: (home: string, pid: number, port: number) => Promise<void>) {
   const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-daemon-discovery-"));
@@ -46,7 +48,7 @@ async function fixture(run: (home: string, pid: number, port: number) => Promise
 
 async function launch(home: string) {
   const script = NodePath.join(home, "launch.sh");
-  await NodeFSP.writeFile(script, buildRemoteLaunchScript({ nodeEngineRange: null }));
+  await NodeFSP.writeFile(script, buildRemoteLaunchScript(runner));
   return exec("sh", [script, "test"], { env: { ...process.env, HOME: home }, timeout: 15_000 });
 }
 
@@ -112,7 +114,7 @@ it("reuses its own SSH-managed server without killing or reclassifying it", asyn
     await NodeFSP.writeFile(NodePath.join(dir, "managed"), "managed\n");
     await NodeFSP.writeFile(
       NodePath.join(dir, "run-t3.sh"),
-      `${buildRemoteT3RunnerScript({ nodeEngineRange: null }).trimEnd()}\n`,
+      `${buildRemoteT3RunnerScript(runner).trimEnd()}\n`,
     );
     const result = await launch(home);
     expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "managed" });
