@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as GiteaApi from "./GiteaApi.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GiteaSourceControlProvider from "./GiteaSourceControlProvider.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -38,12 +38,12 @@ function pull(number = 42, overrides: Record<string, unknown> = {}) {
   };
 }
 function setup(
-  respond: (input: Parameters<GiteaApi.GiteaApi["Service"]["request"]>[0]) => {
+  respond: (input: Parameters<GiteaCli.GiteaCli["Service"]["request"]>[0]) => {
     readonly body: unknown;
     readonly headers?: Record<string, string>;
   },
 ) {
-  const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+  const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>((input) => {
     const result = respond(input);
     return Effect.succeed({
       body: encodeBody(result.body),
@@ -69,7 +69,7 @@ function setup(
   const provider = GiteaSourceControlProvider.make.pipe(
     Effect.provide(
       Layer.mergeAll(
-        Layer.mock(GiteaApi.GiteaApi)({
+        Layer.mock(GiteaCli.GiteaCli)({
           baseUrl: Option.some("https://forge.example.test"),
           request,
         }),

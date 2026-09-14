@@ -13,10 +13,11 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
-import * as GiteaApi from "./GiteaApi.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -88,13 +89,14 @@ function makeRegistry(input: {
   return SourceControlProviderRegistry.make.pipe(
     Effect.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         registryLayer,
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         NodeServices.layer,
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-        Layer.mock(GiteaApi.GiteaApi)({
+        Layer.mock(GiteaCli.GiteaCli)({
           baseUrl: Option.some("https://forge.example.test"),
           probeAuth: Effect.succeed({
             status: "unauthenticated",
@@ -105,6 +107,7 @@ function makeRegistry(input: {
         }),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),

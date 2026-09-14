@@ -297,6 +297,21 @@ export interface ProviderCiApi<E> {
 }
 
 export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullRequestProviderError>> {
+  readonly withVerifiedCredential?: <A, E, R>(
+    input: { readonly cwd: string; readonly host: string },
+    use: (identity: {
+      readonly accountId: string;
+      readonly viewer: string;
+      readonly credentialFingerprint: string;
+    }) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | PullRequestProviderError, R>;
+  readonly getRoutingIdentity?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<
+    { readonly accountId: string; readonly viewer: string },
+    PullRequestProviderError
+  >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
   /** Host-discovered additions, read only when a caller needs to gate a capability. */
@@ -308,6 +323,7 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {
     readonly cwd: string;
+    readonly host?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
@@ -427,7 +443,11 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
    * is no request at all.
    */
   readonly getViewerPermissions: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Skip branch comparison when checking permission for an unrelated operation. */
+      readonly includeUpdateBranch?: boolean;
+    },
   ) => Effect.Effect<PullRequestViewerPermissions, PullRequestProviderError>;
 
   /** Per-account review progress stored by the host. */

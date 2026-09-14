@@ -44,7 +44,8 @@ function detectCliRunner(entryPath: string): CliRunner | null {
  * anything else suggests the bare package.
  */
 function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? `${T3_NPM_PACKAGE}@nightly` : T3_NPM_PACKAGE;
+  const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
+  return channel === undefined ? T3_NPM_PACKAGE : `${T3_NPM_PACKAGE}@${channel}`;
 }
 
 /**

@@ -30,6 +30,8 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
+import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as GiteaAttachment from "./sourceControl/GiteaAttachment.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -392,6 +394,7 @@ export const assetRouteLayer = HttpRouter.add(
     }
     if (asset.kind === "source-control-image") {
       return yield* GiteaAttachment.imageResponse(asset.url).pipe(
+        Effect.provide(Layer.mergeAll(GiteaCli.layer, ForgejoCli.layer)),
         Effect.orElseSucceed(() => HttpServerResponse.text("Image unavailable", { status: 502 })),
       );
     }

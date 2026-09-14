@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt } from "@t3tools/contracts";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import { giteaRepositoryPath, parseGiteaRepository } from "../sourceControl/giteaRepository.ts";
 
 const WorkflowRun = Schema.Struct({
@@ -35,13 +35,13 @@ export function isCurrentPullWorkflow(
 }
 
 export const list = Effect.fn("GiteaWorkflows.list")(function* (
-  api: GiteaApi.GiteaApi["Service"],
+  api: GiteaCli.GiteaCli["Service"],
   input: { readonly repository: string; readonly number: number; readonly headSha: string },
 ) {
   const operation = "listWorkflowApprovals";
   const repository = parseGiteaRepository(input.repository);
   if (repository === null) {
-    return yield* new GiteaApi.GiteaApiError({
+    return yield* new GiteaCli.GiteaCliError({
       operation,
       reason: "failed",
       detail: "Invalid Gitea repository.",
@@ -55,13 +55,13 @@ export const list = Effect.fn("GiteaWorkflows.list")(function* (
       method: "GET",
       path: `${giteaRepositoryPath(repository)}/actions/runs?event=pull_request&page=${page}&limit=50`,
     });
-    const result = yield* GiteaApi.decodeGiteaResponse(operation, WorkflowPage, response);
+    const result = yield* GiteaCli.decodeGiteaResponse(operation, WorkflowPage, response);
     seen += result.workflow_runs.length;
     runs.push(...result.workflow_runs.filter((run) => isCurrentPullWorkflow(run, input)));
     if (seen >= result.total_count) return runs;
     if (result.workflow_runs.length === 0) break;
   }
-  return yield* new GiteaApi.GiteaApiError({
+  return yield* new GiteaCli.GiteaCliError({
     operation,
     reason: "failed",
     detail: "Gitea's workflow listing could not be read completely.",

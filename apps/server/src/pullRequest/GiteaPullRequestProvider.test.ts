@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import {
   giteaBaseComparison,
   giteaToChangeRequest,
@@ -98,7 +98,7 @@ function rawPullRequest() {
 describe("GiteaPullRequestProvider", () => {
   it.effect("keeps pull request detail when auto-merge state cannot be read", () =>
     Effect.gen(function* () {
-      const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+      const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>((input) => {
         switch (input.path) {
           case "/settings/api":
             return Effect.succeed(response({ features: [] }));
@@ -111,7 +111,7 @@ describe("GiteaPullRequestProvider", () => {
             return Effect.succeed(response({ login: "reader" }));
           case "/repos/acme/web/issues/7/timeline?page=1&limit=50":
             return Effect.fail(
-              new GiteaApi.GiteaApiError({
+              new GiteaCli.GiteaCliError({
                 operation: "getAutoMergeEnabled",
                 reason: "failed",
                 detail: "timeline unavailable",
@@ -126,8 +126,8 @@ describe("GiteaPullRequestProvider", () => {
       const apiLayer = GiteaPullRequestApi.layer.pipe(
         Layer.provide(
           Layer.succeed(
-            GiteaApi.GiteaApi,
-            GiteaApi.GiteaApi.of({
+            GiteaCli.GiteaCli,
+            GiteaCli.GiteaCli.of({
               baseUrl: Option.some("https://forge.example.test/gitea"),
               sshHosts: [],
               request,
@@ -155,10 +155,10 @@ describe("GiteaPullRequestProvider", () => {
     (query) =>
       Effect.gen(function* () {
         const pull = { ...rawPullRequest(), requested_reviewers: [{ login: "reader" }] };
-        const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+        const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>((input) => {
           if (input.path.startsWith("/user/teams?"))
             return Effect.fail(
-              new GiteaApi.GiteaApiError({
+              new GiteaCli.GiteaCliError({
                 operation: "getViewerTeams",
                 reason: "failed",
                 status: 403,
@@ -176,8 +176,8 @@ describe("GiteaPullRequestProvider", () => {
         const apiLayer = GiteaPullRequestApi.layer.pipe(
           Layer.provide(
             Layer.succeed(
-              GiteaApi.GiteaApi,
-              GiteaApi.GiteaApi.of({
+              GiteaCli.GiteaCli,
+              GiteaCli.GiteaCli.of({
                 baseUrl: Option.some("https://forge.example.test/gitea"),
                 sshHosts: [],
                 request,
@@ -209,7 +209,7 @@ describe("GiteaPullRequestProvider", () => {
       `keeps workflow approval state unknown when supported discovery is ${discovery}`,
       () =>
         Effect.gen(function* () {
-          const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>((input) => {
+          const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>((input) => {
             switch (input.path) {
               case "/settings/api":
                 return Effect.succeed(response({ features: ["actions-run-approve"] }));
@@ -240,7 +240,7 @@ describe("GiteaPullRequestProvider", () => {
                 return discovery === "incomplete"
                   ? Effect.succeed(response({ total_count: 1, workflow_runs: [] }))
                   : Effect.fail(
-                      new GiteaApi.GiteaApiError({
+                      new GiteaCli.GiteaCliError({
                         operation: "listWorkflowApprovals",
                         reason: "failed",
                         detail: "workflow lookup unavailable",
@@ -253,8 +253,8 @@ describe("GiteaPullRequestProvider", () => {
           const apiLayer = GiteaPullRequestApi.layer.pipe(
             Layer.provide(
               Layer.succeed(
-                GiteaApi.GiteaApi,
-                GiteaApi.GiteaApi.of({
+                GiteaCli.GiteaCli,
+                GiteaCli.GiteaCli.of({
                   baseUrl: Option.some("https://forge.example.test/gitea"),
                   sshHosts: [],
                   request,

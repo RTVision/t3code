@@ -1,16 +1,13 @@
 import { resolveGiteaAttachmentUrl } from "@t3tools/shared/giteaAttachments";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as GiteaCli from "./GiteaCli.ts";
+import * as ForgejoCli from "./ForgejoCli.ts";
+import { ServerConfig } from "../config.ts";
+import { HttpServerResponse } from "effect/unstable/http";
 
 export class GiteaAttachmentError extends Schema.TaggedError<GiteaAttachmentError>()(
   "GiteaAttachmentError",
@@ -18,7 +15,7 @@ export class GiteaAttachmentError extends Schema.TaggedError<GiteaAttachmentErro
 ) {}
 
 export const validateUrl = Effect.fn("GiteaAttachment.validateUrl")(function* (url: string) {
-  const configured = yield* Config.string("T3CODE_GITEA_BASE_URL").pipe(Config.option);
+  const { baseUrl: configured } = yield* GiteaCli.GiteaCli;
   const resolved = Option.isSome(configured)
     ? resolveGiteaAttachmentUrl(url, configured.value)
     : null;
@@ -30,44 +27,40 @@ export const validateUrl = Effect.fn("GiteaAttachment.validateUrl")(function* (u
   return resolved;
 });
 
-/** Fetches private images without exposing the host's token in a client URL. */
+/** Tea owns image authentication; binary bodies never pass through text decoding. */
 export const imageResponse = Effect.fn("GiteaAttachment.imageResponse")(function* (url: string) {
   const resolved = yield* validateUrl(url);
-  const configuredToken = yield* Config.redacted("T3CODE_GITEA_TOKEN").pipe(Config.option);
-  const token = Option.isSome(configuredToken) ? Redacted.value(configuredToken.value).trim() : "";
-  if (token.length === 0) {
-    return yield* new GiteaAttachmentError({ detail: "Gitea authentication is not configured." });
-  }
-  const client = yield* HttpClient.HttpClient;
-  const response = yield* HttpClient.withScope(client)
-    .execute(
-      HttpClientRequest.get(resolved).pipe(
-        HttpClientRequest.setHeader("Authorization", `token ${token}`),
-        HttpClientRequest.setHeader("Accept", "image/*"),
-      ),
-    )
-    .pipe(
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-      Effect.timeout("30 seconds"),
-    );
-  // Redirects must not forward the server's credentials to another host.
-  if (response.status !== 200) {
-    return HttpServerResponse.text("Image unavailable", {
-      status: response.status === 404 ? 404 : 502,
+  const cli = yield* ForgejoCli.ForgejoCli;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { cwd } = yield* ServerConfig;
+  const target = yield* cli.resolveServer({ cwd, command: "tea", reference: resolved });
+  if (resolveGiteaAttachmentUrl(resolved, target.baseUrl) === null) {
+    return yield* new GiteaAttachmentError({
+      detail: "The image is not on the selected tea server.",
     });
   }
-  const contentType = response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gitea-image-" });
+  const output = path.join(directory, "image");
+  const result = yield* cli.execute({
+    cwd,
+    command: "tea",
+    args: ["api", "--include", "--login", target.login, "--output", output, resolved],
+    timeoutMs: 30_000,
+    maxOutputBytes: 64 * 1024,
+  });
+  const { status, headers } = ForgejoCli.parseTeaResponse(result.stderr);
+  if (status !== 200)
+    return HttpServerResponse.text("Image unavailable", { status: status === 404 ? 404 : 502 });
+  const contentType = headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
   if (!contentType || !/^image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml)$/u.test(contentType)) {
     return HttpServerResponse.text("Unsupported image type", { status: 415 });
   }
-  const body = response.stream.pipe(
-    Stream.timeoutOrElse({
-      duration: "30 seconds",
-      orElse: () =>
-        Stream.fail(new GiteaAttachmentError({ detail: "Gitea image body timed out." })),
-    }),
-  );
-  return HttpServerResponse.stream(body, {
+  const stat = yield* fs.stat(output);
+  if (stat.size > 32n * 1024n * 1024n)
+    return HttpServerResponse.text("Image too large", { status: 413 });
+  const bytes = yield* fs.readFile(output);
+  return HttpServerResponse.uint8Array(bytes, {
     contentType,
     headers: {
       "Cache-Control": "private, max-age=300",

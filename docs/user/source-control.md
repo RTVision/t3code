@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Gitea, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -16,6 +16,27 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 ```bash
 gh auth login
 ```
+
+### Forgejo and Gitea
+
+Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or
+[Gitea CLI (`tea`)](https://gitea.com/gitea/tea) 0.16 or later on your T3 Code server.
+Sign in with `fj --host https://your-server auth add-token` or `tea login add`.
+Repeat for each server you use, including Codeberg.
+
+T3 Code prefers a matching `fj` login and falls back to `tea` when `fj` is unavailable
+or has no login for that server. Once an account is selected, failed actions stay on that
+account. Settings shows the detected CLI. The upstream Forgejo integration supports both server types; RTVision also exposes its
+Gitea review integration for the configured tea server.
+Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `tea` because
+fj 0.6 does not preserve the subpath when checking its account.
+
+When cloning or publishing, use a full repository URL to select a specific server.
+You can use `owner/repo` when only one fj server is configured, or with your default `tea`
+login when fj is unavailable or unconfigured. With multiple fj servers, use the full URL.
+If you have multiple `tea` accounts on one server, select one with
+`tea login default <login-name>`. Git push and clone also need Git credentials or an SSH key
+for that server.
 
 ### GitLab
 
@@ -44,31 +65,43 @@ export T3CODE_BITBUCKET_API_TOKEN="your-token"
 The access token takes precedence if both are configured. Restart the server after changing these
 variables.
 
-### Gitea
+### RTVision Gitea review features
 
-Set your Gitea web address and an access token in the environment of the machine running the
-T3 Code server:
+Install [tea 0.16 or later](https://gitea.com/gitea/tea/releases) on the machine running
+T3 Code. Run `tea login add` as the same OS user that runs the T3 daemon, enter your Gitea
+web address and personal access token, then select that login with
+`tea login default <login-name>`. The daemon must find this version of `tea` on its `PATH` and use the same home/config
+directory where the login was saved. Tea stores personal access tokens in its local config file.
+
+Existing installations can reuse their `T3CODE_GITEA_TOKEN` when creating the tea login.
+T3 no longer reads that environment variable; tea stores and supplies the credentials.
+The token needs user read access for account discovery, repository access for pull requests,
+and issue access for comments and labels. Grant write access to repositories and issues
+for review and lifecycle actions.
+
+Optionally keep the Gitea web root in the daemon environment to select a server explicitly.
+It must match the tea login URL, including any reverse proxy subpath:
 
 ```bash
 export T3CODE_GITEA_BASE_URL="https://gitea.example.com"
-export T3CODE_GITEA_TOKEN="your-access-token"
 ```
 
-Use the web root, including a proxy subpath if your server uses one. The token needs user read
-access for account discovery, repository access for pull requests, and issue access for ordinary
-comments and labels. Grant write access to repositories and issues for review and lifecycle actions.
-Restart the server after setting these variables, then choose **Settings → Source Control → Rescan**.
+Without an explicit web root, T3 uses the default tea login, or the only saved login.
+Restart the server after changing its configuration, then choose
+**Settings → Source Control → Rescan**.
 
-One Gitea server can be configured per T3 environment. HTTPS remotes must use that web root;
-SSH remotes can use the same hostname or an explicitly configured SSH hostname or alias:
+RTVision's additional review features use one Gitea server per T3 environment. HTTPS remotes
+must use that web root. SSH remotes can use the same hostname, tea's saved SSH hostname,
+or an explicitly configured alias:
 
 ```bash
 export T3CODE_GITEA_SSH_HOSTS="git.example.com,work-forge"
 ```
 
 Use SSH aliases as `git@work-forge:owner/repository.git` or
-`ssh://git@work-forge/owner/repository.git`. API requests always go to the configured web address.
-Configure Git authentication separately for cloning, fetching, and pushing.
+`ssh://git@work-forge/owner/repository.git`. Git authentication remains separate:
+SSH remotes need the daemon's SSH key or agent; HTTPS remotes need a Git credential helper.
+Tea can register its helper with `tea login helper setup`.
 
 Gitea drafts use a title prefix. If your server uses custom work-in-progress prefixes, configure
 `T3CODE_GITEA_DRAFT_PREFIXES` with the same comma-separated values and restart T3. T3 verifies
@@ -127,6 +160,22 @@ unrelated non-default branch is part of a stack.
 
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
+
+GitHub sharing is off by default. In Settings → Connections → GitHub sharing (Environments on mobile), choose
+**Read PRs** or **Read and act** for each environment you trust to share GitHub access.
+Enable both the original environment and the environment answering its requests on this client.
+**Read and act** can use broader GitHub permissions than the original environment's credential;
+only enable it for environments you control and trust. Changing a saved endpoint or removing an
+environment clears its permission.
+
+GitHub review details, linked PR status, and permitted review actions can then use another
+connected environment signed in to the same GitHub account. Each needs a project on that host.
+A connected local environment is preferred for actions and can answer slow or failed reads.
+Browsers and mobile clients need a paired environment to use its GitHub CLI credentials.
+Credentials stay on their machines. Previously verified credentials remain usable for routing
+for ten minutes during a GitHub outage; new credentials must be verified first. An action with
+an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
+PR creation from Git actions continue to use the project's environment.
 
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.

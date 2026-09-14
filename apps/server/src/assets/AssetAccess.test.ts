@@ -6,7 +6,8 @@ import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
-import * as ConfigProvider from "effect/ConfigProvider";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(
   NodeHttpPlatform.layer,
   configLayer,
+  Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.some("https://forge.test") }),
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -61,16 +63,7 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(`${token}tampered`, "image")).toBeNull();
       yield* TestClock.adjust("2 hours");
       expect(yield* resolveAsset(token, "image")).toBeNull();
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          testLayer,
-          ConfigProvider.layer(
-            ConfigProvider.fromEnv({ env: { T3CODE_GITEA_BASE_URL: "https://forge.test" } }),
-          ),
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(testLayer)),
   );
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {

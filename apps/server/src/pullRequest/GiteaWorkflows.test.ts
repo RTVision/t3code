@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import { isCurrentPullWorkflow, list } from "./GiteaWorkflows.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -33,7 +33,7 @@ it("matches the recorded contributor commit rather than a synthetic merge revisi
 
 it.effect("reads capped pages completely and selects only this PR's current blocked runs", () =>
   Effect.gen(function* () {
-    const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
+    const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>();
     request.mockReturnValueOnce(
       Effect.succeed({
         body: encodeJson({
@@ -51,7 +51,7 @@ it.effect("reads capped pages completely and selects only this PR's current bloc
         headers: {},
       }),
     );
-    const api = GiteaApi.GiteaApi.of({
+    const api = GiteaCli.GiteaCli.of({
       baseUrl: Option.some("https://forge.test"),
       request,
       probeAuth: Effect.die("not used"),
@@ -63,14 +63,14 @@ it.effect("reads capped pages completely and selects only this PR's current bloc
 
 it.effect("fails incomplete pagination instead of reporting no approvals", () =>
   Effect.gen(function* () {
-    const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>(() =>
+    const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>(() =>
       Effect.succeed({
         body: encodeJson({ total_count: 1, workflow_runs: [] }),
         truncated: false,
         headers: {},
       }),
     );
-    const api = GiteaApi.GiteaApi.of({
+    const api = GiteaCli.GiteaCli.of({
       baseUrl: Option.some("https://forge.test"),
       request,
       probeAuth: Effect.die("not used"),

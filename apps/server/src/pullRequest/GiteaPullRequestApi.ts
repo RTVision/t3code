@@ -33,7 +33,7 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import { makeActionsCi, resolveCheckUrl } from "./ActionsCi.ts";
 import type { ProviderCiApi } from "./PullRequestProvider.ts";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
@@ -228,7 +228,7 @@ const decodeReviewComment = Schema.decodeUnknownOption(RawReviewComment);
 const decodeCommit = Schema.decodeUnknownOption(RawCommit);
 const decodeLabel = Schema.decodeUnknownOption(RawLabel);
 const decodeReaction = Schema.decodeUnknownOption(RawGiteaReaction);
-const isGiteaApiError = Schema.is(GiteaApi.GiteaApiError);
+const isGiteaCliError = Schema.is(GiteaCli.GiteaCliError);
 const encodeObject = Schema.encodeSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -697,10 +697,10 @@ export class GiteaPullRequestApi extends Context.Service<
 >()("t3/pullRequest/GiteaPullRequestApi") {}
 
 export const make = Effect.gen(function* () {
-  const gitea = yield* GiteaApi.GiteaApi;
+  const gitea = yield* GiteaCli.GiteaCli;
   const draftPrefixes = yield* GiteaLifecycle.draftPrefixesConfig;
 
-  const failure = (operation: string, error: GiteaApi.GiteaApiError) =>
+  const failure = (operation: string, error: GiteaCli.GiteaCliError) =>
     new GiteaPullRequestApiError({
       operation,
       reason: error.reason,
@@ -715,7 +715,7 @@ export const make = Effect.gen(function* () {
       return yield* new GiteaPullRequestApiError({
         operation: "validateHost",
         reason: "unconfigured",
-        detail: GiteaApi.GITEA_SETUP_HINT,
+        detail: GiteaCli.GITEA_SETUP_HINT,
       });
     }
     const expected = new URL(configured).hostname.toLowerCase();
@@ -762,9 +762,9 @@ export const make = Effect.gen(function* () {
   const decode = <S extends Schema.Top>(
     operation: string,
     schema: S,
-    response: GiteaApi.GiteaResponse,
+    response: GiteaCli.GiteaResponse,
   ) =>
-    GiteaApi.decodeGiteaResponse(operation, schema, response).pipe(
+    GiteaCli.decodeGiteaResponse(operation, schema, response).pipe(
       Effect.mapError((error) => failure(operation, error)),
     );
 
@@ -2235,7 +2235,7 @@ export const make = Effect.gen(function* () {
           }).pipe(
             Effect.map((page) => page.rows),
             Effect.catch((error) =>
-              isGiteaApiError(error.cause) && error.cause.status === 405
+              isGiteaCliError(error.cause) && error.cause.status === 405
                 ? Effect.succeed([])
                 : Effect.fail(error),
             ),

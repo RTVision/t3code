@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
   clearConnectionCatalog,
@@ -45,6 +46,7 @@ import {
   openExternal,
   openSystemSettings,
   checkSystemPermission,
+  pasteAsText,
   probeRemoteEditors,
   pickFolder,
   pickProjectFavicon,
@@ -78,6 +80,7 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);
@@ -136,6 +139,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(openExternal);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
+  yield* ipc.handle(pasteAsText);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(probeTerminalEditor);
   yield* ipc.handle(openTerminalEditor);

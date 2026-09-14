@@ -4,17 +4,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
 import * as GiteaPullRequestProvider from "./GiteaPullRequestProvider.ts";
 
-const mockedRequest = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
+const mockedRequest = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>();
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const layer = it.layer(
   Layer.succeed(
-    GiteaApi.GiteaApi,
-    GiteaApi.GiteaApi.of({
+    GiteaCli.GiteaCli,
+    GiteaCli.GiteaCli.of({
       baseUrl: Option.some("https://forge.example.test/gitea"),
       sshHosts: ["work-forge"],
       request: mockedRequest,
@@ -83,8 +83,8 @@ it.effect("skips an invalid hydrated search pull request without dropping later 
     });
     const api = yield* GiteaPullRequestApi.make.pipe(
       Effect.provideService(
-        GiteaApi.GiteaApi,
-        GiteaApi.GiteaApi.of({
+        GiteaCli.GiteaCli,
+        GiteaCli.GiteaCli.of({
           baseUrl: Option.some("https://forge.example.test/gitea"),
           sshHosts: ["work-forge"],
           request: mockedRequest,
@@ -111,7 +111,7 @@ it.effect("keeps a search hydration transport failure fatal", () =>
       if (input.path.startsWith("/repos/acme/web/issues?"))
         return Effect.succeed(response([{ number: 1 }]));
       return Effect.fail(
-        new GiteaApi.GiteaApiError({
+        new GiteaCli.GiteaCliError({
           operation: "getPullRequest",
           reason: "unauthenticated",
           detail: "expired",
@@ -120,8 +120,8 @@ it.effect("keeps a search hydration transport failure fatal", () =>
     });
     const api = yield* GiteaPullRequestApi.make.pipe(
       Effect.provideService(
-        GiteaApi.GiteaApi,
-        GiteaApi.GiteaApi.of({
+        GiteaCli.GiteaCli,
+        GiteaCli.GiteaCli.of({
           baseUrl: Option.some("https://forge.example.test/gitea"),
           sshHosts: ["work-forge"],
           request: mockedRequest,
@@ -277,7 +277,7 @@ layer("GiteaPullRequestApi", (it) => {
       mockedRequest
         .mockReturnValueOnce(
           Effect.fail(
-            new GiteaApi.GiteaApiError({
+            new GiteaCli.GiteaCliError({
               operation: "getFeatures",
               reason: "failed",
               detail: "temporarily unavailable",
@@ -2809,7 +2809,7 @@ layer("GiteaPullRequestApi", (it) => {
           return Effect.succeed(response([{ id: 2, login: "reviewer" }]));
         if (input.path === "/repos/acme/web/teams")
           return Effect.fail(
-            new GiteaApi.GiteaApiError({
+            new GiteaCli.GiteaCliError({
               operation: "listTeamReviewerCandidates",
               reason: "failed",
               detail: "Gitea returned HTTP 405.",
@@ -2845,7 +2845,7 @@ layer("GiteaPullRequestApi", (it) => {
       mockedRequest.mockImplementation((input) => {
         if (input.path.startsWith("/user/teams?"))
           return Effect.fail(
-            new GiteaApi.GiteaApiError({
+            new GiteaCli.GiteaCliError({
               operation: "getViewerTeams",
               reason: "failed",
               detail: "Viewer teams could not be read.",

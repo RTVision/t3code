@@ -3,11 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as GiteaApi from "../sourceControl/GiteaApi.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
 import * as GiteaPullRequestProvider from "./GiteaPullRequestProvider.ts";
 
-const request = vi.fn<GiteaApi.GiteaApi["Service"]["request"]>();
+const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>();
 
 const response = (value: unknown) => ({
   body: JSON.stringify(value),
@@ -16,7 +16,7 @@ const response = (value: unknown) => ({
 });
 const failure = () =>
   Effect.fail(
-    new GiteaApi.GiteaApiError({ operation: "test", reason: "failed", detail: "offline" }),
+    new GiteaCli.GiteaCliError({ operation: "test", reason: "failed", detail: "offline" }),
   );
 
 const pull = {
@@ -36,8 +36,8 @@ const pull = {
 const apiLayer = GiteaPullRequestApi.layer.pipe(
   Layer.provide(
     Layer.succeed(
-      GiteaApi.GiteaApi,
-      GiteaApi.GiteaApi.of({
+      GiteaCli.GiteaCli,
+      GiteaCli.GiteaCli.of({
         baseUrl: Option.some("https://forge.example.test"),
         request,
         probeAuth: Effect.die("unused"),

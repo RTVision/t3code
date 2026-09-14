@@ -16,6 +16,7 @@ import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvide
 import * as GiteaSourceControlProvider from "./GiteaSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   probeSourceControlProvider,
@@ -299,6 +300,8 @@ export const make = Effect.gen(function* () {
   const gitea = yield* GiteaSourceControlProvider.make;
   const giteaDiscovery = yield* GiteaSourceControlProvider.makeDiscovery;
   const gitlab = yield* GitLabSourceControlProvider.make;
+  const forgejo = yield* ForgejoSourceControlProvider.make;
+  const forgejoDiscovery = yield* ForgejoSourceControlProvider.makeDiscovery;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
@@ -324,6 +327,7 @@ export const make = Effect.gen(function* () {
       discovery: bitbucketDiscovery,
     },
     { kind: "gitea", provider: gitea, discovery: giteaDiscovery },
+    { kind: "forgejo", provider: forgejo, discovery: forgejoDiscovery },
   ]);
 });
 

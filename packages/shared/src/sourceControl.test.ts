@@ -29,10 +29,6 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
-    expect(getChangeRequestTerminologyForKind("gitea")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -44,18 +40,6 @@ describe("source control presentation", () => {
         longName: "change request",
       }),
     );
-  });
-
-  it("uses Gitea pull request presentation without a CLI checkout command", () => {
-    const presentation = resolveChangeRequestPresentation({
-      kind: "gitea",
-      name: "Gitea",
-      baseUrl: "",
-    });
-    expect(presentation).toEqual(
-      expect.objectContaining({ providerName: "Gitea", shortName: "PR" }),
-    );
-    expect(presentation).not.toHaveProperty("checkoutCommandExample");
   });
 });
 
@@ -75,13 +59,19 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
-  it("keeps arbitrary Gitea hosts unknown for server-side configured-host refinement", () => {
-    expect(
-      detectSourceControlProviderFromRemoteUrl("git@gitea.example.test:owner/repo.git"),
-    ).toEqual({
-      kind: "unknown",
-      name: "gitea.example.test",
-      baseUrl: "https://gitea.example.test",
+  it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+      expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
+        {
+          kind: "forgejo",
+          name: "Forgejo",
+          baseUrl: `http://${host}:3000`,
+        },
+      );
+    }
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
     });
   });
 

@@ -13,7 +13,7 @@ import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as GiteaApi from "./GiteaApi.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import {
   giteaPullRequestNumber,
   giteaRepositoryFromRemote,
@@ -79,12 +79,12 @@ function toChangeRequest(pull: typeof PullRequest.Type): ChangeRequest {
 }
 
 export const makeDiscovery = Effect.map(
-  GiteaApi.GiteaApi,
+  GiteaCli.GiteaCli,
   (api): SourceControlApiDiscoverySpec => ({
     type: "api",
     kind: "gitea",
     label: "Gitea",
-    installHint: GiteaApi.GITEA_SETUP_HINT,
+    installHint: GiteaCli.GITEA_SETUP_HINT,
     probeAuth: api.probeAuth,
     refineUnknownRemote: ({ context }) => {
       if (
@@ -98,7 +98,7 @@ export const makeDiscovery = Effect.map(
 );
 
 export const make = Effect.gen(function* () {
-  const api = yield* GiteaApi.GiteaApi;
+  const api = yield* GiteaCli.GiteaCli;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const vcs = yield* VcsDriverRegistry.VcsDriverRegistry;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -119,14 +119,14 @@ export const make = Effect.gen(function* () {
     body?: string,
   ) =>
     api.request({ operation, path, method, ...(body === undefined ? {} : { body }) }).pipe(
-      Effect.flatMap((response) => GiteaApi.decodeGiteaResponse(operation, schema, response)),
+      Effect.flatMap((response) => GiteaCli.decodeGiteaResponse(operation, schema, response)),
       Effect.mapError((error) => failure(operation, cwd, error.detail)),
     );
 
   const configuredBaseUrl = (cwd: string) =>
     Option.isSome(api.baseUrl)
       ? Effect.succeed(api.baseUrl.value)
-      : Effect.fail(failure("resolveRepository", cwd, GiteaApi.GITEA_SETUP_HINT));
+      : Effect.fail(failure("resolveRepository", cwd, GiteaCli.GITEA_SETUP_HINT));
 
   const resolveRepository = Effect.fn("GiteaSourceControlProvider.resolveRepository")(
     function* (input: {
@@ -256,7 +256,7 @@ export const make = Effect.gen(function* () {
             .pipe(
               Effect.mapError((error) => failure("listChangeRequests", input.cwd, error.detail)),
             );
-          const pulls = yield* GiteaApi.decodeGiteaResponse(
+          const pulls = yield* GiteaCli.decodeGiteaResponse(
             "listChangeRequests",
             Schema.Array(PullRequest),
             response,

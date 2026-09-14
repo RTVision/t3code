@@ -40,11 +40,14 @@ jobs:
             exit 1
           fi
 
-  wsl-pty:
+  linux-cli:
     needs: prepare
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
+      - name: Enable production T3 Connect
+        run: cp .env.example .env
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -52,20 +55,32 @@ jobs:
             args:
               - --frozen-lockfile
               - --filter=t3...
-      - name: Build the Linux terminal binary for Windows WSL
+              - --filter=@t3tools/scripts...
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - run: vp run --filter t3 build
+      - name: Build Linux CLI executable
+        env:
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+      - name: Build Linux resource monitor
         run: |
-          pty_dir=$(node -e 'console.log(require("path").dirname(require.resolve("node-pty/package.json", { paths: ["./apps/server"] })))')
-          (cd "$pty_dir" && npx --yes node-gyp rebuild)
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+          mkdir -p resource-monitor/linux-x64
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor resource-monitor/linux-x64/
+      - name: Build and verify Linux CLI archive
+        run: |
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "${{ needs.prepare.outputs.version }}" --resource-monitor-dir resource-monitor --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
       - uses: actions/upload-artifact@v7
         with:
-          name: rtvision-wsl-pty
-          path: wsl-prebuild/pty.node
+          name: rtvision-cli-linux-x64
+          path: release-cli/*
           if-no-files-found: error
 
   desktop:
-    needs: [prepare, wsl-pty]
+    needs: [prepare, linux-cli]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -115,8 +130,8 @@ jobs:
       - uses: actions/download-artifact@v8
         if: matrix.platform == 'win'
         with:
-          name: rtvision-wsl-pty
-          path: wsl-prebuild
+          name: rtvision-cli-linux-x64
+          path: wsl-runtime
       - name: Build desktop installer
         shell: bash
         env:
@@ -127,7 +142,7 @@ jobs:
         run: |
           args=(--platform "$PLATFORM" --target "$TARGET" --arch "$ARCH" --build-version "$VERSION" --verbose)
           if [ "$PLATFORM" = win ]; then
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+            args+=(--wsl-runtime "$GITHUB_WORKSPACE/wsl-runtime/t3-$VERSION-linux-x64.tar.gz")
           fi
           vp run dist:desktop:artifact "${args[@]}"
       - name: Collect installers and updater metadata
@@ -156,14 +171,33 @@ jobs:
           path: resource-monitor/*
           if-no-files-found: error
 
+      - name: Build Windows CLI executable
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+      - name: Build and verify Windows CLI archive
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          mkdir -p cli-resource-monitor/win32-x64
+          cp resource-monitor/t3-resource-monitor.exe cli-resource-monitor/win32-x64/
+          node scripts/build-cli-archive.ts --platform win --arch x64 --version "${{ needs.prepare.outputs.version }}" --resource-monitor-dir cli-resource-monitor --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
+      - uses: actions/upload-artifact@v7
+        if: matrix.platform == 'win'
+        with:
+          name: rtvision-cli-win32-x64
+          path: release-cli/*
+          if-no-files-found: error
+
   cli:
-    needs: [prepare, desktop]
+    needs: [prepare, desktop, linux-cli]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - name: Enable production T3 Connect
-        run: cp .env.example .env
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -172,25 +206,22 @@ jobs:
               - --frozen-lockfile
               - --filter=t3...
               - --filter=@t3tools/scripts...
-      - run: vp run --filter t3 build
       - uses: actions/download-artifact@v8
         with:
-          pattern: rtvision-resource-*
-          path: resource-monitors
-      - name: Pack CLI with resource monitors
+          pattern: rtvision-cli-*
+          merge-multiple: true
+          path: release-cli
+      - name: Pack the supported CLI platforms
         run: |
-          for directory in resource-monitors/rtvision-resource-*; do
-            key=${directory##*/rtvision-resource-}
-            mkdir -p "apps/server/dist/resource-monitor/$key"
-            cp "$directory"/* "apps/server/dist/resource-monitor/$key/"
-            chmod +x "apps/server/dist/resource-monitor/$key/"* || true
-          done
-          mkdir -p release-cli
-          node apps/server/scripts/cli.ts publish --pack-destination release-cli --verbose
+          test -f "release-cli/t3-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz"
+          test -f "release-cli/t3-${{ needs.prepare.outputs.version }}-win32-x64.zip"
+          node scripts/build-npm-platform-packages.ts --archives-dir release-cli --version "${{ needs.prepare.outputs.version }}" --output-dir npm-packages --allow-missing
+          mkdir -p release-npm
+          cp npm-packages/@rtvision/*.tgz release-npm/
       - uses: actions/upload-artifact@v7
         with:
-          name: rtvision-cli
-          path: release-cli/*.tgz
+          name: rtvision-npm
+          path: release-npm/*
           if-no-files-found: error
 
   draft:
@@ -207,7 +238,12 @@ jobs:
           path: release-assets
       - uses: actions/download-artifact@v8
         with:
-          name: rtvision-cli
+          name: rtvision-npm
+          path: release-assets
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: rtvision-cli-*
+          merge-multiple: true
           path: release-assets
       - name: Create draft for local npm publication
         env:
@@ -220,6 +256,6 @@ jobs:
 
           Desktop installers are unsigned. Install only on machines that can reach RTVision's npm registry when using server installation or update features.
 
-          Maintainers: publish the attached npm tarball to RTVision's registry, verify its version and integrity, then publish this draft. See `docs/operations/rtvision-release.md`.
+          Maintainers: publish the attached platform npm tarballs, then the launcher tarball to RTVision's registry, verify its version and integrity, then publish this draft. See `docs/operations/rtvision-release.md`.
           NOTES
           gh release create "v$VERSION" release-assets/* --target "$GITHUB_SHA" --title "RTVision T3 Code $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --draft

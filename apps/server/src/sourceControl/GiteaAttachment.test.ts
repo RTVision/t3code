@@ -1,122 +1,108 @@
 import { expect, it, vi } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Deferred from "effect/Deferred";
-import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  HttpServerResponse,
-} from "effect/unstable/http";
-
+import * as GiteaCli from "./GiteaCli.ts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpServerResponse } from "effect/unstable/http";
+import * as ServerConfig from "../config.ts";
+import * as ForgejoCli from "./ForgejoCli.ts";
 import * as GiteaAttachment from "./GiteaAttachment.ts";
 
 const url = "https://forge.test/gitea/attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83";
-const config = ConfigProvider.layer(
-  ConfigProvider.fromEnv({
-    env: {
-      T3CODE_GITEA_BASE_URL: "https://forge.test/gitea",
-      T3CODE_GITEA_TOKEN: "private-token",
-    },
-  }),
-);
-
-function httpLayer(response: Response) {
-  const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
+const bytes = new Uint8Array([137, 80, 78, 71, 255, 0, 13, 10]);
+function fixture(status = 200, contentType = "image/png", imageBytes = bytes) {
+  const paths: string[] = [];
+  const execute = vi.fn<ForgejoCli.ForgejoCli["Service"]["execute"]>();
+  const cliLayer = Layer.effect(
+    ForgejoCli.ForgejoCli,
     Effect.gen(function* () {
-      const requestInit = yield* Effect.serviceOption(FetchHttpClient.RequestInit);
-      expect(Option.getOrNull(requestInit)?.redirect).toBe("manual");
-      return HttpClientResponse.fromWeb(request, response);
+      const fs = yield* FileSystem.FileSystem;
+      execute.mockImplementation((input) =>
+        Effect.gen(function* () {
+          const path = input.args[input.args.indexOf("--output") + 1];
+          if (!path) return yield* Effect.die("missing image destination");
+          paths.push(path);
+          yield* fs.writeFile(path, imageBytes).pipe(Effect.orDie);
+          return {
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: "",
+            stderr: `HTTP/1.1 ${status}\nContent-Type: ${contentType}\n`,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
+        }),
+      );
+      return yield* ForgejoCli.ForgejoCli.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            execute,
+            resolveServer: () =>
+              Effect.succeed({
+                command: "tea",
+                login: "work",
+                repository: "",
+                baseUrl: "https://forge.test/gitea",
+              }),
+          }),
+        ),
+      );
     }),
   );
-  return {
-    execute,
-    layer: Layer.merge(config, Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
-  };
+  const layer = Layer.mergeAll(
+    cliLayer,
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-tea-image-test-" }),
+    Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.some("https://forge.test/gitea") }),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+  return { layer, execute, paths };
 }
 
-it.effect("streams a private Gitea image using server credentials", () => {
-  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-  const { execute, layer } = httpLayer(
-    new Response(bytes, { headers: { "Content-Type": "image/png" } }),
-  );
+it.effect("downloads an authenticated image through tea without decoding binary bytes", () => {
+  const f = fixture();
   return Effect.gen(function* () {
-    const response = yield* GiteaAttachment.imageResponse(url);
-    expect(response.status).toBe(200);
-    expect(execute.mock.calls[0]?.[0]).toMatchObject({
-      url,
-      headers: { authorization: "token private-token" },
-    });
+    const fs = yield* FileSystem.FileSystem;
+    const response = yield* GiteaAttachment.imageResponse(url).pipe(Effect.scoped);
     const web = HttpServerResponse.toWeb(response);
     expect(new Uint8Array(yield* Effect.promise(() => web.arrayBuffer()))).toEqual(bytes);
+    expect(f.execute.mock.calls[0]?.[0].args).toContain("work");
+    expect(f.execute.mock.calls[0]?.[0].args.at(-1)).toBe(url);
     expect(web.headers.get("content-type")).toBe("image/png");
     expect(web.headers.get("authorization")).toBeNull();
-    expect(web.headers.get("content-security-policy")).toContain("sandbox");
-  }).pipe(Effect.scoped, Effect.provide(layer));
-});
-
-it.effect("fails a stalled image body and cancels the upstream reader", () => {
-  const cancel = vi.fn();
-  const { layer } = httpLayer(
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start: (controller) => controller.enqueue(new Uint8Array([137, 80, 78, 71])),
-        cancel,
-      }),
-      { headers: { "Content-Type": "image/png" } },
-    ),
-  );
-  return Effect.gen(function* () {
-    const response = yield* GiteaAttachment.imageResponse(url);
-    expect(response.status).toBe(200);
-    if (response.body._tag !== "Stream") return yield* Effect.die("Expected an image stream");
-    const receivedChunk = yield* Deferred.make<void>();
-    const read = yield* response.body.stream.pipe(
-      Stream.tap(() => Deferred.succeed(receivedChunk, undefined)),
-      Stream.runDrain,
-      Effect.flip,
-      Effect.forkScoped,
-    );
-    yield* Deferred.await(receivedChunk);
-    yield* TestClock.adjust("30 seconds");
-    expect(yield* Fiber.join(read)).toMatchObject({
-      _tag: "GiteaAttachmentError",
-      detail: "Gitea image body timed out.",
-    });
-    expect(cancel).toHaveBeenCalledTimes(1);
-  }).pipe(Effect.scoped, Effect.provide(layer));
+    for (const path of f.paths) expect(yield* fs.exists(path)).toBe(false);
+  }).pipe(Effect.provide(f.layer), Effect.scoped);
 });
 
 it.effect.each([
   "https://elsewhere.test/gitea/attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83",
   "https://forge.test/api/v1/user",
-])("does not send credentials to %s", (source) => {
-  const { execute, layer } = httpLayer(new Response());
+])("rejects a non-attachment URL before invoking tea: %s", (source) => {
+  const f = fixture();
   return Effect.gen(function* () {
-    const error = yield* GiteaAttachment.imageResponse(source).pipe(Effect.flip);
-    expect(error._tag).toBe("GiteaAttachmentError");
-    expect(execute).not.toHaveBeenCalled();
-  }).pipe(Effect.scoped, Effect.provide(layer));
+    expect((yield* GiteaAttachment.imageResponse(source).pipe(Effect.flip))._tag).toBe(
+      "GiteaAttachmentError",
+    );
+    expect(f.execute).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(f.layer), Effect.scoped);
 });
 
 it.effect.each([
-  { status: 302, headers: { Location: "https://elsewhere.test/image.png" }, expected: 502 },
-  { status: 404, headers: {}, expected: 404 },
-  { status: 200, headers: { "Content-Type": "text/html" }, expected: 415 },
-])(
-  "rejects an upstream response with status $status and headers $headers",
-  ({ status, headers, expected }) => {
-    const { execute, layer } = httpLayer(new Response("", { status, headers }));
-    return Effect.gen(function* () {
-      const response = yield* GiteaAttachment.imageResponse(url);
-      expect(response.status).toBe(expected);
-      expect(execute).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.scoped, Effect.provide(layer));
-  },
-);
+  { status: 404, contentType: "image/png", expected: 404 },
+  { status: 200, contentType: "text/html", expected: 415 },
+  { status: 500, contentType: "text/plain", expected: 502 },
+])("handles tea's HTTP $status / $contentType response", ({ status, contentType, expected }) => {
+  const f = fixture(status, contentType);
+  return Effect.gen(function* () {
+    expect((yield* GiteaAttachment.imageResponse(url)).status).toBe(expected);
+  }).pipe(Effect.provide(f.layer), Effect.scoped);
+});
+
+it.effect("rejects an oversized downloaded image", () => {
+  const f = fixture(200, "image/png", new Uint8Array(32 * 1024 * 1024 + 1));
+  return GiteaAttachment.imageResponse(url).pipe(
+    Effect.tap((response) => Effect.sync(() => expect(response.status).toBe(413))),
+    Effect.provide(f.layer),
+    Effect.scoped,
+  );
+});

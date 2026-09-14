@@ -1,7 +1,6 @@
 import * as NodeCrypto from "node:crypto";
-import { T3_NPM_PACKAGE } from "@t3tools/shared/releasePackage";
 
-import type { DesktopSshEnvironmentTarget, DesktopUpdateChannel } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,7 +14,6 @@ import { buildSshChildEnvironment, type SshAuthOptions } from "./auth.ts";
 import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 import { describeSshRunner, sshCommandForRunner, spawnSsh } from "./runner.ts";
 
-const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
 
@@ -350,20 +348,3 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
     ),
   );
 });
-
-export function resolveRemoteT3CliPackageSpec(input: {
-  readonly appVersion: string;
-  readonly updateChannel: DesktopUpdateChannel;
-  readonly isDevelopment?: boolean;
-}): string {
-  const appVersion = input.appVersion.trim();
-  if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
-    return `${T3_NPM_PACKAGE}@${appVersion}`;
-  }
-
-  if (input.isDevelopment) {
-    return `${T3_NPM_PACKAGE}@nightly`;
-  }
-
-  return `${T3_NPM_PACKAGE}@${input.updateChannel === "nightly" ? "nightly" : "latest"}`;
-}
