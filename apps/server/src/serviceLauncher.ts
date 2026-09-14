@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 
 import type {
   PendingServiceUpdate,
@@ -43,24 +44,28 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
-// executable runs on its own. Kept inline so this file stays on Node
-// built-ins only.
-const runtimePaths = (baseDir: string, version: string) => {
+// Mirrors pinnedRuntimePaths. Keep the Node layout for existing OpenRC installs
+// and rollback versions; standalone installs use the archive executable.
+const runtimePaths = async (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const executableName = process.platform === "win32" ? "t3.exe" : "t3";
+  const executable = NodePath.join(versionDir, executableName);
+  const entryPath = await NodeFSP.stat(executable).then(
+    () => executable,
+    () => NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+  );
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, executableName),
+    entryPath,
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
 
-const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
-  command: paths.entryPath,
-  args: ["serve"],
-});
+const runtimeSpawnArguments = (paths: Awaited<ReturnType<typeof runtimePaths>>) =>
+  paths.entryPath.endsWith(".mjs")
+    ? { command: NodeSea.isSea() ? "node" : process.execPath, args: [paths.entryPath, "serve"] }
+    : { command: paths.entryPath, args: ["serve"] };
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -214,7 +219,7 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
 }
 
 async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
-  const paths = runtimePaths(baseDir, version);
+  const paths = await runtimePaths(baseDir, version);
   try {
     const [entry, sentinel] = await Promise.all([
       NodeFSP.stat(paths.entryPath),
@@ -419,7 +424,7 @@ export class Launcher {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
     if (this.#stopping) return;
-    const paths = runtimePaths(this.#baseDir, version);
+    const paths = await runtimePaths(this.#baseDir, version);
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: version,

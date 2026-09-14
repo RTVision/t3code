@@ -1,7 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessPlatform,
+  HostProcessIsExecutable,
+  HostProcessExecutablePath,
+} from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -19,6 +24,7 @@ import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
 interface HarnessOptions {
+  readonly executable?: boolean;
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
@@ -58,11 +64,24 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
-        if (input.command === "tar") {
-          order.push("extract");
-          const stagingDir = input.args[input.args.indexOf("-C") + 1];
-          if (stagingDir === undefined) return yield* Effect.die("missing tar target");
-          yield* fs.writeFileString(path.join(stagingDir, "t3"), "#!/bin/sh\n").pipe(Effect.orDie);
+        if (input.command === "tar" || input.command === "npm") {
+          const npm = input.command === "npm";
+          order.push(npm ? "npm" : "extract");
+          const stagingDir = input.args[input.args.indexOf(npm ? "--prefix" : "-C") + 1];
+          if (stagingDir === undefined) return yield* Effect.die("missing install target");
+          const entry = npm
+            ? path.join(stagingDir, "node_modules/t3/dist/bin.mjs")
+            : path.join(stagingDir, "t3");
+          yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
+          yield* fs.writeFileString(entry, "#!/bin/sh\n").pipe(Effect.orDie);
+          if (npm) {
+            yield* fs
+              .writeFileString(
+                path.join(stagingDir, "node_modules/t3/package.json"),
+                '{"name":"@rtvision/t3","version":"1.1.0"}',
+              )
+              .pipe(Effect.orDie);
+          }
           return {
             stdout: "",
             stderr: "",
@@ -75,6 +94,11 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           };
         }
         order.push("preflight");
+        if (options.executable === false) {
+          expect(input.command).toBe("/test/node");
+          expect(input.args[0]).toMatch(/node_modules\/t3\/dist\/bin\.mjs$/);
+          expect(input.args[1]).toBe("__service-preflight");
+        }
         const result =
           options.preflight === "blocked"
             ? { status: "blocked", version: "1.1.0", reason: "local update required" }
@@ -122,6 +146,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     ),
     Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order)),
     Effect.provideService(HostProcessPlatform, "linux"),
+    Effect.provideService(HostProcessIsExecutable, options.executable ?? true),
+    Effect.provideService(HostProcessExecutablePath, "/test/node"),
     Effect.provideService(HostProcessArchitecture, "x64"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
@@ -353,6 +379,18 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         updateId: "launcher-id",
       });
       expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+    }),
+  );
+
+  it.effect("updates Node daemons through npm and preflights with the host Node", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ executable: false });
+      expect(yield* selfUpdate.update({ targetVersion: "1.1.0" })).toEqual({
+        targetVersion: "1.1.0",
+        method: "boot-service",
+        updateId: "launcher-id",
+      });
+      expect(order).toEqual(["npm", "preflight", "accept"]);
     }),
   );
 

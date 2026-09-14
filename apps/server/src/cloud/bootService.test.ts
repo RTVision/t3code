@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   HostProcessExecutablePath,
+  HostProcessIsExecutable,
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
@@ -133,6 +134,7 @@ it("escapes XML in host paths", () => {
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
+  executable = true,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -141,7 +143,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   // A complete pinned runtime is already present, so install only validates
   // it and never downloads a release archive.
-  const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
+  const runtime = pinnedRuntimePaths(
+    path,
+    baseDir,
+    "1.2.3",
+    platform,
+    executable ? "archive" : "npm",
+  );
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
@@ -180,18 +188,17 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
       return {
-        stdout:
-          input.args[0] === "--version"
-            ? // The runtime under test reports the version of the directory it
-              // was launched from, like the real executable.
-              `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
-            : input.command === "loginctl" && input.args[0] === "show-user"
-              ? `${control.linger}\n`
-              : input.args[1] === "is-enabled"
-                ? control.enabled
-                  ? "enabled\n"
-                  : "disabled\n"
-                : "",
+        stdout: input.args.includes("--version")
+          ? // The runtime under test reports the version of the directory it
+            // was launched from, like the real executable.
+            `t3 v${/versions\/([^/]+)\//.exec(command)?.[1] ?? "1.2.3"}\n`
+          : input.command === "loginctl" && input.args[0] === "show-user"
+            ? `${control.linger}\n`
+            : input.args[1] === "is-enabled"
+              ? control.enabled
+                ? "enabled\n"
+                : "disabled\n"
+              : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed || (input.args[1] === "is-active" && !control.active) ? 1 : 0,
@@ -212,15 +219,27 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
       // install never downloads.
-      const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
+      const paths = pinnedRuntimePaths(
+        path,
+        serviceBaseDir,
+        cliVersion,
+        platform,
+        executable ? "archive" : "npm",
+      );
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
       yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
+      if (!executable) {
+        yield* fs.writeFileString(
+          path.join(paths.versionDir, "node_modules/t3/package.json"),
+          `{"name":"@rtvision/t3","version":"${cliVersion}"}`,
+        );
+      }
       return yield* BootService.make({
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
-        host: { execPath: "/usr/bin/t3" },
+        host: { execPath: executable ? "/usr/bin/t3" : "/usr/bin/node" },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -228,7 +247,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         Layer.mergeAll(
           Layer.succeed(HostProcessPlatform, platform),
           Layer.succeed(HostProcessUserId, 501),
-          Layer.succeed(HostProcessExecutablePath, "/usr/bin/t3"),
+          Layer.succeed(HostProcessExecutablePath, executable ? "/usr/bin/t3" : "/usr/bin/node"),
+          Layer.succeed(HostProcessIsExecutable, executable),
           Layer.succeed(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("no release download expected")),
@@ -339,6 +359,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         problem,
       });
       expect(yield* fs.exists(statePath)).toBe(false);
+    }),
+  );
+
+  it.effect("keeps Node service definitions on the npm runtime through install and status", () =>
+    Effect.gen(function* () {
+      const { service, fs, runtime } = yield* makeHarness("linux", macInstallerPath, false);
+      const plan = yield* service.install();
+      expect(plan.program).toEqual(["/usr/bin/node", runtime.entryPath, "__service-launcher"]);
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        `ExecStart=/usr/bin/node ${runtime.entryPath} __service-launcher`,
+      );
+      expect(yield* service.status).toMatchObject({ current: true, installedVersion: "1.2.3" });
     }),
   );
 

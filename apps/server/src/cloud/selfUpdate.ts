@@ -6,7 +6,12 @@ import {
   type ServerSelfUpdateResult,
   type ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessPlatform,
+  HostProcessIsExecutable,
+  HostProcessExecutablePath,
+} from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -178,8 +183,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
-  // Archive-distributed targets download from GitHub Releases. The client is
-  // optional so callers without one (tests, npm-only hosts) still construct.
+  const nodeExecutable = yield* HostProcessExecutablePath;
+  const distribution = (yield* HostProcessIsExecutable) ? "archive" : "npm";
+  // Standalone executables download from GitHub; Node daemons keep the npm layout.
   const httpClient = yield* HttpClient.HttpClient;
   const releaseBaseUrl = Option.getOrUndefined(
     yield* Config.string(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
@@ -224,6 +230,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     return yield* Effect.gen(function* () {
       yield* reportProgress("downloading");
       const paths = yield* ensurePinnedRuntimeInstalled({
+        distribution,
         baseDir: serverConfig.baseDir,
         version: targetVersion,
         fs,
@@ -236,9 +243,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         validate: (runtime) =>
           runner
             .run({
-              command: pinnedRuntimeCommand(runtime).command,
+              command: pinnedRuntimeCommand(runtime, nodeExecutable).command,
               args: [
-                ...pinnedRuntimeCommand(runtime).args,
+                ...pinnedRuntimeCommand(runtime, nodeExecutable).args,
                 "__service-preflight",
                 "--database-path",
                 serverConfig.dbPath,

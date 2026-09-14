@@ -13,6 +13,11 @@ import * as Schema from "effect/Schema";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
@@ -72,7 +77,7 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
         "The service state is invalid or an update is already in progress. Retry after the daemon is ready.",
     });
   }
-  const entryPath = path.join(
+  const legacyEntryPath = path.join(
     baseDir,
     "runtime",
     "versions",
@@ -82,10 +87,21 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
     "dist",
     "bin.mjs",
   );
+  const executablePath = path.join(
+    baseDir,
+    "runtime",
+    "versions",
+    state.activeVersion,
+    (yield* HostProcessPlatform) === "win32" ? "t3.exe" : "t3",
+  );
+  const archived = yield* fs.exists(executablePath);
+  const nodeExecutable = (yield* HostProcessIsExecutable)
+    ? "node"
+    : yield* HostProcessExecutablePath;
   const result = yield* runner.run({
-    command: process.execPath,
+    command: archived ? executablePath : nodeExecutable,
     args: [
-      entryPath,
+      ...(archived ? [] : [legacyEntryPath]),
       "auth",
       "session",
       "issue",

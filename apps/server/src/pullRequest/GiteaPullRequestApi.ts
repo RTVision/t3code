@@ -1022,11 +1022,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const readUnknownArray = Effect.fn("GiteaPullRequestApi.readUnknownArray")(
-    (input: { operation: string; host: string; repository: string; path: string }) =>
-      readUnknownPage(input).pipe(Effect.map((page) => page.rows)),
-  );
-
   const getFeatures = yield* Effect.cachedWithTTL(
     Effect.suspend(() =>
       gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }),

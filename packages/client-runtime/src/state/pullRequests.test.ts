@@ -755,7 +755,7 @@ it.live.each([
           yield* route(write, {
             ...reference,
             action: "merge",
-            mode: "all",
+            target: { kind: "all" },
             path: "a.ts",
             viewed: true,
             headSha: "head",

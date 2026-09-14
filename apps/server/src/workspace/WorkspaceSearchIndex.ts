@@ -1,4 +1,6 @@
 import * as NodeModule from "node:module";
+import * as NodeSea from "node:sea";
+import * as NodeURL from "node:url";
 
 import type {
   DirItem,
@@ -32,7 +34,12 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 // Node single-executable (only built-ins resolve there), so load it through
 // `require`, which reads from the real filesystem in every runtime.
 const requireForFff = NodeModule.createRequire(import.meta.url);
-const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+// npm consumers do not receive the workspace patch adding a require export.
+// Resolve its import entry on Node; SEA ships the patched package beside itself.
+const fffEntry = NodeSea.isSea()
+  ? "@ff-labs/fff-node"
+  : NodeURL.fileURLToPath(import.meta.resolve("@ff-labs/fff-node"));
+const { FileFinder } = requireForFff(fffEntry) as typeof import("@ff-labs/fff-node");
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;

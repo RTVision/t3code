@@ -11,6 +11,7 @@ import { ServerConfig } from "../config.ts";
 import { providerAuth } from "./SourceControlProviderDiscovery.ts";
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const decodeRequestBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const GITEA_SETUP_HINT =
   "Install tea 0.16 or later and run tea login add as the daemon user. Select a default with tea login default <name> or set T3CODE_GITEA_BASE_URL, then restart T3.";
@@ -146,7 +147,7 @@ export const make = Effect.gen(function* () {
     const body =
       input.body === undefined
         ? undefined
-        : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(input.body).pipe(
+        : yield* decodeRequestBody(input.body).pipe(
             Effect.mapError(
               () =>
                 new GiteaCliError({

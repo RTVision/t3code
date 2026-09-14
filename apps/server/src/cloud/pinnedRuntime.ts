@@ -17,18 +17,20 @@ import {
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
 
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
- * A pinned runtime is an exact t3 release archive unpacked into
- * <baseDir>/runtime/versions/<version>: the self-contained executable, the
- * web client, and the native packages beside it. The boot service points its
- * unit or launch agent at the executable, and server self-update installs the
- * target version here before switching over. The runtime never depends on a
- * Node or npm on the machine; the only npm involvement in T3 Code is the `t3`
- * package for people who prefer `npx t3` or `npm install -g t3`, and even a
- * CLI installed that way pins an archive when it sets up the service.
+ * Standalone executables pin release archives. Node installations keep the npm
+ * layout used by existing RTVision/OpenRC launchers and Alpine's native modules.
+ * Both distributions use the same staged validation and atomic publication.
  */
+const decodeNpmRuntimePackage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ name: Schema.Literal(T3_NPM_PACKAGE), version: Schema.String }),
+  ),
+);
+
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
 const PINNED_RUNTIME_ARCHIVE_FILE = "t3-runtime-archive";
@@ -44,11 +46,16 @@ export interface PinnedRuntimePaths {
 }
 
 /** The exact command that runs a pinned runtime. */
-export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
+export function pinnedRuntimeCommand(
+  paths: PinnedRuntimePaths,
+  nodeExecutable = "node",
+): {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 } {
-  return { command: paths.entryPath, args: [] };
+  return paths.entryPath.endsWith(".mjs")
+    ? { command: nodeExecutable, args: [paths.entryPath] }
+    : { command: paths.entryPath, args: [] };
 }
 
 export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
@@ -60,11 +67,15 @@ export function pinnedRuntimePaths(
   baseDir: string,
   version: string,
   platform: NodeJS.Platform,
+  distribution: "archive" | "npm" = "archive",
 ): PinnedRuntimePaths {
   const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
+    entryPath:
+      distribution === "npm"
+        ? path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs")
+        : path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -107,6 +118,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
  * plausible-looking but broken tree behind.
  */
 interface PinnedRuntimeInstallInput {
+  readonly distribution?: "archive" | "npm";
   readonly baseDir: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
@@ -229,7 +241,13 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   input: PinnedRuntimeInstallInput,
 ) {
   const { fs } = input;
-  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version, input.platform);
+  const paths = pinnedRuntimePaths(
+    input.path,
+    input.baseDir,
+    input.version,
+    input.platform,
+    input.distribution,
+  );
   const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),
@@ -239,8 +257,19 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       (cause) => new PinnedRuntimeInstallError({ step: "checking the pinned runtime", cause }),
     ),
   );
+  const matchesNpmPackage = (runtime: PinnedRuntimePaths) =>
+    fs
+      .readFileString(input.path.join(runtime.versionDir, "node_modules", "t3", "package.json"))
+      .pipe(
+        Effect.flatMap(decodeNpmRuntimePackage),
+        Effect.map((pkg) => pkg.version === input.version),
+        Effect.orElseSucceed(() => false),
+      );
   const alreadyPinned =
-    entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
+    entryExists &&
+    Option.isSome(sentinel) &&
+    sentinel.value.trim() === input.version &&
+    (input.distribution !== "npm" || (yield* matchesNpmPackage(paths)));
   if (alreadyPinned) {
     yield* input.validate(paths);
     return paths;
@@ -288,8 +317,45 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    yield* installFromArchive(input, stagingDir);
+    if (input.distribution === "npm") {
+      const result = yield* input.runner
+        .run({
+          command: "npm",
+          args: [
+            "install",
+            "--prefix",
+            stagingDir,
+            "--no-fund",
+            "--no-audit",
+            "--registry",
+            T3_NPM_REGISTRY,
+            `t3@npm:${T3_NPM_PACKAGE}@${input.version}`,
+          ],
+          timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
+          maxOutputBytes: 64 * 1024,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PinnedRuntimeInstallError({ step: "installing the pinned npm runtime", cause }),
+          ),
+        );
+      if (result.code !== 0)
+        return yield* new PinnedRuntimeInstallError({
+          step: "installing the pinned npm runtime",
+          exitCode: Number(result.code),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
+    } else {
+      yield* installFromArchive(input, stagingDir);
+    }
 
+    if (input.distribution === "npm" && !(yield* matchesNpmPackage(stagingPaths))) {
+      return yield* new PinnedRuntimeInstallError({
+        step: "verifying the pinned npm package identity",
+      });
+    }
     yield* input.validate(stagingPaths);
     yield* fs
       .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)
@@ -328,7 +394,14 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       ),
     );
-    if (!published) yield* input.validate(paths);
+    if (!published) {
+      if (input.distribution === "npm" && !(yield* matchesNpmPackage(paths))) {
+        return yield* new PinnedRuntimeInstallError({
+          step: "verifying the concurrently published npm package identity",
+        });
+      }
+      yield* input.validate(paths);
+    }
     return paths;
   }).pipe(
     Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),

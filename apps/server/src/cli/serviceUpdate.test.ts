@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ServerSelfUpdateError, type ServerConfig } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -100,59 +101,73 @@ it.effect("propagates daemon update failures instead of installing a replacement
   }),
 );
 
-it.effect("authenticates with the installed CLI before any new-version migrations", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-auth-test-" });
-    // Invalid SQLite proves this CLI never opens the old database.
-    yield* fs.makeDirectory(path.join(baseDir, "runtime"));
-    yield* fs.makeDirectory(path.join(baseDir, "userdata"));
-    yield* fs.writeFileString(
-      path.join(baseDir, "userdata", "state.sqlite"),
-      "old schema untouched",
-    );
-    yield* fs.writeFileString(
-      path.join(baseDir, "runtime", "service-state.json"),
-      encodeJson({ protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.41" }),
-    );
-    const calls: ProcessRunInput[] = [];
-    const token = yield* issueServiceUpdateToken(baseDir).pipe(
-      Effect.provideService(ProcessRunner, {
-        run: (input) =>
-          Effect.sync(() => {
-            calls.push(input);
-            return {
-              stdout: "test-credential\n",
-              stderr: "",
-              code: ChildProcessSpawner.ExitCode(0),
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            };
-          }),
-      }),
-    );
-    expect(token).toBe("test-credential");
-    expect(calls[0]?.args).toEqual([
-      path.join(baseDir, "runtime/versions/0.0.41/node_modules/t3/dist/bin.mjs"),
-      "auth",
-      "session",
-      "issue",
-      "--base-dir",
-      baseDir,
-      "--ttl",
-      "10m",
-      "--label",
-      "t3 service update",
-      "--token-only",
-    ]);
-    expect(yield* fs.readFileString(path.join(baseDir, "userdata", "state.sqlite"))).toBe(
-      "old schema untouched",
-    );
-  }).pipe(Effect.provide(NodeServices.layer)),
+it.effect.each(["archive", "npm"] as const)(
+  "authenticates with the installed %s CLI before any new-version migrations",
+  (distribution) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-auth-test-" });
+      // Invalid SQLite proves this CLI never opens the old database.
+      yield* fs.makeDirectory(path.join(baseDir, "runtime"));
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"));
+      yield* fs.writeFileString(
+        path.join(baseDir, "userdata", "state.sqlite"),
+        "old schema untouched",
+      );
+      yield* fs.writeFileString(
+        path.join(baseDir, "runtime", "service-state.json"),
+        encodeJson({ protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.41" }),
+      );
+      const archivedEntry = path.join(
+        baseDir,
+        "runtime/versions/0.0.41",
+        (yield* HostProcessPlatform) === "win32" ? "t3.exe" : "t3",
+      );
+      if (distribution === "archive") {
+        yield* fs.makeDirectory(path.dirname(archivedEntry), { recursive: true });
+        yield* fs.writeFileString(archivedEntry, "installed executable");
+      }
+      const calls: ProcessRunInput[] = [];
+      const token = yield* issueServiceUpdateToken(baseDir).pipe(
+        Effect.provideService(ProcessRunner, {
+          run: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return {
+                stdout: "test-credential\n",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+      );
+      expect(token).toBe("test-credential");
+      expect(calls[0]?.command).toBe(distribution === "archive" ? archivedEntry : process.execPath);
+      expect(calls[0]?.args).toEqual([
+        ...(distribution === "archive"
+          ? []
+          : [path.join(baseDir, "runtime/versions/0.0.41/node_modules/t3/dist/bin.mjs")]),
+        "auth",
+        "session",
+        "issue",
+        "--base-dir",
+        baseDir,
+        "--ttl",
+        "10m",
+        "--label",
+        "t3 service update",
+        "--token-only",
+      ]);
+      expect(yield* fs.readFileString(path.join(baseDir, "userdata", "state.sqlite"))).toBe(
+        "old schema untouched",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.each(["absent", "daemon-record", "unreadable", "lan-origin"] as const)(

@@ -6,6 +6,7 @@ import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
 } from "@t3tools/shared/httpReadiness";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -77,14 +78,14 @@ const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 export interface RemoteT3RunnerOptions {
   /**
    * Dev mode: run `node <path>` on the remote instead of a release archive.
-   * The only mode that needs Node on the remote.
+   * Node is also used when a release archive is unavailable or cannot run.
    */
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
   /**
    * Exact version whose self-contained release archive the remote installs
-   * and runs. Required unless `nodeScriptPath` is set; the remote then needs
-   * neither Node nor npm.
+   * and runs. Required unless `nodeScriptPath` is set. Hosts without a usable
+   * archive fall back to the RTVision npm package and need Node and npm.
    */
   readonly archiveVersion?: string | null;
   readonly releaseBaseUrl?: string | null;
@@ -446,8 +447,7 @@ set -eu
 @@T3_NODE_ENV_SCRIPT@@
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
 if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
-  # Dev mode: a source checkout on the remote. This is the only path that
-  # needs Node, so Node discovery runs here and nowhere else.
+  # Dev mode: a source checkout on the remote.
   ensure_remote_node_path || true
   if ! command -v node >/dev/null 2>&1; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
@@ -460,12 +460,30 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
-# Self-contained release archive: no Node, npm, or compiler on the remote.
-# Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+# Prefer self-contained archives; retain Node installs and support musl hosts.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
+T3_NPM_PACKAGE=@@T3_NPM_PACKAGE@@
+T3_NPM_REGISTRY=@@T3_NPM_REGISTRY@@
 T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_USE_NODE=false
+t3_npm_ready() {
+  ensure_remote_node_path || return 1
+  node -e 'const fs = require("node:fs");
+    try {
+      const root = process.argv[1];
+      const pkg = JSON.parse(fs.readFileSync(root + "/node_modules/t3/package.json", "utf8"));
+      process.exit(pkg.name === process.argv[2] && pkg.version === process.argv[3] &&
+        fs.existsSync(root + "/node_modules/t3/dist/bin.mjs") ? 0 : 1);
+    } catch { process.exit(1); }' "$1" "$T3_NPM_PACKAGE" "$T3_ARCHIVE_VERSION"
+}
 t3_runtime_ready() {
-  [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
+  [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ] || return 1
+  if [ -x "$T3_RUNTIME_DIR/t3" ]; then return 0; fi
+  if [ -f "$T3_RUNTIME_DIR/node_modules/t3/package.json" ] && t3_npm_ready "$T3_RUNTIME_DIR"; then
+    T3_USE_NODE=true
+    return 0
+  fi
+  return 1
 }
 if ! t3_runtime_ready; then
   mkdir -p "$HOME/.t3/runtime/versions"
@@ -508,27 +526,28 @@ if ! t3_runtime_ready; then
   trap 'rm -rf "$T3_LOCK"' EXIT
 fi
 if ! t3_runtime_ready; then
+  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
+  t3_install_archive() {
   case "$(uname -s)" in
     Darwin) T3_PLATFORM="darwin" ;;
     Linux) T3_PLATFORM="linux" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; return 1 ;;
   esac
   case "$(uname -m)" in
     arm64 | aarch64) T3_ARCH="arm64" ;;
     x86_64 | amd64) T3_ARCH="x64" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; return 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
-  trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
-    else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+    else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; return 1
     fi
   }
-  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@
-  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
+  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@ || return 1
+  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@ || return 1
   T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
     T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
@@ -536,14 +555,28 @@ if ! t3_runtime_ready; then
     T3_ACTUAL="$(shasum -a 256 "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
   fi
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
-    printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+    printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; return 1
   fi
-  tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+  tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1 || return 1
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.
   if ! "$T3_STAGING/t3" --version >/dev/null 2>&1; then
-    printf 'The t3 %s executable does not run on this host.\\n' "$T3_ARCHIVE_VERSION" >&2; exit 1
+    printf 'The t3 %s executable does not run on this host.\\n' "$T3_ARCHIVE_VERSION" >&2; return 1
+  fi
+  }
+  if ! t3_install_archive; then
+    printf 'Installing t3 %s with Node and npm for this host.\\n' "$T3_ARCHIVE_VERSION" >&2
+    ensure_remote_node_path && command -v npm >/dev/null 2>&1 || {
+      printf 'This host needs a supported Node and npm on its non-interactive SSH PATH.\\n' >&2
+      exit 1
+    }
+    rm -rf "$T3_STAGING"
+    mkdir -p "$T3_STAGING"
+    npm install --prefix "$T3_STAGING" --no-fund --no-audit --registry "$T3_NPM_REGISTRY" "t3@npm:$T3_NPM_PACKAGE@$T3_ARCHIVE_VERSION" >&2
+    t3_npm_ready "$T3_STAGING"
+    node "$T3_STAGING/node_modules/t3/dist/bin.mjs" --version >/dev/null
+    T3_USE_NODE=true
   fi
   printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
   rm -rf "$T3_RUNTIME_DIR"
@@ -552,6 +585,9 @@ fi
 if [ -n "\${T3_LOCK:-}" ]; then
   rm -rf "$T3_LOCK"
   trap - EXIT
+fi
+if [ "$T3_USE_NODE" = true ]; then
+  exec node "$T3_RUNTIME_DIR/node_modules/t3/dist/bin.mjs" "$@"
 fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
@@ -830,6 +866,8 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
+      T3_NPM_PACKAGE: shellSingleQuote(T3_NPM_PACKAGE),
+      T3_NPM_REGISTRY: shellSingleQuote(T3_NPM_REGISTRY),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
       T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),

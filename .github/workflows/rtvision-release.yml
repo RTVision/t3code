@@ -193,11 +193,13 @@ jobs:
           if-no-files-found: error
 
   cli:
-    needs: [prepare, desktop, linux-cli]
+    needs: [prepare, desktop]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Enable production T3 Connect
+        run: cp .env.example .env
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -206,22 +208,25 @@ jobs:
               - --frozen-lockfile
               - --filter=t3...
               - --filter=@t3tools/scripts...
+      - run: vp run --filter t3 build
       - uses: actions/download-artifact@v8
         with:
-          pattern: rtvision-cli-*
-          merge-multiple: true
-          path: release-cli
-      - name: Pack the supported CLI platforms
+          pattern: rtvision-resource-*
+          path: resource-monitors
+      - name: Pack CLI with resource monitors
         run: |
-          test -f "release-cli/t3-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz"
-          test -f "release-cli/t3-${{ needs.prepare.outputs.version }}-win32-x64.zip"
-          node scripts/build-npm-platform-packages.ts --archives-dir release-cli --version "${{ needs.prepare.outputs.version }}" --output-dir npm-packages --allow-missing
+          for directory in resource-monitors/rtvision-resource-*; do
+            key=${directory##*/rtvision-resource-}
+            mkdir -p "apps/server/dist/resource-monitor/$key"
+            cp "$directory"/* "apps/server/dist/resource-monitor/$key/"
+            chmod +x "apps/server/dist/resource-monitor/$key/"* || true
+          done
           mkdir -p release-npm
-          cp npm-packages/@rtvision/*.tgz release-npm/
+          node apps/server/scripts/cli.ts publish --pack-destination release-npm --verbose
       - uses: actions/upload-artifact@v7
         with:
           name: rtvision-npm
-          path: release-npm/*
+          path: release-npm/*.tgz
           if-no-files-found: error
 
   draft:
@@ -256,6 +261,6 @@ jobs:
 
           Desktop installers are unsigned. Install only on machines that can reach RTVision's npm registry when using server installation or update features.
 
-          Maintainers: publish the attached platform npm tarballs, then the launcher tarball to RTVision's registry, verify its version and integrity, then publish this draft. See `docs/operations/rtvision-release.md`.
+          Maintainers: publish the attached Node-based npm tarball to RTVision's registry, verify its version and integrity, then publish this draft. See `docs/operations/rtvision-release.md`.
           NOTES
           gh release create "v$VERSION" release-assets/* --target "$GITHUB_SHA" --title "RTVision T3 Code $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --draft
