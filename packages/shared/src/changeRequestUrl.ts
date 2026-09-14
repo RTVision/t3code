@@ -13,8 +13,6 @@ export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
   readonly number: number;
-  /** The Gitea web-root path, when the forge is served below one. */
-  readonly basePath?: string;
   /** Forgejo's HTTP host and port, separate from the portless repository identity. */
   readonly authority?: string;
 }
@@ -69,14 +67,6 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (isHostOf(host, "bitbucket.org", "bitbucket")) {
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
-  }
-  // Gitea: /{web-root/}{owner}/{repo}/pulls/{n}. The configured host is resolved server-side,
-  // and this parser only claims the link after it matches a checked-out repository.
-  const gitea = /^((?:\/[^/]+)*)\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (gitea?.[2] !== undefined && gitea[3] !== undefined) {
-    const parsed = claim(host, [gitea[0], gitea[2], gitea[3]]);
-    const basePath = gitea[1] ?? "";
-    return parsed === null || basePath === "" ? parsed : { ...parsed, basePath };
   }
   // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
   // of the repository path there, as it is in the remote URL the identity is read from.
@@ -182,7 +172,7 @@ export function giteaPullRequestBrowserUrl(
   if (!identity || !Number.isSafeInteger(number) || number < 1) return null;
   const repositoryPath = repository.split("/");
   if (
-    repositoryPath.length !== 2 ||
+    repositoryPath.length < 2 ||
     repositoryPath.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   )
     return null;
@@ -195,9 +185,16 @@ export function giteaPullRequestBrowserUrl(
     remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
     if (remotePath.some((segment) => segment.length === 0)) return null;
 
+    const mount = remotePath.slice(0, -2);
+    if (
+      repositoryPath.length > 2 &&
+      repositoryPath.slice(0, -2).join("/").toLowerCase() !== mount.join("/").toLowerCase()
+    )
+      return null;
+
     remoteUrl.username = "";
     remoteUrl.password = "";
-    remoteUrl.pathname = `/${[...remotePath.slice(0, -2), ...repositoryPath, "pulls", number].join("/")}`;
+    remoteUrl.pathname = `/${[...mount, ...repositoryPath.slice(-2), "pulls", number].join("/")}`;
     remoteUrl.search = "";
     remoteUrl.hash = "";
     return remoteUrl.toString();
@@ -247,7 +244,6 @@ export function matchesLinkedPullRequestUrl(
     linked.host === target.host &&
     linked.repository === target.repository &&
     linked.number === target.number &&
-    (linked.basePath ?? "") === (target.basePath ?? "") &&
     linked.authority === target.authority
   );
 }
@@ -273,7 +269,7 @@ export function siblingPullRequestUrl(url: string, number: number): string | nul
   const reference = parseChangeRequestUrl(url);
   if (reference === null || !Number.isSafeInteger(number) || number < 1) return null;
   const sibling = new URL(url);
-  const repositoryPath = `${reference.basePath ?? ""}/${reference.repository}`;
+  const repositoryPath = `/${reference.repository}`;
   const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/u.exec(
     sibling.pathname.slice(repositoryPath.length),
   )?.[1];

@@ -1416,7 +1416,7 @@ export function pullRequestHostOf(
     | undefined,
   kind: SourceControlProviderKind,
 ): string {
-  if (kind === "forgejo") {
+  if (kind === "forgejo" || kind === "gitea") {
     try {
       const remote = new URL(identity?.locator?.remoteUrl ?? "");
       if (remote.protocol === "http:" || remote.protocol === "https:")

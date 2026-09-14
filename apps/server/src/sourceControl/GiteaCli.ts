@@ -61,7 +61,7 @@ export class GiteaCli extends Context.Service<
 >()("t3/sourceControl/GiteaCli") {}
 
 /** Configuration is the web root, including a subpath for installations behind a proxy. */
-export function normalizeGiteaBaseUrl(value: string): string | null {
+function normalizeGiteaBaseUrl(value: string): string | null {
   try {
     const url = new URL(value.trim());
     if (

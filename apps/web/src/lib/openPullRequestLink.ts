@@ -71,10 +71,8 @@ export function findProjectForChangeRequest(
     const kind = identity.provider as SourceControlProviderKind | undefined;
     if (kind === undefined) return false;
 
-    // Gitea's configured web root is not part of the provider repository name. Identities made
-    // from a git remote still include it, and can remain `unknown` until the server refines them.
-    // An HTTP remote supplies the root exactly, so it takes precedence over displayName. SSH
-    // remotes cannot establish a web root and continue through the ordinary identity match.
+    // HTTP remotes preserve the web root even when the provider display name omits it.
+    // Unknown identities can use the same match before the server refines their provider.
     if (identity.provider === "gitea" || identity.provider === "unknown") {
       const remoteMatch = giteaHttpRemoteMatchesLink(identity, link);
       if (remoteMatch !== null && (identity.provider === "gitea" || remoteMatch)) {
@@ -114,16 +112,17 @@ function giteaHttpRemoteMatchesLink(
   try {
     const remote = new URL(identity.locator.remoteUrl.trim());
     if (remote.protocol !== "http:" && remote.protocol !== "https:") return null;
-    if (remote.hostname.toLowerCase() !== link.host.toLowerCase()) return false;
+    if (remote.host.toLowerCase() !== (link.authority ?? link.host).toLowerCase()) return false;
     const remotePath = remote.pathname.split("/").filter((segment) => segment.length > 0);
     if (remotePath.length < 2) return false;
     remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
     if (remotePath.some((segment) => segment.length === 0)) return false;
-    const remoteRepository = remotePath.slice(-2).join("/");
-    const remoteBasePath = `/${remotePath.slice(0, -2).join("/")}`.replace(/\/$/u, "");
+    if (matchRepository) {
+      return remotePath.join("/").toLowerCase() === link.repository.toLowerCase();
+    }
     return (
-      (!matchRepository || remoteRepository.toLowerCase() === link.repository.toLowerCase()) &&
-      remoteBasePath === (link.basePath ?? "")
+      remotePath.slice(0, -2).join("/").toLowerCase() ===
+      link.repository.split("/").slice(0, -2).join("/").toLowerCase()
     );
   } catch {
     return null;
@@ -154,7 +153,7 @@ export function findProjectOnChangeRequestHost(
     if (identity && (kind === "gitea" || kind === "unknown")) {
       const rootMatch = giteaHttpRemoteMatchesLink(identity, link, false);
       if (rootMatch !== null) return rootMatch;
-      if (link.basePath) return false;
+      if (link.repository.split("/").length > 2) return false;
     }
     const web = resolvedForgejoRepository(project);
     if (web) {

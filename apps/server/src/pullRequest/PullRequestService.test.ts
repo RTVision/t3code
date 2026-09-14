@@ -1740,6 +1740,60 @@ it.effect("reads a host-native stack through the provider and null where it has 
   }),
 );
 
+it.effect("keeps mounted Gitea selectors and HTTP ports in list and detail references", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "gitea",
+          title: "web",
+          workspaceRoot: "/gitea",
+          repository: "git/acme/web",
+          provider: "gitea",
+          host: "code.example",
+          remoteUrl: "http://code.example:3000/git/acme/web.git",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitea", {
+          listChangeRequests: (input) => {
+            assert.strictEqual(input.host, "code.example:3000");
+            assert.strictEqual(input.repository, "git/acme/web");
+            return Effect.succeed({
+              items: [changeRequest(42, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+          getChangeRequestSummary: (input) => {
+            assert.strictEqual(input.host, "code.example:3000");
+            assert.strictEqual(input.repository, "git/acme/web");
+            return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+    const listed = yield* service.list({ host: "code.example:3000", state: "open" });
+    assert.lengthOf(listed.entries, 1);
+    assert.include(listed.entries[0], {
+      repository: "git/acme/web",
+      host: "code.example:3000",
+      number: 42,
+    });
+    yield* service.summary(
+      {
+        projectId: "gitea" as ProjectId,
+        host: "code.example:3000",
+        repository: "git/acme/web",
+        number: 42,
+      },
+      { recoverTransientFailure: false },
+    );
+    const other = yield* service.list({ host: "code.example:4000", state: "open" });
+    assert.lengthOf(other.entries, 0);
+  }),
+);
+
 it.effect("routes explicit Forgejo HTTP authorities through SSH checkouts after refinement", () =>
   Effect.gen(function* () {
     for (const provider of ["forgejo", "unknown"] as const) {

@@ -128,18 +128,35 @@ describe("giteaPullRequestBrowserUrl", () => {
     ).toBe("https://gitea.example.test/acme/other/pulls/42");
   });
 
-  it("preserves the configured Gitea web root from an HTTP remote", () => {
+  it.each(["acme/other", "gitea/acme/other"])(
+    "preserves the Gitea web root for %s",
+    (repository) => {
+      expect(
+        giteaPullRequestBrowserUrl(
+          repositoryIdentity(
+            "unknown",
+            "forge.example.test/gitea/acme/default",
+            "https://token@forge.example.test/gitea/acme/default.git",
+          ),
+          repository,
+          42,
+        ),
+      ).toBe("https://forge.example.test/gitea/acme/other/pulls/42");
+    },
+  );
+
+  it("rejects a browser fallback for a different Gitea web root", () => {
     expect(
       giteaPullRequestBrowserUrl(
         repositoryIdentity(
-          "unknown",
+          "gitea",
           "forge.example.test/gitea/acme/default",
-          "https://token@forge.example.test/gitea/acme/default.git",
+          "https://forge.example.test/gitea/acme/default.git",
         ),
-        "acme/other",
+        "other/acme/repository",
         42,
       ),
-    ).toBe("https://forge.example.test/gitea/acme/other/pulls/42");
+    ).toBeNull();
   });
 
   it("does not invent a Gitea web root for an SSH remote", () => {
@@ -162,6 +179,7 @@ describe("Gitea pull request URLs", () => {
     const url = "https://gitea.example.test/Acme/Repository/pulls/42/files#diff-1";
     expect(parseChangeRequestUrl(url)).toEqual({
       host: "gitea.example.test",
+      authority: "gitea.example.test",
       repository: "acme/repository",
       number: 42,
     });
@@ -172,9 +190,9 @@ describe("Gitea pull request URLs", () => {
     const url = "https://forge.example.test/gitea/Acme/Repository/pulls/42/files#diff-1";
     expect(parseChangeRequestUrl(url)).toEqual({
       host: "forge.example.test",
-      repository: "acme/repository",
+      authority: "forge.example.test",
+      repository: "gitea/acme/repository",
       number: 42,
-      basePath: "/gitea",
     });
     expect(changeRequestRepositoryUrl(url)).toBe(
       "https://forge.example.test/gitea/Acme/Repository",
@@ -534,23 +552,17 @@ describe("findProjectOnChangeRequestHost", () => {
       displayName: "acme/web",
       locator: { remoteUrl: "https://forge.example.test/gitea/acme/web.git" },
     });
-    const link = {
-      host: "forge.example.test",
-      repository: "acme/other",
-      number: 7,
-      basePath: "/gitea",
-    };
+    const link = parseChangeRequestUrl("https://forge.example.test/gitea/acme/other/pulls/7")!;
     expect(findProjectOnChangeRequestHost([checkout], link)).toBe(checkout);
-    expect(
-      findProjectOnChangeRequestHost([checkout], { ...link, basePath: "/other" }),
-    ).toBeUndefined();
-    expect(
-      findProjectOnChangeRequestHost([checkout], {
-        host: link.host,
-        repository: link.repository,
-        number: link.number,
-      }),
-    ).toBeUndefined();
+    for (const url of [
+      "https://forge.example.test/other/acme/other/pulls/7",
+      "https://forge.example.test/acme/other/pulls/7",
+      "https://forge.example.test:8443/gitea/acme/other/pulls/7",
+    ]) {
+      expect(
+        findProjectOnChangeRequestHost([checkout], parseChangeRequestUrl(url)!),
+      ).toBeUndefined();
+    }
   });
 
   it("finds nothing on a host nothing is checked out from", () => {
@@ -647,28 +659,29 @@ describe("findProjectForChangeRequest", () => {
     ).toBeUndefined();
   });
 
-  it("matches an unknown Gitea identity through its configured web root", () => {
-    const projects = [
-      project({
-        canonicalKey: "forge.example.test/gitea/acme/repository",
-        provider: "unknown",
-        displayName: "gitea/acme/repository",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "https://forge.example.test/gitea/acme/repository.git",
-        },
-      }),
-    ];
-    expect(
-      findProjectForChangeRequest(projects, {
-        host: "forge.example.test",
-        repository: "acme/repository",
-        number: 42,
-        basePath: "/gitea",
-      }),
-    ).toBe(projects[0]);
-  });
+  it.each(["gitea", "unknown"])(
+    "matches a %s identity through its configured web root",
+    (provider) => {
+      const projects = [
+        project({
+          canonicalKey: "forge.example.test/gitea/acme/repository",
+          provider,
+          displayName: "gitea/acme/repository",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://forge.example.test/gitea/acme/repository.git",
+          },
+        }),
+      ];
+      expect(
+        findProjectForChangeRequest(
+          projects,
+          parseChangeRequestUrl("https://forge.example.test/gitea/acme/repository/pulls/42")!,
+        ),
+      ).toBe(projects[0]);
+    },
+  );
 
   it("does not match a Gitea URL below a different web root", () => {
     const projects = [
@@ -684,12 +697,10 @@ describe("findProjectForChangeRequest", () => {
       }),
     ];
     expect(
-      findProjectForChangeRequest(projects, {
-        host: "forge.example.test",
-        repository: "acme/repository",
-        number: 42,
-        basePath: "/other",
-      }),
+      findProjectForChangeRequest(
+        projects,
+        parseChangeRequestUrl("https://forge.example.test/other/acme/repository/pulls/42")!,
+      ),
     ).toBeUndefined();
   });
 });

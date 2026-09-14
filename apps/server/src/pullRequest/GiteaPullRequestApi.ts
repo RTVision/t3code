@@ -700,6 +700,17 @@ export const make = Effect.gen(function* () {
   const gitea = yield* GiteaCli.GiteaCli;
   const draftPrefixes = yield* GiteaLifecycle.draftPrefixesConfig;
 
+  const mount = Option.map(gitea.baseUrl, (value) =>
+    new URL(value).pathname.replace(/^\/+|\/+$/gu, "").toLowerCase(),
+  ).pipe(Option.getOrElse(() => ""));
+  // Browser links include the web root; Gitea API repository names omit it.
+  const unmounted = (repository: string) => {
+    const parts = repository.trim().split("/");
+    return mount !== "" && parts.length > 2 && parts.slice(0, -2).join("/").toLowerCase() === mount
+      ? parts.slice(-2).join("/")
+      : repository;
+  };
+
   const failure = (operation: string, error: GiteaCli.GiteaCliError) =>
     new GiteaPullRequestApiError({
       operation,
@@ -747,7 +758,7 @@ export const make = Effect.gen(function* () {
     maxBytes?: number;
   }) {
     yield* validateHost(input.host);
-    if (input.repository !== undefined && repositoryPath(input.repository) === null) {
+    if (input.repository !== undefined && repositoryPath(unmounted(input.repository)) === null) {
       return yield* new GiteaPullRequestApiError({
         operation: input.operation,
         reason: "failed",
@@ -768,7 +779,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError((error) => failure(operation, error)),
     );
 
-  const basePath = (repository: string) => repositoryPath(repository)!;
+  const basePath = (repository: string) => repositoryPath(unmounted(repository))!;
 
   const getPullRequest = Effect.fn("GiteaPullRequestApi.getPullRequest")(function* (input: {
     host: string;
@@ -828,9 +839,11 @@ export const make = Effect.gen(function* () {
         return { supported: false, runs: [] };
       const pull = yield* getPullRequest(input);
       if (pull.state !== "open") return { supported: true, runs: [] };
-      const runs = yield* GiteaWorkflows.list(gitea, { ...input, headSha: pull.headSha }).pipe(
-        Effect.mapError((error) => failure("getWorkflowApprovals", error)),
-      );
+      const runs = yield* GiteaWorkflows.list(gitea, {
+        ...input,
+        repository: unmounted(input.repository),
+        headSha: pull.headSha,
+      }).pipe(Effect.mapError((error) => failure("getWorkflowApprovals", error)));
       return { supported: true, runs };
     },
   );
@@ -1157,7 +1170,7 @@ export const make = Effect.gen(function* () {
     let reportedRelationshipTotal: number | null = null;
     const relationshipNumbers = new Set<number>();
     const repositoryIdsByName = new Map<string, number>();
-    const expectedRepository = input.repository.trim().toLowerCase();
+    const expectedRepository = unmounted(input.repository).trim().toLowerCase();
     const collected: Array<GiteaPullRequest> = [];
     const viewerTeams =
       input.involvement === "reviewing"
@@ -1910,13 +1923,19 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const actionsCi = makeActionsCi({
+    kind: "gitea",
+    ...(Option.isSome(gitea.baseUrl) ? { baseUrl: gitea.baseUrl.value } : {}),
+    request: (input) => request({ ...input, operation: "ci" }),
+    fail: (detail) => new GiteaPullRequestApiError({ operation: "ci", reason: "failed", detail }),
+  });
+
   return GiteaPullRequestApi.of({
-    ...makeActionsCi({
-      kind: "gitea",
-      ...(Option.isSome(gitea.baseUrl) ? { baseUrl: gitea.baseUrl.value } : {}),
-      request: (input) => request({ ...input, operation: "ci" }),
-      fail: (detail) => new GiteaPullRequestApiError({ operation: "ci", reason: "failed", detail }),
-    }),
+    getCiRuns: (input) =>
+      actionsCi.getCiRuns({ ...input, repository: unmounted(input.repository) }),
+    getCiJobs: (input) =>
+      actionsCi.getCiJobs({ ...input, repository: unmounted(input.repository) }),
+    rerunCi: (input) => actionsCi.rerunCi({ ...input, repository: unmounted(input.repository) }),
     getFeatures: () => getFeatures,
     getWorkflowApprovals,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {

@@ -84,17 +84,17 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
-  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
+  it.each(["forgejo", "gitea"] as const)("separates %s HTTP ports", (kind) => {
     const identity = {
       canonicalKey: "forge.example/team/repo",
       locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
     };
-    expect(pullRequestHostOf(identity, "forgejo")).toBe("forge.example:3000");
+    expect(pullRequestHostOf(identity, kind)).toBe("forge.example:3000");
     expect(pullRequestHostOf(identity, "gitlab")).toBe("forge.example");
     expect(
       pullRequestHostOf(
         { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        "forgejo",
+        kind,
       ),
     ).toBe("forge.example");
   });
