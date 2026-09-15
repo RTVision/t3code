@@ -8,12 +8,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { buildRemoteLaunchScript } from "@t3tools/ssh/tunnel";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Command } from "effect/unstable/cli";
 import { vi } from "vite-plus/test";
 
 import { sshHelperCommand } from "./sshHelper.ts";
 
 const cli = Command.make("t3").pipe(Command.withSubcommands([sshHelperCommand]));
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const launchScript = buildRemoteLaunchScript({ nodeScriptPath: "/unused/t3.mjs" });
 const inlineScript = launchScript.match(
   /node - "\$\{1:-\$DEFAULT_RUNTIME_FILE\}" <<'NODE'\n([\s\S]*?)\nNODE/,
@@ -65,7 +67,7 @@ for (const mode of ["packaged", "inline"] as const) {
         Effect.gen(function* () {
           const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-helper-"));
           const runtimeFile = NodePath.join(dir, "server-runtime.json");
-          NodeFS.writeFileSync(runtimeFile, JSON.stringify(testCase.runtime));
+          NodeFS.writeFileSync(runtimeFile, encodeJson(testCase.runtime));
           const previousExitCode = process.exitCode;
           const probes: number[] = [];
           let output = "";

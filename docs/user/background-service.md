@@ -34,7 +34,7 @@ SSH uses the configured daemon and reports when it is unavailable. It will not
 start a second server in the same T3 home. To switch back to an SSH-launched
 server after uninstalling the daemon, disconnect the SSH environment in
 Settings → Connections, then connect again. If you removed an externally
-packaged service, also remove `runtime/service-state.json` and
+packaged service or uninstalled with an older CLI, also remove `runtime/service-state.json` and
 `runtime/server-runtime.json` from its T3 home after the service has stopped.
 
 Updating restarts the server. Finish active work first, and wait for any remote

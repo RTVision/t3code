@@ -679,7 +679,7 @@ SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port "$DEFAULT_SERVER_HOME/runti
 # Service configuration outlives the runtime record during stops and startup.
 # Never open the same home in a standalone server while a daemon owns it.
 if [ -z "$SERVICE_RUNTIME_INFO" ] && { [ -e "$DEFAULT_SERVER_HOME/runtime/service-state.json" ] || [ -e "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" ]; }; then
-  printf 'The T3 daemon is configured for %s but is unavailable. Start or repair the service on the remote host, then reconnect.\\n' "$DEFAULT_SERVER_HOME" >&2
+  printf 'The T3 daemon is configured for %s but is unavailable. Start or repair the service on the remote host, then reconnect. If the service was removed and stopped, delete runtime/service-state.json and runtime/server-runtime.json from that T3 home.\\n' "$DEFAULT_SERVER_HOME" >&2
   exit 1
 fi
 DEFAULT_RUNTIME_INFO="$SERVICE_RUNTIME_INFO"
