@@ -1,6 +1,6 @@
 import type { PullRequestRef } from "@t3tools/contracts";
 import { CheckIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -32,6 +32,13 @@ export function PullRequestBranchMenu({
           (navigation.status === "ready" && navigation.coverage !== "complete")
         ? "Some branch relationships may be missing."
         : null;
+  // `MenuGroupLabel` reads group context and throws without a `MenuGroup` ancestor, so
+  // every standalone heading or notice gets its own group.
+  const note = (text: ReactNode) => (
+    <MenuGroup>
+      <MenuGroupLabel>{text}</MenuGroupLabel>
+    </MenuGroup>
+  );
   const choices = (label: string, chips: ReadonlyArray<DependencyChip>) =>
     chips.length > 0 ? (
       <MenuGroup>
@@ -85,32 +92,30 @@ export function PullRequestBranchMenu({
         <TooltipPopup>Pull requests related by their base and head branches</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
-        <MenuGroupLabel>Inferred from branches</MenuGroupLabel>
-        {notice ? <MenuGroupLabel>{notice}</MenuGroupLabel> : null}
-        {notice ? (
-          <MenuItem disabled={refreshing} onClick={onRetry}>
-            Retry branch lookup
-          </MenuItem>
-        ) : null}
+        <MenuGroup>
+          <MenuGroupLabel>Inferred from branches</MenuGroupLabel>
+          {notice ? <MenuGroupLabel>{notice}</MenuGroupLabel> : null}
+          {notice ? (
+            <MenuItem disabled={refreshing} onClick={onRetry}>
+              Retry branch lookup
+            </MenuItem>
+          ) : null}
+        </MenuGroup>
         {navigation.status === "ready" ? (
           <div className="max-h-80 overflow-y-auto">
-            {navigation.cycleBefore || navigation.cycleAfter ? (
-              <MenuGroupLabel>Branch cycle detected. Ordering stops at the cycle.</MenuGroupLabel>
-            ) : null}
-            {navigation.parentAmbiguous ? (
-              <MenuGroupLabel>Parent is ambiguous.</MenuGroupLabel>
-            ) : null}
-            {navigation.truncatedAfter ? (
-              <MenuGroupLabel>
-                Open #{navigation.path.at(-1)?.number} to see more above.
-              </MenuGroupLabel>
-            ) : null}
+            {navigation.cycleBefore || navigation.cycleAfter
+              ? note("Branch cycle detected. Ordering stops at the cycle.")
+              : null}
+            {navigation.parentAmbiguous ? note("Parent is ambiguous.") : null}
+            {navigation.truncatedAfter
+              ? note(`Open #${navigation.path.at(-1)?.number} to see more above.`)
+              : null}
             {choices("Branch chain", navigation.path.toReversed())}
-            {navigation.truncatedBefore ? (
-              <MenuGroupLabel>Open #{navigation.path[0]?.number} to see more below.</MenuGroupLabel>
-            ) : navigation.rootBase ? (
-              <MenuGroupLabel>↳ {navigation.rootBase}</MenuGroupLabel>
-            ) : null}
+            {navigation.truncatedBefore
+              ? note(`Open #${navigation.path[0]?.number} to see more below.`)
+              : navigation.rootBase
+                ? note(`↳ ${navigation.rootBase}`)
+                : null}
             {choices(`Children of #${navigation.path.at(-1)?.number}`, navigation.children)}
             {choices("Siblings", navigation.siblings)}
             {choices("Possible parents", navigation.possibleParents)}
