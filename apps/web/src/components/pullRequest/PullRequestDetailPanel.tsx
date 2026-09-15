@@ -1,6 +1,6 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
-import { PullRequestMentionProvider } from "./PullRequestMentionProvider";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -21,6 +21,8 @@ import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
   BookOpenIcon,
+  CircleDotIcon,
+  CopyIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
   FileDiffIcon,
@@ -32,6 +34,7 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   HammerIcon,
+  LayersIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
@@ -48,6 +51,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -56,18 +60,21 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { isCommandPaletteOpen } from "~/commandPaletteBus";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "~/keybindings";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useClientSettings } from "~/hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
   selectProjectGroupingSettings,
 } from "~/logicalProject";
-import {
-  changeRequestRepositoryUrl,
-  gitHubPullRequestBrowserUrl,
-  giteaPullRequestBrowserUrl,
-} from "~/lib/openPullRequestLink";
+import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -82,6 +89,7 @@ import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
+import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useUiStateStore } from "~/uiStateStore";
 
@@ -106,6 +114,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
+  MenuShortcut,
   MenuTrigger,
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -131,6 +140,7 @@ import {
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
+  isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -156,11 +166,6 @@ import {
   type PickableEnvironment,
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
-import { PullRequestBranchMenu } from "./PullRequestBranchMenu";
-import {
-  pullRequestDependencyNavigation,
-  shouldReadInferredPullRequestRelationships,
-} from "./pullRequestDependencyNavigation.logic";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
@@ -463,6 +468,8 @@ function PullRequestBaseFreshnessWarning({
 
 export function PullRequestDetailPanel({
   environmentId,
+  shortcutsEnabled,
+  getShortcutContext,
   threadRef = null,
   reference: requestedReference,
   listEntry = null,
@@ -475,6 +482,8 @@ export function PullRequestDetailPanel({
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
+  shortcutsEnabled: boolean;
+  getShortcutContext: () => ShortcutMatchContext;
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
   /**
    * The thread this panel sits beside, if any. Links that are not the pull
@@ -629,7 +638,7 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
-  const turnRefresh = usePullRequestTurnRefresh(environmentId, reference);
+  const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -713,12 +722,38 @@ export function PullRequestDetailPanel({
           },
     [activity, coreDetail],
   );
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
+    target: "pull request reference",
+    onCopy: (label) => toastManager.add({ type: "success", title: `${label} copied` }),
+    onError: (error, label) =>
+      toastManager.add({
+        type: "error",
+        title: `Failed to copy ${label}`,
+        description: error.message,
+      }),
+  });
+  const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: getShortcutContext(),
+    });
+    if (command !== "pullRequest.copyNumber") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) copyReference(`#${reference.number}`, "PR number");
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
   useEffect(() => {
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const markdownContext = useMemo(
-    () => ({ repositoryUrl, provider: detail?.provider ?? null, threadRef }),
+    () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
     [detail?.provider, repositoryUrl, threadRef],
   );
   const authorProfileUrl =
@@ -737,6 +772,22 @@ export function PullRequestDetailPanel({
         repositoryUrl,
       )
     : null;
+  const branchRefsQuery = useEnvironmentQuery(
+    detail === null
+      ? null
+      : vcsEnvironment.listRefs({
+          environmentId,
+          input: {
+            cwd: detail.workspaceRoot,
+            includeMatchingRemoteRefs: true,
+            // listRefs keeps the current ref first and a known default second.
+            limit: 2,
+          },
+        }),
+  );
+  const isStackedPullRequest =
+    detail !== null &&
+    isStackedPullRequestBase(detail.baseBranch, branchRefsQuery.data?.refs ?? []);
   // The host's own stack, where it keeps one. Only asked for once the detail has landed so a
   // pull request nobody can read costs one request rather than two.
   const stackReference = useMemo(
@@ -748,23 +799,6 @@ export function PullRequestDetailPanel({
   );
   const nativeStackQuery = usePullRequestStack(environmentId, stackReference);
   const nativeStack = nativeStackQuery.data;
-  const readInferredRelationships = shouldReadInferredPullRequestRelationships({
-    supported: detail?.capabilities.dependencies?.branchRelationships === true,
-    nativeStackSupported: stackReference !== null,
-    hasNativeStack: nativeStack !== null,
-    nativeStackSettled: nativeStackQuery.isSuccess || nativeStackQuery.error !== null,
-  });
-  const dependencyContextQuery = useEnvironmentQuery(
-    readInferredRelationships
-      ? pullRequestEnvironment.dependencyContext({ environmentId, input: reference })
-      : null,
-  );
-  const dependencyNavigation = pullRequestDependencyNavigation({
-    supported: readInferredRelationships,
-    context: dependencyContextQuery.data,
-    pending: dependencyContextQuery.isPending,
-    failed: dependencyContextQuery.error !== null,
-  });
   const supportsStackActions =
     supportsThreadPullRequests &&
     detail?.capabilities.stacks === true &&
@@ -782,14 +816,8 @@ export function PullRequestDetailPanel({
   const refreshDetail = useCallback(() => {
     detailQuery.refresh();
     activityQuery.refresh();
-    dependencyContextQuery.refresh();
     nativeStackQuery.refresh();
-  }, [
-    activityQuery.refresh,
-    dependencyContextQuery.refresh,
-    detailQuery.refresh,
-    nativeStackQuery.refresh,
-  ]);
+  }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
@@ -813,7 +841,6 @@ export function PullRequestDetailPanel({
   useLiveRefresh(
     () => {
       detailQuery.refresh();
-      dependencyContextQuery.refresh();
     },
     { key: `pull-request:${environmentId}:${pullRequestKey}` },
   );
@@ -822,10 +849,6 @@ export function PullRequestDetailPanel({
   // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
-  const retryDependencies = useCallback(async () => {
-    await invalidate({ environmentId, input: { reference } });
-    dependencyContextQuery.refresh();
-  }, [dependencyContextQuery.refresh, environmentId, invalidate, reference]);
   const [isInvalidating, setIsInvalidating] = useState(false);
   const refreshFromHost = useCallback(async () => {
     setIsInvalidating(true);
@@ -863,22 +886,13 @@ export function PullRequestDetailPanel({
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
-  const unavailableBrowserUrl = useMemo(() => {
+  const unavailableGitHubUrl = useMemo(() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
-    return matchingListEntry?.provider === "gitea" || identity?.provider === "gitea"
-      ? giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
-      : gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
-  }, [
-    environmentId,
-    matchingListEntry?.provider,
-    projects,
-    reference.number,
-    reference.projectId,
-    reference.repository,
-  ]);
-  // Project settings store the override under the sidebar group's key, which a duplicate row
+    return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
+  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
+  // Project settings stored the override under the sidebar group's key, which a duplicate row
   // borrows from its siblings, so the project alone does not always name the same key.
   const legacyProjectDefaultMergeMethod = useMemo(() => {
     if (projectDefaultMergeMethod !== undefined) return undefined;
@@ -1507,7 +1521,7 @@ export function PullRequestDetailPanel({
     return <PullRequestDetailGhost seed={matchingListEntry} />;
   }
 
-  const content = (
+  return (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
         <PullRequestThreadLinks
@@ -1672,7 +1686,7 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-              {!nativeStack && stackReference !== null && nativeStackQuery.error ? (
+              {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
@@ -1701,14 +1715,6 @@ export function PullRequestDetailPanel({
                     refreshDetail();
                     onActed?.();
                   }}
-                />
-              ) : onSelectPullRequest ? (
-                <PullRequestBranchMenu
-                  navigation={dependencyNavigation}
-                  reference={reference}
-                  refreshing={dependencyContextQuery.isPending}
-                  onSelect={onSelectPullRequest}
-                  onRetry={retryDependencies}
                 />
               ) : null}
               {context === "page" ? (
@@ -2115,9 +2121,19 @@ export function PullRequestDetailPanel({
                     <ArrowUpRightIcon className="size-3.5" />
                     {openOnHostLabel(detail.provider)}
                   </MenuItem>
-                  <MenuItem onClick={() => void writeTextToClipboard(detail.url)}>
+                  <MenuItem onClick={() => copyReference(detail.url, "PR link")}>
                     <LinkIcon className="size-3.5" />
                     Copy link
+                    <MenuShortcut>
+                      {shortcutLabelForCommand(keybindings, "thread.copyReference")}
+                    </MenuShortcut>
+                  </MenuItem>
+                  <MenuItem onClick={() => copyReference(`#${reference.number}`, "PR number")}>
+                    <CopyIcon className="size-3.5" />
+                    Copy PR number
+                    <MenuShortcut>
+                      {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
+                    </MenuShortcut>
                   </MenuItem>
                   {detail.state === "open" && can("close") ? (
                     <>
@@ -2202,12 +2218,22 @@ export function PullRequestDetailPanel({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <code className="min-w-0 max-w-[40%] shrink-0 truncate">
-                            {detail.baseBranch}
-                          </code>
+                          <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
+                            {isStackedPullRequest ? (
+                              <LayersIcon
+                                aria-label="Stacked pull request"
+                                className="size-3 shrink-0"
+                              />
+                            ) : null}
+                            <code className="min-w-0 truncate">{detail.baseBranch}</code>
+                          </span>
                         }
                       />
-                      <TooltipPopup side="top">{detail.baseBranch}</TooltipPopup>
+                      <TooltipPopup side="top">
+                        {isStackedPullRequest
+                          ? `Stacked on ${detail.baseBranch}`
+                          : detail.baseBranch}
+                      </TooltipPopup>
                     </Tooltip>
                     {freshness ? (
                       <PullRequestBaseFreshnessWarning
@@ -2377,11 +2403,21 @@ export function PullRequestDetailPanel({
                       <TooltipTrigger
                         render={
                           <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
+                            {isStackedPullRequest ? (
+                              <LayersIcon
+                                aria-label="Stacked pull request"
+                                className="size-3 shrink-0"
+                              />
+                            ) : null}
                             <code className="min-w-0 truncate">{detail.baseBranch}</code>
                           </span>
                         }
                       />
-                      <TooltipPopup side="top">{detail.baseBranch}</TooltipPopup>
+                      <TooltipPopup side="top">
+                        {isStackedPullRequest
+                          ? `Stacked on ${detail.baseBranch}`
+                          : detail.baseBranch}
+                      </TooltipPopup>
                     </Tooltip>
                     {freshness ? (
                       <PullRequestBaseFreshnessWarning
@@ -2447,7 +2483,7 @@ export function PullRequestDetailPanel({
               ))}
             </ToggleGroup>
             {tab === "summary" ? (
-              <span className="ml-auto inline-flex shrink-0 items-center gap-2">
+              <span className="ml-auto inline-flex shrink-0 items-center">
                 {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -2482,21 +2518,23 @@ export function PullRequestDetailPanel({
                         : "Approve workflows to run"}
                     </TooltipPopup>
                   </Tooltip>
-                ) : null}
-                <span
-                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-                >
-                  <PullRequestChecksPopover
-                    checks={detail.checks}
-                    checksState={checksState}
-                    ciRuns={detail.capabilities.ciRuns === true}
-                    environmentId={environmentId}
-                    reference={reference}
-                    threadRef={threadRef}
-                  />
-                  {checksSummary}
-                </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  >
+                    {checksState !== null ? (
+                      <PullRequestChecksPopover
+                        checks={detail.checks}
+                        checksState={checksState}
+                        threadRef={threadRef}
+                      />
+                    ) : (
+                      <CircleDotIcon aria-hidden className="size-3.5" />
+                    )}
+                    {checksSummary}
+                  </span>
+                )}
               </span>
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
@@ -2609,7 +2647,7 @@ export function PullRequestDetailPanel({
             error={detailQuery.error}
             refreshing={detailQuery.isPending}
             onRetry={refreshDetail}
-            {...(unavailableBrowserUrl ? { browserUrl: unavailableBrowserUrl } : {})}
+            {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
           <PullRequestMarkdownContext value={markdownContext}>
@@ -2764,20 +2802,5 @@ export function PullRequestDetailPanel({
         </AlertDialogPopup>
       </AlertDialog>
     </div>
-  );
-  return (
-    <PullRequestMentionProvider
-      key={JSON.stringify([
-        environmentId,
-        reference.projectId,
-        reference.repository,
-        reference.number,
-      ])}
-      environmentId={environmentId}
-      reference={reference}
-      detail={detail}
-    >
-      {content}
-    </PullRequestMentionProvider>
   );
 }

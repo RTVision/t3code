@@ -3,44 +3,43 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
-## Vim navigation
+## Composer controls
 
-Enable **Vim navigation** in **Settings → Keybindings**. The preset and its
-customizations are saved on this client and apply across connected environments.
-Every binding can be changed or disabled, including the keys used to enter and
-leave input. Expand **Customize Vim shortcuts** to change sequences, modes, or
-the pending-key guide and its timing. Server keybindings remain available where
-an active Vim binding does not override them.
+Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
+Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
+workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
+current checkout, a new worktree, and the previous worktree when available.
+Use `mod+shift+l` to reuse the previous worktree directly.
 
-The pending-key guide stays open until you choose a command, press `Esc`, or
-move focus. Sequence timeout applies to counts and shortcuts without the guide.
+In the model picker, press Left in an empty search field or Shift+Tab to reach
+the provider list. Use Up/Down to move and Enter to choose. Right returns to
+model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
+search. These provider shortcuts can also be changed in Settings.
 
-Existing threads open in Normal mode. Press `i` to write a prompt and `Esc` to
-return to navigation. `Ctrl+C` also leaves the composer unless text is selected
-for copying. New threads open ready to type; sending returns to navigation.
-This preset does not add Vim text editing inside prompts.
+These shortcuts run inside the focused web or desktop client. `mod` uses Command
+on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
+Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
+in Settings.
 
-Use `Space pt` to find projects and threads, `Space pf` for files, `Space pg` to
-search project files, and `Space pn` for a new thread. `Space h/l` switches
-threads. Pickers accept typing immediately; use `Ctrl+N/P` or arrows to move
-through results and `Enter` to select.
+## Copy pull request references
 
-`Ctrl+.` opens or hides the terminal. While typing in it, keys go to the shell.
-Press `Ctrl+\` followed by `Ctrl+N` to return to navigation while keeping the
-terminal visible, then `i` to resume terminal input. In Normal mode, `Space w`
-followed by `h/j/k/l` moves between panes, `s/v` splits the focused terminal,
-and `c` closes a terminal or panel. `Space tn` creates a terminal.
+With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
+to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
+Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
+or “Copy Number”. They copy the selected PR and leave terminal input alone.
 
-In conversations, `j/k` scroll, `Ctrl+D/U` move half a page, `gg/G` go to the
-start/end, and `]m/[m` move between messages. Counts such as `5j` work for
-movement. `/` searches user and assistant messages throughout the thread,
-loading older history in batches; `n/N` moves between matches. In long threads,
-choose **Load more history** to continue searching earlier messages. `gg` uses
-the same batches when loading the start of a thread. Close search to stop loading
-further history. Tool output and reasoning are excluded.
+## iPad
 
-`Space gd` opens the diff, where `]c/[c` moves between hunks. `Space ?` shows
-the active shortcuts. The pending-key guide reflects your custom mappings.
+With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
+displayed threads. The shortcuts follow the current list filters and order.
+`Cmd+K` opens the command palette to search commands, projects, and threads.
+Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
+choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
+to show only actions.
+
+In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
+also sends. To make Return insert a new line instead, change the Return key
+behavior in Settings → Keyboard.
 
 ## Edit the configuration file
 
