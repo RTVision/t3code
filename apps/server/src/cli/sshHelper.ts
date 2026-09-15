@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
+import { resolveSshRuntimePort } from "@t3tools/shared/sshRuntime";
 import * as Effect from "effect/Effect";
 import { Argument, Command } from "effect/unstable/cli";
 
@@ -95,24 +96,9 @@ const runtimePort = Command.make("runtime-port", {
     Effect.sync(() => {
       try {
         // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
-        const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
-          pid?: unknown;
-          port?: unknown;
-          origin?: unknown;
-        };
-        const pid = Number(runtime.pid);
-        const port = Number(runtime.port);
-        if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
-          process.exitCode = 1;
-          return;
-        }
-        const origin = new URL(String(runtime.origin ?? ""));
-        if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-          process.exitCode = 1;
-          return;
-        }
-        process.kill(pid, 0);
-        process.stdout.write(`${pid} ${port}`);
+        const runtime = resolveSshRuntimePort(JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")));
+        if (runtime === undefined) process.exitCode = 1;
+        else process.stdout.write(runtime);
       } catch {
         process.exitCode = 1;
       }

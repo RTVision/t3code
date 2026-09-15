@@ -11,6 +11,7 @@ import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import { resolveSshRuntimePort } from "@t3tools/shared/sshRuntime";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -663,18 +664,9 @@ resolve_default_runtime_port() {
 const fs = require("node:fs");
 const runtimePath = process.argv[2] ?? "";
 try {
-	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-	  const pid = Number(runtime.pid);
-	  const port = Number(runtime.port);
-	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
-	    process.exit(1);
-	  }
-  const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || (runtime.launcherPid === undefined && !["127.0.0.1", "localhost"].includes(origin.hostname))) {
-    process.exit(1);
-  }
-  process.kill(runtime.launcherPid ?? pid, 0);
-  process.stdout.write(\`\${pid} \${port}\`);
+  const runtime = (${resolveSshRuntimePort.toString()})(JSON.parse(fs.readFileSync(runtimePath, "utf8")));
+  if (runtime === undefined) process.exit(1);
+  process.stdout.write(runtime);
 } catch {
   process.exit(1);
 }
@@ -684,6 +676,12 @@ REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" 2>/dev/null || true)"
+# Service configuration outlives the runtime record during stops and startup.
+# Never open the same home in a standalone server while a daemon owns it.
+if [ -z "$SERVICE_RUNTIME_INFO" ] && { [ -e "$DEFAULT_SERVER_HOME/runtime/service-state.json" ] || [ -e "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" ]; }; then
+  printf 'The T3 daemon is configured for %s but is unavailable. Start or repair the service on the remote host, then reconnect.\\n' "$DEFAULT_SERVER_HOME" >&2
+  exit 1
+fi
 DEFAULT_RUNTIME_INFO="$SERVICE_RUNTIME_INFO"
 if [ -z "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
@@ -694,7 +692,7 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ] && { [ "$REMOTE_MANAGED" != "managed" ] || [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; }; then
+if [ -n "$DEFAULT_REMOTE_PORT" ] && { [ -n "$SERVICE_RUNTIME_INFO" ] || [ "$REMOTE_MANAGED" != "managed" ] || [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; }; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ] && [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; then

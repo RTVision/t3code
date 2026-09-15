@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sshRuntime": {
+      "types": "./src/sshRuntime.ts",
+      "import": "./src/sshRuntime.ts"
+    },
     "./giteaAttachments": {
       "types": "./src/giteaAttachments.ts",
       "import": "./src/giteaAttachments.ts"

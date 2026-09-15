@@ -30,9 +30,12 @@ listed below. To repair a running systemd or launchd service definition, use
 `service install`. Explicit downgrades also use that native installation path;
 externally packaged services follow their package's downgrade procedure.
 
-SSH keeps an external daemon selected while it is unavailable. To switch back to
-an SSH-launched server after removing the daemon, disconnect the SSH environment
-in Settings → Connections, then connect again.
+SSH uses the configured daemon and reports when it is unavailable. It will not
+start a second server in the same T3 home. To switch back to an SSH-launched
+server after uninstalling the daemon, disconnect the SSH environment in
+Settings → Connections, then connect again. If you removed an externally
+packaged service, also remove `runtime/service-state.json` and
+`runtime/server-runtime.json` from its T3 home after the service has stopped.
 
 Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
