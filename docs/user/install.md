@@ -38,6 +38,11 @@ there. Install and authenticate provider CLIs inside that distro. T3 Code instal
 matching server runtime there automatically; the first launch after an app
 update can take longer.
 
+The bundled Linux runtime needs `libatomic.so.1`. On Debian or Ubuntu, install
+it inside the WSL distro with `sudo apt-get update && sudo apt-get install libatomic1`.
+If a startup failure switched the app to Windows, re-enable the WSL backend in
+**Settings → Connections** after installing the library.
+
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:
