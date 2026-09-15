@@ -13,6 +13,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
+import * as GiteaCli from "./GiteaCli.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
@@ -94,6 +96,16 @@ function makeRegistry(input: {
         processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(GiteaCli.GiteaCli)({
+          baseUrl: Option.some("https://forge.example.test"),
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("forge.example.test"),
+            detail: Option.none(),
+          }),
+        }),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
@@ -114,6 +126,29 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("refines configured Gitea remotes without probing a CLI", () => {
+  const run = () => Effect.die("Gitea host refinement must not spawn a CLI");
+  return Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@forge.example.test:team/repo.git" }],
+      process: { run },
+    });
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.strictEqual(handle.provider.kind, "gitea");
+    assert.strictEqual(handle.context?.provider.baseUrl, "https://forge.example.test");
+  });
+});
+
+it.effect("does not claim unrelated unknown hosts as Gitea", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@elsewhere.test:team/repo.git" }],
+    });
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    assert.strictEqual(handle.provider.kind, "unknown");
   }),
 );
 

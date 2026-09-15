@@ -1212,8 +1212,9 @@ const buildAppUnderTest = (options?: {
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provide(Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.none() })),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provide(VcsProcess.layer),
-      Layer.provide(layerConfig),
+      // Folded into one step: `pipe` accepts at most twenty operators and the
+      // merged layer list reached twenty-one. Same wiring as two provides.
+      Layer.provide(VcsProcess.layer.pipe(Layer.provideMerge(layerConfig))),
     );
 
     yield* Layer.build(appLayer);

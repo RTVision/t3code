@@ -17,6 +17,49 @@ import {
 } from "./SourceControlProviderDiscovery.ts";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
+interface GitLabRepositoryRequest {
+  readonly nameWithOwner: string;
+  readonly selector: string;
+}
+
+function repositoryFromRemoteUrl(
+  remoteUrl: string | undefined,
+  baseUrl: string | undefined,
+): GitLabRepositoryRequest | undefined {
+  const trimmed = remoteUrl?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const scpPath = /^[^@\s/:]+@[^:\s]+:(.+)$/u.exec(trimmed)?.[1];
+  let path = scpPath;
+  if (path === undefined) {
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "ssh:") {
+        return undefined;
+      }
+      path = url.pathname;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const repository = path
+    .replace(/^\/+|\/+$/gu, "")
+    .replace(/\.git$/iu, "")
+    .trim();
+  if (!repository.includes("/")) {
+    return undefined;
+  }
+
+  const host = baseUrl?.trim().replace(/\/+$/gu, "");
+  return {
+    nameWithOwner: repository,
+    selector: host ? `${host}/${repository}` : repository,
+  };
+}
+
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({ title: Schema.String, description: Schema.NullOr(Schema.String) }),
@@ -166,11 +209,18 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = repositoryFromRemoteUrl(
+        input.context?.remoteUrl,
+        input.context?.provider.baseUrl,
+      );
       return gitlab
         .listMergeRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source ? { source } : {}),
+          ...(repository
+            ? { repository: repository.nameWithOwner, repositoryUrl: repository.selector }
+            : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
@@ -192,24 +242,40 @@ export const make = Effect.gen(function* () {
           ),
         );
     },
-    getChangeRequest: (input) =>
-      gitlab.getMergeRequest(input).pipe(
-        Effect.map(toChangeRequest),
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "gitlab",
-              operation: "getChangeRequest",
-              command: error.command,
-              cwd: input.cwd,
-              reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.reference,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
-        ),
-      ),
+    getChangeRequest: (input) => {
+      const repository = repositoryFromRemoteUrl(
+        input.context?.remoteUrl,
+        input.context?.provider.baseUrl,
+      );
+      return gitlab
+        .getMergeRequest({
+          cwd: input.cwd,
+          reference: input.reference,
+          ...(repository
+            ? {
+                repository: repository.nameWithOwner,
+                repositoryUrl: repository.selector,
+              }
+            : {}),
+        })
+        .pipe(
+          Effect.map(toChangeRequest),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "gitlab",
+                operation: "getChangeRequest",
+                command: error.command,
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.reference,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
+    },
     createChangeRequest: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab
