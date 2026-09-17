@@ -6,15 +6,11 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ExternalLinkIcon,
   FileCode2Icon,
   GitCommitHorizontalIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
   MessageSquareIcon,
   PencilIcon,
 } from "lucide-react";
@@ -52,10 +48,11 @@ import {
   pullRequestReviewOutcomeStaleLabel,
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
-  readonly canReact: (event: PullRequestTimelineEvent) => boolean;
+  readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
@@ -220,7 +217,7 @@ function ConversationCard({
   return (
     <article className="group py-2">
       <div className="px-2">
-        <div className="flex min-w-0 items-start gap-2">
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
               <ActorName actor={event.actor} />
@@ -248,6 +245,17 @@ function ConversationCard({
               <PencilIcon className="size-3" />
             </Button>
           ) : null}
+          {reactions.canReact || event.reactions.length > 0 ? (
+            <PullRequestReactionBar
+              className="ml-auto justify-end"
+              reactions={event.reactions}
+              canReact={reactions.canReact}
+              subjectId={event.id}
+              environmentId={reactions.environmentId}
+              reference={reactions.reference}
+              onRefresh={reactions.onRefresh}
+            />
+          ) : null}
           <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
       </div>
@@ -272,18 +280,6 @@ function ConversationCard({
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
-          />
-        </div>
-      ) : null}
-      {reactions.canReact(event) || event.reactions.length > 0 ? (
-        <div className="px-2 pb-2">
-          <PullRequestReactionBar
-            reactions={event.reactions}
-            canReact={reactions.canReact(event)}
-            subjectId={event.id}
-            environmentId={reactions.environmentId}
-            reference={reactions.reference}
-            onRefresh={reactions.onRefresh}
           />
         </div>
       ) : null}
@@ -420,16 +416,16 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
   const presentation =
     event.kind === "opened"
       ? {
-          icon: <GitPullRequestIcon className="size-3.5" />,
+          icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
           label: "Pull request opened",
         }
       : event.kind === "merged"
         ? {
-            icon: <GitMergeIcon className="size-3.5" />,
+            icon: <PullRequestGlyph.merged className="size-3.5" />,
             label: "Pull request merged",
           }
         : {
-            icon: <GitPullRequestClosedIcon className="size-3.5" />,
+            icon: <PullRequestGlyph.closed className="size-3.5" />,
             label: "Pull request closed",
           };
 
@@ -472,14 +468,14 @@ function ReviewVerdictEvent({
 }) {
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
-      {/* Pinned rather than centred: this row grows with a body and a reaction bar, and a
-          centred avatar drifts down beside them instead of sitting by the name. */}
+      {/* Pinned rather than centred: this row grows with a body, and a
+          centred avatar drifts down beside it instead of sitting by the name. */}
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-6"
         fallback={<PullRequestReviewOutcomeIcon outcome={outcome} />}
       />
-      <div className="flex min-w-0 items-start gap-2 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-start gap-2 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
@@ -507,9 +503,6 @@ function ReviewVerdictEvent({
               <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
             </Tooltip>
           </div>
-          {/* The reaction bar rides this line rather than taking one of its own. Its add button
-              is invisible until hovered but still occupies `h-6`, and under a verdict — usually a
-              single line with no body — a row of that reserved on its own reads as a hole. */}
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <PullRequestMetaLine className="flex-wrap text-[11px] text-muted-foreground">
               <span>{formatRelativeTimeLabel(event.at)}</span>
@@ -520,31 +513,32 @@ function ReviewVerdictEvent({
                 </span>
               ) : null}
             </PullRequestMetaLine>
-            {reactions.canReact(event) || event.reactions.length > 0 ? (
-              <PullRequestReactionBar
-                reactions={event.reactions}
-                canReact={reactions.canReact(event)}
-                subjectId={event.id}
-                environmentId={reactions.environmentId}
-                reference={reactions.reference}
-                onRefresh={reactions.onRefresh}
-              />
-            ) : null}
           </div>
-          {/* An approval usually carries no words. When it does they are the review, so they stay
-              visible rather than being folded away with the ordinary conversation. */}
-          {event.body ? (
-            <TimelineBody
-              body={event.body}
-              markdown={event.markdown}
-              cwd={cwd}
-              environmentId={reactions.environmentId}
-              threadRef={reactions.threadRef}
-            />
-          ) : null}
         </div>
+        {reactions.canReact || event.reactions.length > 0 ? (
+          <PullRequestReactionBar
+            className="ml-auto justify-end"
+            reactions={event.reactions}
+            canReact={reactions.canReact}
+            subjectId={event.id}
+            environmentId={reactions.environmentId}
+            reference={reactions.reference}
+            onRefresh={reactions.onRefresh}
+          />
+        ) : null}
         <OpenOnHostButton url={event.url} onOpen={onOpen} />
       </div>
+      {/* An approval usually carries no words. When it does they are the review, so they stay
+          visible rather than being folded away with the ordinary conversation. */}
+      {event.body ? (
+        <TimelineBody
+          body={event.body}
+          markdown={event.markdown}
+          cwd={cwd}
+          environmentId={reactions.environmentId}
+          threadRef={reactions.threadRef}
+        />
+      ) : null}
     </div>
   );
 }
@@ -569,15 +563,7 @@ export function PullRequestTimelineTab({
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
-    canReact: (event) =>
-      pullRequestCanReact(
-        detail.capabilities,
-        event.kind === "review"
-          ? "review"
-          : event.id.startsWith("review-comment:")
-            ? "review-comment"
-            : "issue-comment",
-      ),
+    canReact: detail.capabilities.reactions === true,
     environmentId,
     threadRef,
     reference,
@@ -625,7 +611,7 @@ export function PullRequestTimelineTab({
                   key={event.id}
                   event={event}
                   outcome={outcome}
-                  stale={event.reviewStale ?? isPullRequestVerdictStale(event.at, newestCommitAt)}
+                  stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
                   reactions={reactions}
@@ -638,7 +624,7 @@ export function PullRequestTimelineTab({
 
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-            <GitPullRequestIcon className="mb-2 size-5" />
+            <PullRequestGlyph.pullRequest className="mb-2 size-5" />
             <p className="text-xs">No activity yet.</p>
           </div>
         ) : null}

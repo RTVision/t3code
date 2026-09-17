@@ -1,10 +1,10 @@
-import { onAppCommand } from "../vim/commandBus";
-import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { ThreadRouteView } from "../components/ThreadRouteView";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
@@ -58,18 +58,16 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
-      if (event.defaultPrevented && !requestedCommand) return;
-      const command =
-        requestedCommand ??
-        resolveShortcutCommand(event, keybindings, {
-          context: {
-            terminalFocus: isTerminalFocused(),
-            terminalOpen,
-            previewFocus: isPreviewFocused(),
-            previewOpen,
-          },
-        });
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen,
+        },
+      });
 
       if (isCommandPaletteOpen()) {
         return;
@@ -156,10 +154,8 @@ function ChatRouteGlobalShortcuts() {
       }
     };
 
-    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
-      unsubscribeCommand();
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
@@ -181,10 +177,16 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  // Both thread routes render here, not in their own leaf components, so the
+  // draft-to-thread promotion keeps one ChatView mounted across the swap.
+  const threadTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
   return (
     <>
       <ChatRouteGlobalShortcuts />
-      <Outlet />
+      {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
     </>
   );
 }

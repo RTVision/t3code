@@ -14,6 +14,7 @@ import {
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  type PinnedRuntimeProgress,
 } from "./pinnedRuntime.ts";
 
 // Every install fetches the release archive, checks it against SHA256SUMS,
@@ -97,92 +98,124 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect.each(["valid", "wrong-package", "wrong-version", "preflight-blocked"] as const)(
-    "validates a staged npm runtime before publication: %s",
-    (state) =>
+  it.effect.each([true, false])(
+    "reports bytes before completion, then verifies and extracts (known size: %s)",
+    (knownSize) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
-        const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux", "npm");
-        const requests: string[] = [];
-        let validations = 0;
-        const result = yield* ensurePinnedRuntimeInstalled({
-          distribution: "npm",
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-progress-" });
+        const firstChunk = yield* Deferred.make<void>();
+        let archiveController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const checksums = yield* validChecksums;
+        const progress: PinnedRuntimeProgress[] = [];
+        const client = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/SHA256SUMS")
+                ? new Response(checksums)
+                : new Response(
+                    new ReadableStream({
+                      start(controller) {
+                        archiveController = controller;
+                        controller.enqueue(archiveBytes.slice(0, 4));
+                      },
+                    }),
+                    { headers: knownSize ? { "content-length": String(archiveBytes.length) } : {} },
+                  ),
+            ),
+          ),
+        );
+        const install = yield* ensurePinnedRuntimeInstalled({
           baseDir,
           version,
           fs,
           path,
           platform: "linux",
           arch: "x64",
-          httpClient: releaseHttpClient("", requests),
-          runner: ProcessRunner.ProcessRunner.of({
-            run: (input) =>
-              Effect.gen(function* () {
-                assert.equal(input.command, "npm");
-                assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
-                assert.include(input.args, "https://npm-registry.rtvision.com/");
-                const staging = input.args[input.args.indexOf("--prefix") + 1]!;
-                const packageDir = path.join(staging, "node_modules/t3");
-                yield* fs
-                  .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(
-                    path.join(packageDir, "package.json"),
-                    state === "wrong-package"
-                      ? '{"name":"t3","version":"1.2.3"}'
-                      : state === "wrong-version"
-                        ? '{"name":"@rtvision/t3","version":"1.2.2"}'
-                        : '{"name":"@rtvision/t3","version":"1.2.3"}',
-                  )
-                  .pipe(Effect.orDie);
-                return {
-                  stdout: "",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-          validate: (staged) =>
-            Effect.gen(function* () {
-              validations++;
-              assert.isFalse(yield* fs.exists(finalPaths.versionDir).pipe(Effect.orDie));
-              assert.isFalse(yield* fs.exists(staged.sentinelPath).pipe(Effect.orDie));
-              assert.equal(
-                yield* fs.readFileString(staged.entryPath).pipe(Effect.orDie),
-                "runtime",
-              );
-              if (state === "preflight-blocked")
-                return yield* new PinnedRuntimeInstallError({ step: "preflight" });
-            }),
-        }).pipe(Effect.result);
-        assert.deepEqual(requests, []);
-        assert.equal(validations, state === "valid" || state === "preflight-blocked" ? 1 : 0);
-        assert.equal(result._tag, state === "valid" ? "Success" : "Failure");
-        assert.equal(yield* fs.exists(finalPaths.versionDir), state === "valid");
-        assert.deepEqual(
-          (yield* fs.readDirectory(path.dirname(finalPaths.versionDir))).filter((entry) =>
-            entry.startsWith(".staging-"),
-          ),
-          [],
-        );
-        if (state === "valid") {
-          assert.deepEqual(pinnedRuntimeCommand(finalPaths, "/usr/bin/node"), {
-            command: "/usr/bin/node",
-            args: [finalPaths.entryPath],
-          });
-          assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), `${version}\n`);
-        }
+          httpClient: client,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+          onProgress: (event) => {
+            progress.push(event);
+            if (event.stage === "download" && event.received === 4) {
+              Deferred.doneUnsafe(firstChunk, Effect.void);
+            }
+          },
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(firstChunk);
+        assert.deepEqual(progress.at(-1), {
+          stage: "download",
+          received: 4,
+          total: knownSize ? archiveBytes.length : undefined,
+        });
+        assert.isFalse(progress.some((event) => event.stage === "extract"));
+        assert.isDefined(archiveController);
+        archiveController!.enqueue(archiveBytes.slice(4));
+        archiveController!.close();
+        const installed = yield* Fiber.join(install);
+        assert.deepEqual(progress.slice(-4), [
+          { stage: "download", received: archiveBytes.length, total: archiveBytes.length },
+          { stage: "verify" },
+          { stage: "extract" },
+          { stage: "validate" },
+        ]);
+        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
       }),
+  );
+
+  it.effect("cleans up an interrupted download without reporting verification or extraction", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-progress-failed-" });
+      const checksums = yield* validChecksums;
+      const progress: PinnedRuntimeProgress[] = [];
+      let cancelled = false;
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.endsWith("/SHA256SUMS")
+              ? new Response(checksums)
+              : new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      controller.enqueue(archiveBytes.slice(0, 4));
+                    },
+                    cancel() {
+                      cancelled = true;
+                    },
+                  }),
+                ),
+          ),
+        ),
+      );
+      const firstChunk = yield* Deferred.make<void>();
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: client,
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate an interrupted archive"),
+        onProgress: (event) => {
+          progress.push(event);
+          if (event.stage === "download" && event.received === 4)
+            Deferred.doneUnsafe(firstChunk, Effect.void);
+        },
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstChunk);
+      yield* Fiber.interrupt(install);
+      assert.deepEqual(progress.at(-1), { stage: "download", received: 4, total: undefined });
+      assert.isTrue(progress.every((event) => event.stage === "download"));
+      assert.isTrue(cancelled);
+      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+    }),
   );
 
   it.effect("refuses an archive whose checksum does not match the release", () =>
@@ -268,62 +301,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         ),
         [],
       );
-    }),
-  );
-
-  it.effect("keeps the installed archive if replacing it with npm fails validation", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-switch-" });
-      const installed = pinnedRuntimePaths(path, baseDir, version, "linux");
-      yield* fs.makeDirectory(installed.versionDir, { recursive: true });
-      yield* fs.writeFileString(installed.entryPath, "working archive");
-      yield* fs.writeFileString(installed.sentinelPath, `${version}\n`);
-      yield* ensurePinnedRuntimeInstalled({
-        distribution: "npm",
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
-        arch: "x64",
-        httpClient: releaseHttpClient(""),
-        runner: ProcessRunner.ProcessRunner.of({
-          run: (input) =>
-            Effect.gen(function* () {
-              const staging = input.args[input.args.indexOf("--prefix") + 1]!;
-              const pkg = path.join(staging, "node_modules/t3");
-              yield* fs
-                .makeDirectory(path.join(pkg, "dist"), { recursive: true })
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(path.join(pkg, "dist/bin.mjs"), "broken replacement")
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(
-                  path.join(pkg, "package.json"),
-                  '{"name":"@rtvision/t3","version":"1.2.3"}',
-                )
-                .pipe(Effect.orDie);
-              return {
-                stdout: "",
-                stderr: "",
-                code: ChildProcessSpawner.ExitCode(0),
-                timedOut: false,
-                stdoutTruncated: false,
-                stderrTruncated: false,
-                stdoutInvalidUtf8: false,
-                stderrInvalidUtf8: false,
-              };
-            }),
-        }),
-        validate: () =>
-          Effect.fail(new PinnedRuntimeInstallError({ step: "replacement preflight" })),
-      }).pipe(Effect.flip);
-      assert.equal(yield* fs.readFileString(installed.entryPath), "working archive");
-      assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-      assert.deepEqual(yield* fs.readDirectory(path.dirname(installed.versionDir)), [version]);
     }),
   );
 

@@ -39,6 +39,8 @@ import { dedupeChecks } from "./pullRequestChecks.ts";
  * release that adds a conclusion or a review state must not fail the whole payload.
  */
 const RawActorSchema = Schema.Struct({
+  __typename: Schema.optional(Schema.String),
+  is_bot: Schema.optional(Schema.Boolean),
   /**
    * Optional because a review can be requested from a team or a mannequin, which the query has
    * no fragment for and GraphQL answers with an empty object. A reviewer with no login names
@@ -491,7 +493,7 @@ const RawReviewThreadsSchema = Schema.Struct({
           ),
         ),
         /**
-         * Reviews for their reactions alone: the words and the verdict arrive with
+         * Reviews for their reactions and actor identity: the words and the verdict arrive with
          * `gh pr view --json reviews`, which reports no reaction of any kind.
          */
         reviews: Schema.optional(
@@ -500,6 +502,7 @@ const RawReviewThreadsSchema = Schema.Struct({
               nodes: Schema.Array(
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
+                  author: Schema.optional(Schema.NullOr(RawActorSchema)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -687,7 +690,7 @@ export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = fals
         number
         title
         url
-        author { login avatarUrl ... on User { name } }
+        author { __typename login avatarUrl ... on User { name } }
         headRefName
         baseRefName
         state
@@ -747,28 +750,28 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
       viewerCanUpdate
       viewerDidAuthor
-      author { login avatarUrl }
+      author { __typename login avatarUrl }
       ${REACTION_GROUPS_FIELDS}
       comments(first: ${GRAPHQL_PAGE_SIZE}) {
-        nodes { id author { login avatarUrl } ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
       }
-      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id ${REACTION_GROUPS_FIELDS} } }
+      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
             ... on User { login name avatarUrl }
-            ... on Bot { login avatarUrl }
+            ... on Bot { __typename login avatarUrl }
           }
         }
       }
       latestReviews(first: 50) {
-        nodes { author { login avatarUrl } }
+        nodes { author { __typename login avatarUrl } }
       }
       reviewDismissals: timelineItems(itemTypes: [REVIEW_DISMISSED_EVENT], first: ${GRAPHQL_PAGE_SIZE}) {
         pageInfo { hasNextPage endCursor }
@@ -804,7 +807,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -1180,7 +1183,12 @@ function toActor(raw: Schema.Schema.Type<typeof RawActorSchema> | null | undefin
   const login = trimmed(raw?.login);
   return login === null
     ? null
-    : { login, name: trimmed(raw?.name), avatarUrl: trimmed(raw?.avatarUrl) };
+    : {
+        login,
+        name: trimmed(raw?.name),
+        avatarUrl: trimmed(raw?.avatarUrl),
+        ...(raw?.__typename === "Bot" || raw?.is_bot === true ? { isBot: true } : {}),
+      };
 }
 
 function toCommitActor(
@@ -1804,6 +1812,7 @@ export interface GitHubReviewThreadComments {
    * so an app's avatar arrives the same way a person's does.
    */
   readonly avatarsByLogin: ReadonlyMap<string, string>;
+  readonly botLogins: ReadonlySet<string>;
   /** Per-commit line counts carried by the same bounded pull-request query. */
   readonly commitStats: ReadonlyMap<
     string,
@@ -1842,6 +1851,7 @@ export interface GitHubReviewThreadPage {
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
+  readonly botLogins: ReadonlySet<string>;
   readonly commitStats: ReadonlyMap<
     string,
     { readonly additions: number; readonly deletions: number }
@@ -1979,9 +1989,11 @@ export function decodeReviewThreadsJson(
   });
   const pullRequest = decoded.success.data.repository.pullRequest;
   const avatarsByLogin = new Map<string, string>();
+  const botLogins = new Set<string>();
   for (const raw of [
     pullRequest.author,
     ...(pullRequest.comments?.nodes ?? []).map((node) => node.author),
+    ...(pullRequest.reviews?.nodes ?? []).map((node) => node.author),
     ...(pullRequest.reviewRequests?.nodes ?? []).map((node) => node.requestedReviewer),
     ...(pullRequest.latestReviews?.nodes ?? []).map((node) => node.author),
     ...threads.nodes.flatMap((thread) => thread.comments.nodes.map((comment) => comment.author)),
@@ -1989,6 +2001,7 @@ export function decodeReviewThreadsJson(
     const login = trimmed(raw?.login);
     const avatarUrl = trimmed(raw?.avatarUrl);
     if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
+    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
   }
   const reviewers = new Map<string, PullRequestActor>();
   for (const raw of [
@@ -2047,6 +2060,7 @@ export function decodeReviewThreadsJson(
     reactionsById,
     reviewers: [...reviewers.values()],
     avatarsByLogin,
+    botLogins,
     commitStats,
     commits,
     viewer: toPullRequestViewerFields(pullRequest),

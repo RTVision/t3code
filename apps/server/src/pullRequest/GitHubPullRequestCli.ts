@@ -1165,6 +1165,7 @@ export const make = Effect.gen(function* () {
     captureVerifiedCredential(input).pipe(
       Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
         use({ accountId, viewer, credentialFingerprint }).pipe(
+          Effect.provideService(SourceControlRateLimit.CredentialScope, credentialFingerprint),
           Effect.provideService(GitHubCli.PinnedGitHubCredential, {
             host,
             token,
@@ -2152,6 +2153,7 @@ export const make = Effect.gen(function* () {
           });
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
+        const botLogins = new Set<string>();
         const commitStats = new Map<
           string,
           { readonly additions: number; readonly deletions: number }
@@ -2168,6 +2170,7 @@ export const make = Effect.gen(function* () {
         do {
           const read: GitHubReviewThreadPage = yield* threadPage(cursor);
           entries.push(...read.threads);
+          for (const login of read.botLogins) botLogins.add(login);
           for (const [login, avatarUrl] of read.avatarsByLogin)
             avatarsByLogin.set(login, avatarUrl);
           // The roster, the commits and the viewer's standing travel with every page, and the
@@ -2233,6 +2236,7 @@ export const make = Effect.gen(function* () {
           reactionsById,
           reviewers,
           avatarsByLogin,
+          botLogins,
           commitStats,
           commits,
           viewer,

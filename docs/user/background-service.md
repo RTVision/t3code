@@ -5,55 +5,44 @@ to keep a terminal open.
 
 ## Manage the service
 
-Run these commands on the machine that will host T3 Code:
+Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then
+run these commands on the machine that will host T3 Code:
 
-| Task                            | Command                                                                                   |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| Install and start               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service install`   |
-| Inspect status and log location | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service status`    |
-| Update the running server       | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
-| Stop and remove from startup    | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service uninstall` |
+| Task                            | Command                |
+| ------------------------------- | ---------------------- |
+| Install and start               | `t3 service install`   |
+| Inspect status and log location | `t3 service status`    |
+| Move to a newer release         | `t3 update`            |
+| Restart                         | `t3 service restart`   |
+| Stop and remove from startup    | `t3 service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
+Running `t3 service install` again repairs a service that `t3 service status`
+reports as broken.
 
-Install and update use the version of the CLI you invoke. Replace `latest` with
-an exact version, such as `0.0.51`, to pin one. An older CLI refuses to replace a
-newer service unless you explicitly add `--allow-downgrade`.
-
-The Update button and `service update` ask a running daemon to update through its
-T3 service launcher, preserving the service's environment. This also works with
-an externally installed launcher service, such as an OpenRC package. Run the CLI
-as the service user, with `--base-dir` if it uses a custom T3 home.
-
-Installation, removal, and service-manager repairs still use the platform support
-listed below. To repair a running systemd or launchd service definition, use
-`service install`. Explicit downgrades also use that native installation path;
-externally packaged services follow their package's downgrade procedure.
-
-SSH uses the configured daemon and reports when it is unavailable. It will not
-start a second server in the same T3 home. To switch back to an SSH-launched
-server after uninstalling the daemon, disconnect the SSH environment in
-Settings → Connections, then connect again. If you removed an externally
-packaged service or uninstalled with an older CLI, also remove `runtime/service-state.json` and
-`runtime/server-runtime.json` from its T3 home after the service has stopped.
-
-Updating restarts the server. Finish active work first, and wait for any remote
-update already in progress. To match a remote client's version, follow
+`t3 update` downloads the newest release on your channel and switches `t3`
+and the service to it. Restarting interrupts running agent turns, terminals,
+and remote clients, so it asks first; answer no and the service keeps running
+the old version until you run `t3 service restart`. Pass `--yes` from a
+script. A server you started by hand is left running; stop and start it again
+to pick up the new version. Wait for any remote update already in progress
+before updating; to match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
-Node/npm installations need Node.js and npm available to the service user for
-updates. Standalone CLI archives are available from
-[RTVision GitHub Releases](https://github.com/RTVision/t3code/releases); extract
-the complete archive to keep its runtime files together. Standalone Linux builds
-require glibc. Use the npm package on Alpine.
+Pass an exact version (`t3 update 0.0.42`) to pin one, `--channel nightly` to
+switch trains, or `--allow-downgrade` to move backwards. `preview` is a
+maintainers' test train: its builds can be broken and are never offered as
+updates, so the installer and `t3 update` ask for confirmation before
+installing one.
 
-Standalone services download their updates as release archives. Node services
-continue to install the `@rtvision/t3` npm package. Both use the service launcher
-to validate the replacement before switching the running server.
+`t3 uninstall` removes the background service, the `t3` launcher, and the
+downloaded versions after showing you the list and asking once. Your projects,
+threads, and settings under `~/.t3/userdata` are kept. Pass `--yes` from a
+script.
 
 ## Platform support
 
-The built-in Linux installer needs systemd user services. Setup enables lingering so T3 Code starts at
+Linux needs systemd user services. Setup enables lingering so T3 Code starts at
 boot and keeps running after logout. If this needs administrator permission,
 setup prints a recovery command before changing the service.
 
@@ -100,7 +89,7 @@ that session open.
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or
-Downloads, it may need Full Disk Access for the Node executable listed in
+Downloads, it may need Full Disk Access for the `t3` executable listed in
 `ProgramArguments` in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
 

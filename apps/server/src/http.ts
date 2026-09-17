@@ -29,9 +29,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
-import * as GiteaCli from "./sourceControl/GiteaCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
-import * as GiteaAttachment from "./sourceControl/GiteaAttachment.ts";
+import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -394,10 +392,17 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
-    if (asset.kind === "source-control-image") {
-      return yield* GiteaAttachment.imageResponse(asset.url).pipe(
-        Effect.provide(Layer.mergeAll(GiteaCli.layer, ForgejoCli.layer)),
-        Effect.orElseSucceed(() => HttpServerResponse.text("Image unavailable", { status: 502 })),
+    if (asset.kind === "github-media") {
+      return yield* githubMediaResponse(asset, request.headers).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+        ),
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.empty({
+            status: 502,
+            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+          }),
+        ),
       );
     }
     return yield* assetFileResponse(

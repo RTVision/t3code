@@ -2,19 +2,19 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
-import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
-import * as GiteaCli from "../sourceControl/GiteaCli.ts";
-import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -27,6 +27,8 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.t
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import { githubMediaResponse } from "./GitHubMediaFetch.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -39,7 +41,6 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(
   NodeHttpPlatform.layer,
   configLayer,
-  Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.some("https://forge.test") }),
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -50,21 +51,52 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
-  it.effect("signs a Gitea image URL for one asset and expires it", () =>
-    Effect.gen(function* () {
-      const url = "https://forge.test/attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83";
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "source-control-image", provider: "gitea", url },
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const token = suffix.slice(0, suffix.indexOf("/"));
-      expect(yield* resolveAsset(token, "image")).toEqual({ kind: "source-control-image", url });
-      expect(yield* resolveAsset(token, "other-image")).toBeNull();
-      expect(yield* resolveAsset(`${token}tampered`, "image")).toBeNull();
-      yield* TestClock.adjust("2 hours");
-      expect(yield* resolveAsset(token, "image")).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
-  );
+  it.effect("loads private media immediately after login and reuses the found credential", () => {
+    let lookups = 0;
+    const authorizations: Array<string | undefined> = [];
+    return Effect.gen(function* () {
+      const asset = {
+        url: "https://raw.githubusercontent.com/owner/repo/main/shot.png",
+        cwd: "/repo",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+      expect((yield* githubMediaResponse(asset, {})).status).toBe(404);
+      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
+      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
+      expect(lookups).toBe(2);
+      expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubCli.GitHubCli)({
+          execute: () =>
+            Effect.sync(() => ({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: ++lookups === 1 ? "" : "signed-in",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            })),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          authorizations.push(request.headers.authorization);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(null, {
+                status: request.headers.authorization ? 200 : 404,
+                headers: { "content-type": "image/png" },
+              }),
+            ),
+          );
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1078,6 +1110,62 @@ describe("AssetAccess", () => {
       expect(error.message).toBe("Failed to resolve project favicon.");
       expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("serves GitHub-hosted pull request media through the repository's credential", () =>
+    Effect.gen(function* () {
+      const resolve = (relativeUrl: string) => {
+        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      };
+      const issue = (url: string) =>
+        issueAssetUrl({ resource: { _tag: "github-media", cwd: "/repo", url } });
+
+      const attachment = yield* issue(
+        "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+      );
+      expect(attachment.relativeUrl.endsWith("/1a1842fb-6383-492f-873c-57aa0033fa6c")).toBe(true);
+      expect(yield* resolve(attachment.relativeUrl)).toEqual({
+        kind: "github-media",
+        url: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+        cwd: "/repo",
+        // The signed URL's own expiry, which is how long a client may keep the bytes.
+        expiresAt: attachment.expiresAt,
+      });
+
+      // A `blob` link addresses the page; only the raw host answers a credential with bytes.
+      const committed = yield* issue("https://github.com/owner/repo/blob/main/docs/shot.png");
+      expect(yield* resolve(committed.relativeUrl)).toMatchObject({
+        url: "https://raw.githubusercontent.com/owner/repo/main/docs/shot.png",
+      });
+
+      // The pre-`user-attachments` form, Git LFS bytes, and a name no `decodeURIComponent`
+      // accepts all arrive from real bodies.
+      const legacy = yield* issue("https://github.com/owner/repo/assets/45952064/1a1842fb");
+      expect(yield* resolve(legacy.relativeUrl)).toMatchObject({
+        url: "https://github.com/owner/repo/assets/45952064/1a1842fb",
+      });
+      const lfs = yield* issue("https://media.githubusercontent.com/media/owner/repo/main/a.mp4");
+      expect(yield* resolve(lfs.relativeUrl)).toMatchObject({
+        url: "https://media.githubusercontent.com/media/owner/repo/main/a.mp4",
+      });
+      const awkward = yield* issue("https://raw.githubusercontent.com/o/r/main/100%.png");
+      expect(awkward.relativeUrl.endsWith("/100%25.png")).toBe(true);
+
+      for (const url of [
+        "https://example.com/shot.png",
+        "https://example.com/shot.png?token=private-media-token",
+        "http://github.com/user-attachments/assets/1a1842fb",
+        "https://github.com/owner/repo/pull/1",
+        "https://github.com/owner/repo/blob/main/",
+      ]) {
+        const error = yield* issue(url).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetGitHubMediaUrlValidationError");
+        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
+        expect(encoded).not.toContain(url);
+      }
     }).pipe(Effect.provide(testLayer)),
   );
 });
