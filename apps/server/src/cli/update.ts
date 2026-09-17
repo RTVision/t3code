@@ -1,6 +1,7 @@
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
+  HostProcessExecutablePath,
   HostProcessInvokedAs,
   HostProcessIsExecutable,
   HostProcessPlatform,
@@ -486,8 +487,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     }
   }
 
+  const isExecutable = yield* HostProcessIsExecutable;
+  const nodeExecutable = yield* HostProcessExecutablePath;
   const runtime = yield* ensurePinnedRuntimeInstalled({
     onProgress: progress.report,
+    distribution: isExecutable ? "archive" : "npm",
     baseDir: input.baseDir,
     version: targetVersion,
     fs,
@@ -500,8 +504,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     validate: (paths) =>
       runner
         .run({
-          command: pinnedRuntimeCommand(paths).command,
-          args: [...pinnedRuntimeCommand(paths).args, "--version"],
+          command: pinnedRuntimeCommand(paths, nodeExecutable).command,
+          args: [...pinnedRuntimeCommand(paths, nodeExecutable).args, "--version"],
           timeout: Duration.seconds(30),
         })
         .pipe(
@@ -536,7 +540,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     ),
   );
 
-  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
+  const launchedAs = isExecutable ? yield* resolveLauncherPath : undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
     versionsDir: path.dirname(runtime.versionDir),

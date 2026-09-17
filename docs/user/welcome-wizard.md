@@ -12,14 +12,13 @@ browser.
 
 You can add more computers before continuing:
 
-- **T3 Connect** connects computers that are signed in to your account.
-  [Install the CLI](./install.md#command-line) and run `t3 connect` on each
-  computer you want to add, then start T3 Code or run `t3 serve` so the
-  computer stays available.
+- **T3 Connect** connects computers that are signed in to your account. Run
+  `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 connect` on each computer you want to add, then start T3 Code or run
+  `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve` so the computer stays available.
 - **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `t3 serve`, then run `t3 pair --tailscale` and paste
-  the pairing link. You can also run `t3 serve --host <address>` and use
-  `t3 pair` when the server is already reachable on your network.
+  Start the server with `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve`, then run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair --tailscale` and
+  paste the pairing link. You can also run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve --host <address>` and
+  use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair` when the server is already reachable on your network.
 
 Saved computers and computers discovered through T3 Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.

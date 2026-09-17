@@ -34,18 +34,20 @@ The offered action depends on how the server runs:
 On the host, run:
 
 ```sh
-t3 update <client-version>
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version> service update
 ```
 
-Replace `<client-version>` with the version shown in the notice. The command
-asks before restarting the background service; if you decline, run
-`t3 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+Replace `<client-version>` with the version shown in the notice. Using
+`@latest` only resolves the mismatch if your client is on that release. An older
+service launcher may need repair before it supports remote updates and rollback.
+For the built-in systemd or launchd service, run the matching CLI's `service install`
+command to repair it. For an externally packaged service, use its package upgrade
+instructions.
 
-If you run the server with `npx` rather than an installed `t3`, there is
-nothing to update on the host: stop the server and relaunch it as
-`npx t3@<client-version>` with the same subcommand and options.
+For a foreground server, the copied command is `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version>`. Add
+`serve` if you normally run without a browser, and preserve options such as
+`--host` or `--tailscale-serve`. See
+[background services](./background-service.md) for service management.
 
 ## If an update fails
 

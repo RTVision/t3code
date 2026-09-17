@@ -218,6 +218,94 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect.each(["valid", "wrong-package", "wrong-version", "preflight-blocked"] as const)(
+    "validates a staged npm runtime before publication: %s",
+    (state) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
+        const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux", "npm");
+        const requests: string[] = [];
+        let validations = 0;
+        const result = yield* ensurePinnedRuntimeInstalled({
+          distribution: "npm",
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient("", requests),
+          runner: ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.gen(function* () {
+                assert.equal(input.command, "npm");
+                assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
+                assert.include(input.args, "https://npm-registry.rtvision.com/");
+                const staging = input.args[input.args.indexOf("--prefix") + 1]!;
+                const packageDir = path.join(staging, "node_modules/t3");
+                yield* fs
+                  .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
+                  .pipe(Effect.orDie);
+                yield* fs
+                  .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
+                  .pipe(Effect.orDie);
+                yield* fs
+                  .writeFileString(
+                    path.join(packageDir, "package.json"),
+                    state === "wrong-package"
+                      ? '{"name":"t3","version":"1.2.3"}'
+                      : state === "wrong-version"
+                        ? '{"name":"@rtvision/t3","version":"1.2.2"}'
+                        : '{"name":"@rtvision/t3","version":"1.2.3"}',
+                  )
+                  .pipe(Effect.orDie);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+          validate: (staged) =>
+            Effect.gen(function* () {
+              validations++;
+              assert.isFalse(yield* fs.exists(finalPaths.versionDir).pipe(Effect.orDie));
+              assert.isFalse(yield* fs.exists(staged.sentinelPath).pipe(Effect.orDie));
+              assert.equal(
+                yield* fs.readFileString(staged.entryPath).pipe(Effect.orDie),
+                "runtime",
+              );
+              if (state === "preflight-blocked")
+                return yield* new PinnedRuntimeInstallError({ step: "preflight" });
+            }),
+        }).pipe(Effect.result);
+        assert.deepEqual(requests, []);
+        assert.equal(validations, state === "valid" || state === "preflight-blocked" ? 1 : 0);
+        assert.equal(result._tag, state === "valid" ? "Success" : "Failure");
+        assert.equal(yield* fs.exists(finalPaths.versionDir), state === "valid");
+        assert.deepEqual(
+          (yield* fs.readDirectory(path.dirname(finalPaths.versionDir))).filter((entry) =>
+            entry.startsWith(".staging-"),
+          ),
+          [],
+        );
+        if (state === "valid") {
+          assert.deepEqual(pinnedRuntimeCommand(finalPaths, "/usr/bin/node"), {
+            command: "/usr/bin/node",
+            args: [finalPaths.entryPath],
+          });
+          assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), `${version}\n`);
+        }
+      }),
+  );
+
   it.effect("refuses an archive whose checksum does not match the release", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -301,6 +389,62 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         ),
         [],
       );
+    }),
+  );
+
+  it.effect("keeps the installed archive if replacing it with npm fails validation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-switch-" });
+      const installed = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(installed.versionDir, { recursive: true });
+      yield* fs.writeFileString(installed.entryPath, "working archive");
+      yield* fs.writeFileString(installed.sentinelPath, `${version}\n`);
+      yield* ensurePinnedRuntimeInstalled({
+        distribution: "npm",
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: releaseHttpClient(""),
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            Effect.gen(function* () {
+              const staging = input.args[input.args.indexOf("--prefix") + 1]!;
+              const pkg = path.join(staging, "node_modules/t3");
+              yield* fs
+                .makeDirectory(path.join(pkg, "dist"), { recursive: true })
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(path.join(pkg, "dist/bin.mjs"), "broken replacement")
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(
+                  path.join(pkg, "package.json"),
+                  '{"name":"@rtvision/t3","version":"1.2.3"}',
+                )
+                .pipe(Effect.orDie);
+              return {
+                stdout: "",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+        validate: () =>
+          Effect.fail(new PinnedRuntimeInstallError({ step: "replacement preflight" })),
+      }).pipe(Effect.flip);
+      assert.equal(yield* fs.readFileString(installed.entryPath), "working archive");
+      assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+      assert.deepEqual(yield* fs.readDirectory(path.dirname(installed.versionDir)), [version]);
     }),
   );
 

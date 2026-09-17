@@ -16,6 +16,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
+  | "/settings/editors"
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
@@ -85,6 +86,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
+  "/settings/editors": "Editors",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
@@ -142,6 +144,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/storage",
     scope: "environment-defaults",
     searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+  },
+  {
+    id: "editors",
+    title: "Preferred editor and Neovim terminal",
+    to: "/settings/editors",
+    searchTerms: ["neovim", "nvim", "terminal", "executable", "rescan", "open editor"],
   },
   {
     id: "project-defaults",
@@ -477,6 +485,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project thread tree old flat list"],
   },
   {
+    id: "vim-navigation",
+    title: "Vim navigation",
+    to: "/settings/keybindings",
+    searchTerms: ["vim modal normal insert leader which-key terminal keyboard shortcuts"],
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
@@ -730,7 +744,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "WSL backend",
     to: "/settings/connections",
     searchTerms: [
-      "windows subsystem linux distro second server projects stop windows backend restart",
+      "windows subsystem linux distro second server projects stop windows backend restart ssh credentials keys agent openssh",
     ],
     desktopOnly: true,
     windowsOnly: true,
@@ -806,6 +820,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/integrations": null,
+  "/settings/editors": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

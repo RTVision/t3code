@@ -1,8 +1,13 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
+import type {
+  AssetResource,
+  EnvironmentId,
+  ScopedThreadRef,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
+import { createContext, useCallback, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -11,10 +16,15 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import {
+  remarkPullRequestAutolinks,
+  resolvePullRequestImageAsset,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
+  provider: SourceControlProviderKind | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -76,10 +86,18 @@ export function PullRequestMarkdown({
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
+  const provider = context?.provider;
+  const resolveImageAsset = useCallback(
+    (source: string) => resolvePullRequestImageAsset(source, provider, repositoryUrl),
+    [provider, repositoryUrl],
+  );
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
-    [repositoryUrl],
+    () =>
+      provider === "github" && repositoryUrl
+        ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
+        : [],
+    [provider, repositoryUrl],
   );
   return (
     <div
@@ -101,6 +119,7 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+              resolveImageAsset={resolveImageAsset}
             />
           );
         }

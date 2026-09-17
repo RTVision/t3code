@@ -25,18 +25,12 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 ### Command line
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest
 ```
 
 Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
 
-To try it once without installing, run `npx t3@latest` instead.
+Tip: Use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest --help` for the full CLI reference.
 
 ### Desktop app
 

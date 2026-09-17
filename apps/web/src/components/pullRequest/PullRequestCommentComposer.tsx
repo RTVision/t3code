@@ -7,7 +7,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
@@ -107,7 +107,7 @@ export function PullRequestCommentComposer({
           </PopoverClose>
         </div>
         <div className="space-y-2">
-          <Textarea
+          <MentionTextarea
             ref={textareaRef}
             className="[&_textarea]:max-h-64"
             // Locked while posting: the body is cleared on success, which would otherwise throw
@@ -117,7 +117,7 @@ export function PullRequestCommentComposer({
             rows={3}
             placeholder="Leave a comment"
             aria-label="Comment on this pull request"
-            onChange={(event) => setBody(event.target.value)}
+            onValueChange={setBody}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (

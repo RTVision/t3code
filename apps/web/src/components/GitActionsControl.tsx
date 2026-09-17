@@ -37,7 +37,6 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
-  GitPullRequestIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import {
@@ -47,6 +46,7 @@ import {
   GitLabIcon,
   ForgejoIcon,
 } from "~/components/Icons";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { toggleVariants } from "~/components/ui/toggle";
@@ -224,7 +224,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     description: "configured server",
     host: "configured server",
     pathPlaceholder: "owner/repository",
-    Icon: GitPullRequestIcon,
+    Icon: PullRequestGlyph.pullRequest,
   },
 ] as const satisfies ReadonlyArray<{
   readonly value: PublishProviderKind;

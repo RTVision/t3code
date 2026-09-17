@@ -30,6 +30,9 @@ import { OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
+import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as GiteaAttachment from "./sourceControl/GiteaAttachment.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -403,6 +406,12 @@ export const assetRouteLayer = HttpRouter.add(
             headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
           }),
         ),
+      );
+    }
+    if (asset.kind === "source-control-image") {
+      return yield* GiteaAttachment.imageResponse(asset.url).pipe(
+        Effect.provide(Layer.mergeAll(GiteaCli.layer, ForgejoCli.layer)),
+        Effect.orElseSucceed(() => HttpServerResponse.text("Image unavailable", { status: 502 })),
       );
     }
     return yield* assetFileResponse(

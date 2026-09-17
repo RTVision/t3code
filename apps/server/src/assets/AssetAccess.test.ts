@@ -6,6 +6,8 @@ import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,6 +43,7 @@ const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(
   NodeHttpPlatform.layer,
   configLayer,
+  Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.some("https://forge.test") }),
   WorkspacePaths.layer,
   ProjectFaviconResolver.layer.pipe(
     Layer.provide(WorkspacePaths.layer),
@@ -97,6 +100,21 @@ describe("AssetAccess", () => {
     );
   });
 
+  it.effect("signs a Gitea image URL for one asset and expires it", () =>
+    Effect.gen(function* () {
+      const url = "https://forge.test/attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83";
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "source-control-image", provider: "gitea", url },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      expect(yield* resolveAsset(token, "image")).toEqual({ kind: "source-control-image", url });
+      expect(yield* resolveAsset(token, "other-image")).toBeNull();
+      expect(yield* resolveAsset(`${token}tampered`, "image")).toBeNull();
+      yield* TestClock.adjust("2 hours");
+      expect(yield* resolveAsset(token, "image")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

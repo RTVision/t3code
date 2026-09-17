@@ -12,12 +12,12 @@ Connections**, sign in, and enable **T3 Connect** for that environment.
 For a command-line host, run:
 
 ```bash
-t3 connect
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest connect
 ```
 
 Follow the sign-in instructions. Setup offers a
 [background service](./background-service.md); if you decline it, start the
-server with `t3 serve`. Saving your sign-in alone does not make the machine
+server with `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve`. Saving your sign-in alone does not make the machine
 reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
@@ -42,13 +42,13 @@ For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
 address:
 
 ```bash
-t3 serve --host <private-ip>
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve --host <private-ip>
 ```
 
 If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-t3 pair
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -88,13 +88,13 @@ HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
 To start a command-line server with Tailscale HTTPS:
 
 ```bash
-t3 serve --tailscale-serve
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve --tailscale-serve
 ```
 
 For an already-running server:
 
 ```bash
-t3 pair --tailscale
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -106,7 +106,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+`--tailscale-serve-port`. See `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair --help` for other pairing options.
 
 ### Hosted web app
 
@@ -125,12 +125,22 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
-The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
-`tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
-The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
-it takes longer than later ones.
-Provider CLIs must be on the `PATH` of a non-interactive login shell there;
-check with:
+On Windows, **WSL only** uses your selected distro's SSH keys, agent, and host
+configuration. When both backends are enabled, choose **SSH credentials** under
+**Settings → Connections** to use Windows OpenSSH or WSL. Changing this selection
+restarts T3 Code. Your WSL login shell must configure `SSH_AUTH_SOCK` to use an
+existing agent; keys on disk and the in-app password prompt also work.
+
+Saved SSH environments remember their runner and distro. If you change those
+settings, restore the original selection to reconnect, or remove and add the
+SSH environment with the new credentials. Restore the original runner before
+removing an environment if you want T3 Code to stop its remote server. Existing
+environments created before
+this setting use Windows OpenSSH until you add them again.
+
+The remote host needs a compatible [Node.js installation](./install.md#requirements)
+and [provider setup](./install.md#providers). If launch cannot find Node or reports
+an incompatible version, check it through a non-interactive SSH session:
 
 ```bash
 ssh user@example.com 'sh -lc "command -v claude codex"'
@@ -148,7 +158,7 @@ For Antigravity's Google callback on a remote host, see
 On the host, **Settings → Connections** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `t3 auth --help`.
+management is available through `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 auth --help`.
 
 A session with an open connection stays listed after its access credential
 expires.

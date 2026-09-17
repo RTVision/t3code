@@ -80,7 +80,7 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   forgejo: ForgejoIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
-  gitea: GitPullRequestIcon,
+  gitea: PullRequestGlyph.pullRequest,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {

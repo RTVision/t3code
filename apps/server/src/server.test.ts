@@ -170,6 +170,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1210,9 +1211,16 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.none() })),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
-      Layer.provide(layerConfig),
+      // Folded into one step: `pipe` accepts at most twenty operators and the
+      // merged layer list reached twenty-one. Same wiring as three provides.
+      Layer.provide(
+        GitHubCli.layer.pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(layerConfig),
+        ),
+      ),
     );
 
     yield* Layer.build(appLayer);

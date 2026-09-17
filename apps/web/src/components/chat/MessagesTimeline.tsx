@@ -1,3 +1,5 @@
+import { useClientSettings } from "../../hooks/useSettings";
+import { VimTimeline } from "../../vim/VimTimeline";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -455,6 +457,8 @@ interface MessagesTimelineProps {
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
+  onVimBottom?: () => void;
+  vimHistoryError?: string | null;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -514,6 +518,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  onVimBottom,
+  vimHistoryError = null,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
@@ -522,6 +528,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   steerQueuedMessageShortcutLabel = null,
   onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
 }: MessagesTimelineProps) {
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
@@ -1263,6 +1270,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
+          {vimEnabled && (
+            <VimTimeline
+              key={routeThreadKey}
+              entries={timelineEntries}
+              rows={rows}
+              listRef={listRef}
+              loadEarlier={loadEarlier}
+              historyError={vimHistoryError}
+              expandTurn={expandCitedTurn}
+              onManualNavigation={onManualNavigation}
+              onBottom={
+                onVimBottom ??
+                (() => {
+                  void listRef.current?.scrollToEnd({ animated: false });
+                })
+              }
+            />
+          )}
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar
               viewport={timelineViewportElement}

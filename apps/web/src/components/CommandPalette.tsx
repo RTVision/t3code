@@ -1,5 +1,8 @@
 "use client";
 
+import { rememberVimOverlayFocus, restoreVimOverlayFocus } from "../vim/runtime";
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -274,7 +277,7 @@ interface AddProjectEnvironmentOption {
 
 type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "gitea" | "bitbucket" | "azure-devops"
 >;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -300,6 +303,7 @@ const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "forgejo",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
@@ -307,6 +311,7 @@ const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKin
   "forgejo",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 
 function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
@@ -321,6 +326,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "gitea":
+      return "Gitea";
     case "url":
       return "Git URL";
   }
@@ -337,6 +344,8 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "gitea":
+      return "owner/repository";
     case "url":
       return "URL";
   }
@@ -360,6 +369,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <BitbucketIcon className={className} />;
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
+    case "gitea":
+      return <PullRequestGlyph.pullRequest className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }
@@ -409,6 +420,7 @@ function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     forgejo: unavailable,
     bitbucket: unavailable,
+    gitea: unavailable,
     "azure-devops": unavailable,
   };
 
@@ -474,11 +486,14 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     mode: "command",
     openIntent: null,
   });
-  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
-  const toggleMode = useCallback(
-    (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
-    [],
-  );
+  const setOpen = useCallback((open: boolean) => {
+    if (open) rememberVimOverlayFocus();
+    dispatch({ _tag: "SetOpen", open });
+  }, []);
+  const toggleMode = useCallback((mode: SearchOverlayMode) => {
+    rememberVimOverlayFocus();
+    dispatch({ _tag: "ToggleMode", mode });
+  }, []);
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
@@ -514,19 +529,24 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [state.mode, state.open, toggleMode]);
 
   useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+    const onKeyDown = (
+      event: globalThis.KeyboardEvent,
+      requestedCommand?: AppKeybindingCommand,
+    ) => {
+      if (event.defaultPrevented && !requestedCommand) return;
       // Resolve with the complete shortcut context so customized bindings
       // using any documented `when` condition (e.g. previewFocus) work.
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-          previewFocus: isPreviewFocused(),
-          previewOpen,
-          modelPickerOpen: composerHandleRef.current?.isModelPickerOpen() ?? false,
-        },
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen,
+            previewFocus: isPreviewFocused(),
+            previewOpen,
+            modelPickerOpen: composerHandleRef.current?.isModelPickerOpen() ?? false,
+          },
+        });
       if (command === "appearance.cycle") {
         event.preventDefault();
         event.stopPropagation();
@@ -569,8 +589,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       event.stopPropagation();
       toggleMode(mode);
     };
+    const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [
     appearanceMode,
     keybindings,
@@ -586,6 +610,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
+        rememberVimOverlayFocus();
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
@@ -655,6 +680,7 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        if (restoreVimOverlayFocus()) return false;
         composerHandleRef?.current?.focusAtEnd();
         return false;
       }}

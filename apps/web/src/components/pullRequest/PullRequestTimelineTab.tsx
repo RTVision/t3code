@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -52,7 +53,7 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
-  readonly canReact: boolean;
+  readonly canReact: (event: PullRequestTimelineEvent) => boolean;
   readonly environmentId: EnvironmentId;
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
@@ -245,11 +246,11 @@ function ConversationCard({
               <PencilIcon className="size-3" />
             </Button>
           ) : null}
-          {reactions.canReact || event.reactions.length > 0 ? (
+          {reactions.canReact(event) || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
-              canReact={reactions.canReact}
+              canReact={reactions.canReact(event)}
               subjectId={event.id}
               environmentId={reactions.environmentId}
               reference={reactions.reference}
@@ -515,11 +516,11 @@ function ReviewVerdictEvent({
             </PullRequestMetaLine>
           </div>
         </div>
-        {reactions.canReact || event.reactions.length > 0 ? (
+        {reactions.canReact(event) || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
             reactions={event.reactions}
-            canReact={reactions.canReact}
+            canReact={reactions.canReact(event)}
             subjectId={event.id}
             environmentId={reactions.environmentId}
             reference={reactions.reference}
@@ -563,7 +564,15 @@ export function PullRequestTimelineTab({
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
-    canReact: detail.capabilities.reactions === true,
+    canReact: (event) =>
+      pullRequestCanReact(
+        detail.capabilities,
+        event.kind === "review"
+          ? "review"
+          : event.id.startsWith("review-comment:")
+            ? "review-comment"
+            : "issue-comment",
+      ),
     environmentId,
     threadRef,
     reference,
@@ -611,7 +620,7 @@ export function PullRequestTimelineTab({
                   key={event.id}
                   event={event}
                   outcome={outcome}
-                  stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
+                  stale={event.reviewStale ?? isPullRequestVerdictStale(event.at, newestCommitAt)}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
                   reactions={reactions}
