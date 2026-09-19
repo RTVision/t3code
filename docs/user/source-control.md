@@ -147,11 +147,6 @@ Type `@` in a review comment or reply to suggest people from the pull request an
 on GitHub, Gitea, and GitLab. Select a name with the arrow keys and Enter or Tab. The mention
 is sent when you submit the comment or review.
 
-In the Code tab, mark files as **Viewed** to save your progress to the connected host account.
-Uncheck a file to review it again. Progress follows that account across devices, and the host
-marks changed files as needing another look. This is available on GitHub and Gitea servers
-that support viewed-file access, when viewing all commits.
-
 Use **Whitespace** in the Code tab to hide indentation or spacing changes while reviewing a
 pull request or a single commit. Choose **Show all changes** to restore them. Comparisons with
 separate hunks may need to load both file revisions from the host.
@@ -180,8 +175,24 @@ for ten minutes during a GitHub outage; new credentials must be verified first. 
 an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
 PR creation from Git actions continue to use the project's environment.
 
-For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
-reopening a declined pull request.
+For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
+declined pull request.
+
+### Mark files as viewed
+
+Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
+running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
+single commit keeps them. Uncheck a file to review it again. Where revision tracking is available,
+a file pushed to after you cleared it comes back marked **Changed**.
+
+On GitHub and Gitea servers that support viewed-file access, these are the host's own marks,
+so progress carries between T3 Code and the host's website in either direction. Other Gitea
+servers, Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
+server you are connected to keeps them instead: they follow you across the apps connected to that
+server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
+
+The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
+does not show its diff, so marks are made and read on web and desktop.
 
 Gitea supports PR tracking, comments, reviews, diffs, reviewer and label updates, merge methods,
 branch updates, close/reopen, draft/ready changes, auto-merge controls, comment editing, and

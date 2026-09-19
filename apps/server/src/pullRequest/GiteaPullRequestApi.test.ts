@@ -145,6 +145,87 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
+  it.effect("adapts batched viewed-file updates to the native head-guarded API", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response({
+              head_sha: "current-head",
+              files: [
+                { path: "a.ts", viewed: true },
+                { path: "b.ts", viewed: false },
+              ],
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(response({ head_sha: "current-head", files: [] })))
+        .mockReturnValueOnce(Effect.succeed(response({})));
+      const provider = yield* GiteaPullRequestProvider.make.pipe(
+        Effect.provide(GiteaPullRequestApi.layer),
+      );
+      const input = {
+        cwd: "/workspace",
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      };
+      expect(yield* provider.getFilesViewed!(input)).toEqual({
+        files: [
+          { path: "a.ts", state: "viewed" },
+          { path: "b.ts", state: "unviewed" },
+        ],
+        truncated: false,
+      });
+      yield* provider.setFilesViewed!({
+        ...input,
+        files: [
+          { path: "a.ts", viewed: false },
+          { path: "b.ts", viewed: true },
+        ],
+      });
+      expect(callAt(2)).toMatchObject({
+        method: "PUT",
+        path: "/repos/acme/web/pulls/7/viewed-files",
+      });
+      expect(decodeJson(callAt(2).body!)).toEqual({
+        head_sha: "current-head",
+        files: { "a.ts": false, "b.ts": true },
+      });
+      yield* provider.setFilesViewed!({ ...input, files: [] });
+      expect(mockedRequest).toHaveBeenCalledTimes(3);
+    }),
+  );
+
+  it.effect("propagates a rejected native viewed-file update", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ head_sha: "old-head", files: [] })))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GiteaCli.GiteaCliError({
+              operation: "setFilesViewed",
+              reason: "failed",
+              status: 409,
+              detail: "The pull request head changed.",
+            }),
+          ),
+        );
+      const provider = yield* GiteaPullRequestProvider.make.pipe(
+        Effect.provide(GiteaPullRequestApi.layer),
+      );
+      const error = yield* provider.setFilesViewed!({
+        cwd: "/workspace",
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        files: [{ path: "a.ts", viewed: true }],
+      }).pipe(Effect.flip);
+      expect(error.operation).toBe("setFilesViewed");
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   it.effect("reads mounted PR selectors and refuses other web roots before transport", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(Effect.succeed(response(rawPullRequest(7))));

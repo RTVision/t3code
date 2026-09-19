@@ -502,6 +502,13 @@ export class GiteaPullRequestApi extends Context.Service<
       repository: string;
       number: number;
     }) => Effect.Effect<PullRequestViewedFiles, GiteaPullRequestApiError>;
+    readonly setFilesViewed: (input: {
+      host: string;
+      repository: string;
+      number: number;
+      files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>;
+      headSha: string;
+    }) => Effect.Effect<void, GiteaPullRequestApiError>;
     readonly setFileViewed: (input: {
       host: string;
       repository: string;
@@ -2150,6 +2157,17 @@ export const make = Effect.gen(function* () {
       );
       return { headSha: value.head_sha, files: value.files };
     }),
+    setFilesViewed: (input) =>
+      write({
+        ...input,
+        operation: "setFilesViewed",
+        method: "PUT",
+        path: `${basePath(input.repository)}/pulls/${input.number}/viewed-files`,
+        body: {
+          head_sha: input.headSha,
+          files: Object.fromEntries(input.files.map(({ path, viewed }) => [path, viewed])),
+        },
+      }),
     setFileViewed: (input) =>
       write({
         ...input,

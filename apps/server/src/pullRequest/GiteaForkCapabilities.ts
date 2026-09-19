@@ -7,6 +7,7 @@ export function giteaForkCapabilities(
   return {
     ...base,
     fileViewedState: features.includes("pull-viewed-files"),
+    viewedFiles: features.includes("pull-viewed-files") ? "host" : "environment",
     actions: base.actions.filter((action) =>
       action === "approve-workflows"
         ? features.includes("actions-run-approve")

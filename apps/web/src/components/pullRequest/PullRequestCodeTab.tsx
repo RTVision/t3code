@@ -14,13 +14,13 @@ import type {
 } from "@t3tools/contracts";
 import { pullRequestCanReact } from "@t3tools/contracts";
 import {
-  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  InfoIcon,
   MessageSquareIcon,
   MessageSquareOffIcon,
   Rows3Icon,
@@ -28,6 +28,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -47,6 +48,7 @@ import {
   resolveFileDiffPreviousPath,
   type RenderablePatch,
 } from "~/lib/diffRendering";
+import { APP_BASE_NAME } from "~/branding";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
@@ -66,6 +68,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
@@ -83,9 +86,11 @@ import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  toggleFileDiffFoldForViewed,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
+import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -230,6 +235,8 @@ function PullRequestCodeTab({
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   /** Set once the reader has asked for every file at once, until they pick a file apart again. */
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
+  const effectiveFoldOverride =
+    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
@@ -265,62 +272,9 @@ function PullRequestCodeTab({
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
-  const canTrackViewedFiles = detail.capabilities.fileViewedState === true && commit === null;
-  const viewedQuery = useEnvironmentQuery(
-    canTrackViewedFiles
-      ? pullRequestEnvironment.viewedFiles({ environmentId, input: reference })
-      : null,
-  );
-  const refreshViewedFiles = viewedQuery.refresh;
-  const viewedFiles = useMemo(
-    () => new Map(viewedQuery.data?.files.map((file) => [file.path, file.viewed])),
-    [viewedQuery.data],
-  );
-  const viewedCount = useMemo(
-    () => viewedQuery.data?.files.filter((file) => file.viewed).length ?? 0,
-    [viewedQuery.data],
-  );
-  const diffHeadSha = viewedQuery.data?.headSha;
-  const isWaitingForViewedFiles =
-    canTrackViewedFiles && viewedQuery.data === null && viewedQuery.error === null;
-  const setFileViewed = useAtomCommand(pullRequestEnvironment.setFileViewed, {
-    reportFailure: false,
-  });
-  const [viewedPending, setViewedPending] = useState(false);
-  const viewedInFlight = useRef(false);
-  const toggleViewed = useCallback(
-    async (path: string) => {
-      const state = viewedQuery.data;
-      if (state === null || viewedInFlight.current) return;
-      viewedInFlight.current = true;
-      setViewedPending(true);
-      try {
-        const result = await setFileViewed({
-          environmentId,
-          input: {
-            ...reference,
-            path,
-            headSha: state.headSha,
-            viewed: viewedFiles.get(path) !== true,
-          },
-        });
-        if (result._tag === "Failure") {
-          toastManager.add({
-            type: "error",
-            title: "Viewed progress could not be saved. Refresh and try again.",
-          });
-          refreshViewedFiles();
-        }
-      } finally {
-        viewedInFlight.current = false;
-        setViewedPending(false);
-      }
-    },
-    [environmentId, reference, setFileViewed, viewedFiles, viewedQuery.data, refreshViewedFiles],
-  );
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit, diffHeadSha ?? null]);
+  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -337,17 +291,14 @@ function PullRequestCodeTab({
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
   const diffQuery = useEnvironmentQuery(
-    isWaitingForViewedFiles
-      ? null
-      : pullRequestEnvironment.diff({
-          environmentId,
-          input: {
-            ...reference,
-            ...(cursor === null ? {} : { cursor }),
-            ...(commit === null ? {} : { commit }),
-            ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
-          },
-        }),
+    pullRequestEnvironment.diff({
+      environmentId,
+      input: {
+        ...reference,
+        ...(cursor === null ? {} : { cursor }),
+        ...(commit === null ? {} : { commit }),
+      },
+    }),
   );
   // Each answer is kept as its own slice. Concatenating the patches and re-parsing the growing
   // text would cost more with every slice, which is the wall the slicing exists to remove.
@@ -393,26 +344,15 @@ function PullRequestCodeTab({
   }, [cursor, diffQuery.data, scopeKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
-  const { refresh: refreshFirstDiffPage } = useEnvironmentQuery(
-    isWaitingForViewedFiles
-      ? null
-      : pullRequestEnvironment.diff({
-          environmentId,
-          input: {
-            ...reference,
-            ...(commit === null ? {} : { commit }),
-            ...(diffHeadSha === undefined ? {} : { headSha: diffHeadSha }),
-          },
-        }),
+  const refreshFirstDiffPage = useAtomRefresh(
+    pullRequestEnvironment.diff({
+      environmentId,
+      input: {
+        ...reference,
+        ...(commit === null ? {} : { commit }),
+      },
+    }),
   );
-  const appliedRefreshToken = useRef(refreshToken);
-  useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-    refreshViewedFiles();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshViewedFiles]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -438,17 +378,9 @@ function PullRequestCodeTab({
         environmentId,
         reference,
         commit,
-        cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}:${diffHeadSha ?? ""}`,
+        cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
       }),
-    [
-      commit,
-      detail.updatedAt,
-      diffHeadSha,
-      environmentId,
-      getDiffFileContents,
-      reference,
-      referenceKey,
-    ],
+    [commit, detail.updatedAt, environmentId, getDiffFileContents, reference, referenceKey],
   );
 
   // What is offered is the intersection of two different questions: what this host can do at
@@ -497,6 +429,35 @@ function PullRequestCodeTab({
   // A comment is posted against the pull request's head diff, so a line number taken from one
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines = review.inlineComment && commit === null && !whitespace.pending;
+  const filePaths = useMemo(() => files.map((file) => resolveFileDiffPath(file)), [files]);
+  // Offered under a commit scope as well as from the whole change, because reading a change one
+  // commit at a time is what the scope is for. The tick is kept against the change request rather
+  // than the scope it was made in, so clearing a file here clears it everywhere.
+  const viewedFilesStore = detail.capabilities.viewedFiles;
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled: viewedFilesStore !== undefined,
+    paths: filePaths,
+  });
+  const {
+    setViewed,
+    refresh: refreshFilesViewed,
+    enabled: filesViewedEnabled,
+    isViewed: isFileViewed,
+    isStale: isFileViewedStale,
+  } = filesViewed;
+  // The button goes around the host's cache, so everything the tab reads from it starts over:
+  // the diff from its first page, and with it the ticks, which a push since the last read can
+  // have marked as standing against an older version of the file.
+  const appliedRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (appliedRefreshToken.current === refreshToken) return;
+    appliedRefreshToken.current = refreshToken;
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    refreshFirstDiffPage();
+    refreshFilesViewed();
+  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
@@ -544,7 +505,9 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, files, pendingComments]);
 
-  const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
+  // Hashing what the annotations show is the costly part of an item's version, and none of it
+  // moves when a file is ticked or folded, so it is kept apart from the two that do.
+  const annotatedFiles = useMemo(
     () =>
       files.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
@@ -586,27 +549,20 @@ function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(
-          fileKey,
-          foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded"),
-          toggledFiles,
-        );
-
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
           lineNumber: group.line,
           metadata: { threads: group.threads, pending: group.pending, draft: group.draft },
         }));
         return {
-          id: fileKey,
-          type: "diff" as const,
+          fileKey,
+          path,
           fileDiff,
           annotations,
-          collapsed,
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
-          version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+          annotationsVersion: fnv1a32(
+            annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -631,7 +587,7 @@ function PullRequestCodeTab({
                     )
                     .join(",")}`,
               )
-              .join("|")}`,
+              .join("|"),
           ),
         };
       }),
@@ -640,11 +596,36 @@ function PullRequestCodeTab({
       detail.reviewThreads,
       draft,
       files,
-      foldOverride,
       pendingComments,
       placedPendingIds,
       placedThreadIds,
-      settings.diffFilesCollapsed,
+    ],
+  );
+
+  const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
+    () =>
+      annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+        const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+        // Ticking a file that is already folded changes no fold, so without this the box on
+        // screen would keep saying the opposite of what the count says.
+        const viewedMark = filesViewedEnabled
+          ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+          : "";
+        return {
+          id: fileKey,
+          type: "diff" as const,
+          fileDiff,
+          annotations,
+          collapsed,
+          version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
+        };
+      }),
+    [
+      annotatedFiles,
+      filesViewedEnabled,
+      effectiveFoldOverride,
+      isFileViewed,
+      isFileViewedStale,
       toggledFiles,
     ],
   );
@@ -707,6 +688,19 @@ function PullRequestCodeTab({
         return next;
       }),
     [],
+  );
+
+  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
+  // back. Folding is still held as the reader's difference from the toolbar's default rather
+  // than derived from what has been ticked, so folding everything ticks nothing off.
+  const setFileViewed = useCallback(
+    (fileKey: string, path: string, viewed: boolean) => {
+      setViewed(path, viewed);
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
+      );
+    },
+    [effectiveFoldOverride, setViewed],
   );
 
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
@@ -851,23 +845,30 @@ function PullRequestCodeTab({
     [toggleFile],
   );
 
+  // Read through refs rather than closed over. The viewer memoizes each visible file's header
+  // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
+  // host's answer, would rebuild every header on screen.
+  const filesViewedRef = useRef(filesViewed);
+  filesViewedRef.current = filesViewed;
+  const setFileViewedRef = useRef(setFileViewed);
+  setFileViewedRef.current = setFileViewed;
+
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<ReviewAnnotationGroup>) => {
       if (item.type !== "diff") return null;
-      const path = resolveFileDiffPath(item.fileDiff);
-      const viewed = viewedFiles.get(path) === true;
       let additions = 0;
       let deletions = 0;
       for (const hunk of item.fileDiff.hunks) {
         additions += hunk.additionLines;
         deletions += hunk.deletionLines;
       }
+      const path = resolveFileDiffPath(item.fileDiff);
       if (additions === 0 && deletions === 0) {
         const withheld = omittedFileStats.get(path);
         if (withheld) ({ additions, deletions } = withheld);
       }
-      return (
-        <div className="flex items-center gap-3">
+      const stat = (
+        <span className="flex items-center gap-3">
           {whitespaceMode !== "all" &&
           item.fileDiff.cacheKey?.includes(":whitespace:") &&
           item.fileDiff.hunks.length === 0 ? (
@@ -878,43 +879,44 @@ function PullRequestCodeTab({
             deletions={deletions}
             className="font-mono text-[11px]"
           />
-          {canTrackViewedFiles ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              role="checkbox"
-              aria-checked={viewed}
-              aria-label={`Viewed ${path}`}
-              disabled={
-                viewedPending ||
-                viewedQuery.isPending ||
-                viewedQuery.error !== null ||
-                !viewedFiles.has(path)
-              }
-              onClick={(event) => {
-                event.stopPropagation();
-                void toggleViewed(path);
-              }}
-            >
-              <span className="flex size-3.5 items-center justify-center rounded-sm border border-current">
-                {viewed ? <CheckIcon className="size-3" /> : null}
-              </span>
-              Viewed
-            </Button>
-          ) : null}
-        </div>
+        </span>
+      );
+      const viewedFiles = filesViewedRef.current;
+      if (!viewedFiles.enabled) return stat;
+      const viewed = viewedFiles.isViewed(path);
+      const stale = viewedFiles.isStale(path);
+      return (
+        <span className="flex items-center gap-3">
+          {stat}
+          {/* The header itself folds the file, so the tick keeps its press to itself. The
+              attribute is what the header's capture listener looks for. */}
+          <label
+            data-viewed-toggle=""
+            className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted-foreground"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Checkbox
+              aria-label={stale ? "Changed" : "Viewed"}
+              checked={viewed}
+              onCheckedChange={(next) => setFileViewedRef.current(item.id, path, next === true)}
+            />
+            {stale ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="text-amber-600 dark:text-amber-500" />}>
+                  Changed
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  This file has been pushed to since you marked it viewed.
+                </TooltipPopup>
+              </Tooltip>
+            ) : (
+              "Viewed"
+            )}
+          </label>
+        </span>
       );
     },
-    [
-      whitespaceMode,
-      omittedFileStats,
-      canTrackViewedFiles,
-      viewedFiles,
-      viewedPending,
-      viewedQuery.isPending,
-      viewedQuery.error,
-      toggleViewed,
-    ],
+    [whitespaceMode, omittedFileStats],
   );
 
   const diffViewOptions = useMemo(
@@ -1246,18 +1248,61 @@ function PullRequestCodeTab({
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
-          {canTrackViewedFiles ? (
-            viewedQuery.error !== null ? (
-              <Button size="xs" variant="ghost" onClick={viewedQuery.refresh}>
-                Retry viewed progress
-              </Button>
-            ) : viewedQuery.data === null ? (
-              <span>Loading viewed progress...</span>
-            ) : (
-              <span className="shrink-0 tabular-nums">
-                {viewedCount} of {viewedQuery.data.files.length} viewed
+          {filesViewed.enabled && files.length > 0 ? (
+            <span className="flex min-w-0 items-center gap-1 tabular-nums">
+              {/* Named on a host that keeps no record of its own, so the reader is told whose
+                  ticks these are without having to find the icon beside them. The count holds its
+                  width and the wording gives way, so the narrow right panel keeps its controls. */}
+              <span className="shrink-0">
+                {filesViewed.viewedCount} / {files.length}
               </span>
-            )
+              <span className="truncate">
+                {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
+              </span>
+              {viewedFilesStore === "environment" ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <InfoIcon
+                      aria-label="These ticks are kept here, not on the host"
+                      className="text-muted-foreground size-3.5"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    This host keeps no shared record of which files you have read, so these ticks
+                    are kept by this environment. They follow you between the apps connected to it,
+                    but the host's own web UI will not show them.
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {filesViewed.error !== null ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <TriangleAlertIcon
+                      aria-label="Your ticks could not be read"
+                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    The boxes below are whatever was last read, and empty if nothing has been read
+                    yet. {filesViewed.error}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {filesViewed.truncated ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <TriangleAlertIcon
+                      aria-label="This count covers only part of the change"
+                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    This change has more files than the host will report ticks for in one read, so
+                    the count is short and some boxes below start empty.
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </span>
           ) : null}
           {withheldContent ? (
             <Tooltip>
@@ -1437,7 +1482,7 @@ function PullRequestCodeTab({
 
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
-  if ((isWaitingForViewedFiles || diffQuery.isPending) && loadedSlices.length === 0) {
+  if (diffQuery.isPending && loadedSlices.length === 0) {
     return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
@@ -1608,6 +1653,9 @@ function PullRequestCodeTab({
               if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                 return;
               }
+              // A label answers for the control it names and this listener runs before it hears
+              // anything, so stopping the press keeps the header from folding what the tick folds.
+              if (node.hasAttribute("data-viewed-toggle")) return;
               if (node.hasAttribute("data-diffs-header")) {
                 const filePath = node.querySelector("[data-title]")?.textContent?.trim();
                 if (filePath === undefined || filePath === "") return;

@@ -171,8 +171,8 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
   wsUrl.protocol = "ws:";
   const constructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
-    (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols, {
+    (url) =>
+      new NodeSocket.NodeWS.WebSocket(url, {
         headers: { authorization: `Bearer ${token}` },
       }) as unknown as globalThis.WebSocket,
   );

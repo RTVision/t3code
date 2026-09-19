@@ -15,6 +15,7 @@ import {
 const CAPABILITIES: PullRequestCapabilities = {
   ciRuns: true,
   diff: true,
+  viewedFiles: "environment",
   comment: true,
   actions: [
     "merge",
@@ -345,6 +346,25 @@ export const make = Effect.gen(function* () {
           );
         }),
       ),
+
+    getFilesViewed: (input) =>
+      api.getViewedFiles(input).pipe(
+        Effect.map(({ files }) => ({
+          files: files.map(({ path, viewed }) => ({
+            path,
+            state: viewed ? ("viewed" as const) : ("unviewed" as const),
+          })),
+          truncated: false,
+        })),
+        Effect.mapError(fail("getFilesViewed")),
+      ),
+    setFilesViewed: (input) =>
+      input.files.length === 0
+        ? Effect.void
+        : api.getViewedFiles(input).pipe(
+            Effect.flatMap(({ headSha }) => api.setFilesViewed({ ...input, headSha })),
+            Effect.mapError(fail("setFilesViewed")),
+          ),
 
     getViewedFiles: (input) =>
       api.getViewedFiles(input).pipe(Effect.mapError(fail("getViewedFiles"))),

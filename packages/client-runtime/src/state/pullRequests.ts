@@ -432,6 +432,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         refreshes({ environmentId, input: { kind: "reference", reference: input } }),
     }),
   );
+  const preview = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:preview",
+      tag: WS_METHODS.pullRequestsPreview,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
   const labelCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
@@ -505,6 +514,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         refreshes({ environmentId, input: { kind: "repository", reference: input } }),
     }),
     detail,
+    preview,
     activity,
     viewedFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:viewed-files",
@@ -569,10 +579,32 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    filesViewed: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:files-viewed",
+      tag: WS_METHODS.pullRequestsFilesViewed,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),
+      staleTimeMs: 15_000,
+    }),
+    /**
+     * One write in flight per change request: the host applies these in order, and a reader
+     * ticking down a file list faster than the round trip would otherwise race their own presses.
+     */
+    setFilesViewed: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-files-viewed",
+      tag: WS_METHODS.pullRequestsSetFilesViewed,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsSetFilesViewed, input),
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
+      },
+    }),
     runAction: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:run-action",
       tag: WS_METHODS.pullRequestsRunAction,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsRunAction, input),
+      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -580,6 +612,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:update",
       tag: WS_METHODS.pullRequestsUpdate,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
+      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -751,6 +784,24 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:set-reaction",
       tag: WS_METHODS.pullRequestsSetReaction,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsSetReaction, input),
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    /**
+     * Explicit refresh: forget the server's cached answers, then re-run the reads. A separate
+     * request rather than a flag on a read, so only a person's refresh spends host requests
+     * while every silent re-read shares the cache.
+     */
+    invalidate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:invalidate",
+      tag: WS_METHODS.pullRequestsInvalidate,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsInvalidate, input),
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          if (input.reference !== undefined) {
+            registry.refresh(preview({ environmentId, input: input.reference }));
+          }
+        }),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

@@ -11,7 +11,7 @@ export const RawGiteaLifecycleEvent = Schema.Struct({
 });
 export type RawGiteaLifecycleEvent = typeof RawGiteaLifecycleEvent.Type;
 
-export const draftPrefixesConfig = Config.string("T3CODE_GITEA_DRAFT_PREFIXES").pipe(
+export const draftPrefixesConfig = Config.String("T3CODE_GITEA_DRAFT_PREFIXES").pipe(
   Config.withDefault(DEFAULT_DRAFT_PREFIXES.join(",")),
   Config.map((value) => {
     const prefixes = value

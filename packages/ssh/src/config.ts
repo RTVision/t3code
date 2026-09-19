@@ -213,8 +213,8 @@ const discoverNativeSshHosts = Effect.fnUntraced(
   function* (input: { readonly homeDir?: string }) {
     const path = yield* Path.Path;
     const env = yield* Config.all({
-      home: Config.string("HOME").pipe(Config.option),
-      userProfile: Config.string("USERPROFILE").pipe(Config.option),
+      home: Config.String("HOME").pipe(Config.option),
+      userProfile: Config.String("USERPROFILE").pipe(Config.option),
     });
     const homeDir =
       input?.homeDir ??

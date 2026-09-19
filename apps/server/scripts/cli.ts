@@ -15,7 +15,7 @@ import {
   resolveWebAssetBrandForPackageVersion,
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
-import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-external-packages.ts";
+import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -148,7 +148,7 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
 const buildCmd = Command.make(
   "build",
   {
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
     Effect.gen(function* () {
@@ -183,8 +183,8 @@ const buildCmd = Command.make(
 const buildExeCmd = Command.make(
   "build-exe",
   {
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
-    target: Flag.string("target").pipe(
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    target: Flag.String("target").pipe(
       Flag.withDescription(
         "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
       ),
@@ -267,13 +267,13 @@ const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<stri
 const publishCmd = Command.make(
   "publish",
   {
-    tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
-    access: Flag.string("access").pipe(Flag.withDefault("public")),
-    appVersion: Flag.string("app-version").pipe(Flag.optional),
-    provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
-    dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
-    verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
-    packDestination: Flag.string("pack-destination").pipe(
+    tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
+    access: Flag.String("access").pipe(Flag.withDefault("public")),
+    appVersion: Flag.String("app-version").pipe(Flag.optional),
+    provenance: Flag.Boolean("provenance").pipe(Flag.withDefault(false)),
+    dryRun: Flag.Boolean("dry-run").pipe(Flag.withDefault(false)),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+    packDestination: Flag.String("pack-destination").pipe(
       Flag.withDescription("Write a release tarball to this directory instead of publishing."),
       Flag.optional,
     ),

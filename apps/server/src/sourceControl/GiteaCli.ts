@@ -17,9 +17,9 @@ export const GITEA_SETUP_HINT =
   "Install tea 0.16 or later and run tea login add as the daemon user. Select a default with tea login default <name> or set T3CODE_GITEA_BASE_URL, then restart T3.";
 
 const GiteaConfig = Config.all({
-  legacyToken: Config.redacted("T3CODE_GITEA_TOKEN").pipe(Config.option),
-  baseUrl: Config.string("T3CODE_GITEA_BASE_URL").pipe(Config.option),
-  sshHosts: Config.string("T3CODE_GITEA_SSH_HOSTS").pipe(Config.withDefault("")),
+  legacyToken: Config.Redacted("T3CODE_GITEA_TOKEN").pipe(Config.option),
+  baseUrl: Config.String("T3CODE_GITEA_BASE_URL").pipe(Config.option),
+  sshHosts: Config.String("T3CODE_GITEA_SSH_HOSTS").pipe(Config.withDefault("")),
 });
 
 const GiteaViewer = Schema.Struct({ login: TrimmedNonEmptyString });

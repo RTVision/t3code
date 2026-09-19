@@ -33,15 +33,18 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsSummary,
   WS_METHODS.pullRequestsStack,
   WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsPreview,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
+  WS_METHODS.pullRequestsFilesViewed,
   WS_METHODS.pullRequestsReviewerCandidates,
   WS_METHODS.pullRequestsLabelCandidates,
 ]);
 const writes = new Set<string>([
   WS_METHODS.pullRequestsRerunCi,
   WS_METHODS.pullRequestsSetFileViewed,
+  WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,
   WS_METHODS.pullRequestsUpdate,
   WS_METHODS.pullRequestsComment,
@@ -188,7 +191,7 @@ export function createPullRequestRouter() {
         targets,
         ([target, reference]) =>
           invalidateTarget(registry, origin.target.environmentId, target, [
-            input.reference === undefined ? {} : { reference },
+            { ...input, ...(input.reference === undefined ? {} : { reference }) },
           ]),
         { concurrency: 4, discard: true },
       );
@@ -235,8 +238,13 @@ export function createPullRequestRouter() {
             targets,
             ([target, refs]) =>
               invalidateTarget(registry, origin.target.environmentId, target, [
-                ...refs.map((reference) => ({ reference })),
-                {},
+                ...refs.map((reference) => ({
+                  reference,
+                  ...(tag === WS_METHODS.pullRequestsSetFilesViewed
+                    ? { filesViewedOnly: true }
+                    : {}),
+                })),
+                ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
               ]),
             { concurrency: 4, discard: true },
           );

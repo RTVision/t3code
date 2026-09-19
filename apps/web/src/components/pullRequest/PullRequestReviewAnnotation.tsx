@@ -14,7 +14,6 @@ import {
   CircleIcon,
   HammerIcon,
   MessageSquareIcon,
-  PencilIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -24,6 +23,7 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
 import { MentionTextarea } from "../ui/mention-textarea";
+import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -297,15 +297,10 @@ export function ReviewThreadCard({
                       environmentId={environmentId}
                     />
                     {canEditComment(comment) ? (
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                      <PullRequestEditButton
                         aria-label="Edit comment"
                         onClick={() => setEditingId(comment.id)}
-                      >
-                        <PencilIcon className="size-3" />
-                      </Button>
+                      />
                     ) : null}
                   </div>
                 )}

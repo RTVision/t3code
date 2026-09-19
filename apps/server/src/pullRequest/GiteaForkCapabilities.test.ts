@@ -36,6 +36,8 @@ describe("GiteaForkCapabilities", () => {
   });
   it("enables viewed files only when the server advertises support", () => {
     expect(giteaForkCapabilities(base, []).fileViewedState).toBe(false);
+    expect(giteaForkCapabilities(base, []).viewedFiles).toBe("environment");
+    expect(giteaForkCapabilities(base, ["pull-viewed-files"]).viewedFiles).toBe("host");
     expect(giteaForkCapabilities(base, ["pull-viewed-files"]).fileViewedState).toBe(true);
   });
   it("enables review-summary reactions only for an advertising server", () => {
