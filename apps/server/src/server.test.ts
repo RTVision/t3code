@@ -1219,10 +1219,7 @@ const buildAppUnderTest = (options?: {
       // Folded into one step: `pipe` accepts at most twenty operators and the
       // merged layer list reached twenty-one. Same wiring as three provides.
       Layer.provide(
-        GitHubCli.layer.pipe(
-          Layer.provideMerge(VcsProcess.layer),
-          Layer.provideMerge(layerConfig),
-        ),
+        GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer), Layer.provideMerge(layerConfig)),
       ),
     );
 
