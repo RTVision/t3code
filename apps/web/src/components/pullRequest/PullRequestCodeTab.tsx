@@ -1,5 +1,3 @@
-import { WHITESPACE_MODES } from "./pullRequestWhitespace";
-import { usePullRequestWhitespace } from "./usePullRequestWhitespace";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -12,7 +10,6 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
-import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -23,6 +20,7 @@ import {
   InfoIcon,
   MessageSquareIcon,
   MessageSquareOffIcon,
+  PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
   TriangleAlertIcon,
@@ -74,8 +72,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -110,8 +106,6 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 /** Commits per press of "Show more" in the scope menu. */
 const COMMIT_PAGE_SIZE = 10;
-
-const WhitespaceModeSchema = Schema.Literals(["all", "ignore-all", "ignore-amount", "ignore-eol"]);
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
@@ -240,11 +234,7 @@ function PullRequestCodeTab({
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
-  const [whitespaceMode, setWhitespaceMode] = useLocalStorage(
-    "t3code.pullRequestWhitespace",
-    "all",
-    WhitespaceModeSchema,
-  );
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
@@ -274,7 +264,7 @@ function PullRequestCodeTab({
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -347,10 +337,7 @@ function PullRequestCodeTab({
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: {
-        ...reference,
-        ...(commit === null ? {} : { commit }),
-      },
+      input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
   const reviewKey = referenceKey;
@@ -369,9 +356,7 @@ function PullRequestCodeTab({
   const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
     reportFailure: false,
   });
-  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents, {
-    reportFailure: false,
-  });
+  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
   const loadDiffFiles = useMemo(
     () =>
       createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -396,6 +381,9 @@ function PullRequestCodeTab({
       verdicts: hostReview.verdicts.filter((verdict) => viewer.verdicts.includes(verdict)),
     };
   }, [detail.capabilities.review, detail.viewerPermissions]);
+  // A comment is posted against the pull request's head diff, so a line number taken from one
+  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
+  const canCommentOnLines = review.inlineComment && commit === null;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -404,31 +392,27 @@ function PullRequestCodeTab({
       loadedSlices.map((slice) => {
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
         const cached = parseCache.current.get(cacheKey);
         if (cached) return cached;
         const parsed = getRenderablePatch(slice.patch, cacheKey, {
           compactPartialHunkOffsets: true,
+          ignoreWhitespace,
         });
         if (parsed) parseCache.current.set(cacheKey, parsed);
         return parsed;
       }),
-    [loadedSlices, resolvedTheme, scopeKey],
+    [loadedSlices, resolvedTheme, scopeKey, ignoreWhitespace],
   );
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
-  const originalFiles = useMemo(
+  const files = useMemo(
     () =>
       parsedSlices.flatMap((parsed) =>
         parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
       ),
     [parsedSlices],
   );
-  const whitespace = usePullRequestWhitespace(originalFiles, whitespaceMode, loadDiffFiles);
-  const files = whitespace.files;
-  // A comment is posted against the pull request's head diff, so a line number taken from one
-  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
-  const canCommentOnLines = review.inlineComment && commit === null && !whitespace.pending;
   const filePaths = useMemo(() => files.map((file) => resolveFileDiffPath(file)), [files]);
   // Offered under a commit scope as well as from the whole change, because reading a change one
   // commit at a time is what the scope is for. The tick is kept against the change request rather
@@ -490,21 +474,6 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, detail.reviewThreads, files]);
 
-  const placedPendingIds = useMemo(() => {
-    const placed = new Set<string>();
-    if (commit !== null) return placed;
-    for (const file of files) {
-      const path = resolveFileDiffPath(file);
-      for (const comment of pendingComments) {
-        const anchor = getReviewPositionAnchor(comment.position);
-        if (comment.path === path && isLineInFileDiff(file, anchor.side, anchor.line)) {
-          placed.add(comment.id);
-        }
-      }
-    }
-    return placed;
-  }, [commit, files, pendingComments]);
-
   // Hashing what the annotations show is the costly part of an item's version, and none of it
   // moves when a file is ticked or folded, so it is kept apart from the two that do.
   const annotatedFiles = useMemo(
@@ -539,7 +508,7 @@ function PullRequestCodeTab({
         // commit's diff must not place them either — the same line means other code there.
         if (commit === null) {
           for (const comment of pendingComments) {
-            if (comment.path !== path || !placedPendingIds.has(comment.id)) continue;
+            if (comment.path !== path) continue;
             const anchor = getReviewPositionAnchor(comment.position);
             groupAt(anchor.side, anchor.line).pending.push(comment);
           }
@@ -591,15 +560,7 @@ function PullRequestCodeTab({
           ),
         };
       }),
-    [
-      commit,
-      detail.reviewThreads,
-      draft,
-      files,
-      pendingComments,
-      placedPendingIds,
-      placedThreadIds,
-    ],
+    [commit, detail.reviewThreads, draft, files, pendingComments, placedThreadIds],
   );
 
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
@@ -744,12 +705,13 @@ function PullRequestCodeTab({
       // that silently lost its first line on the other hosts would be worse than one line.
       const path = resolveFileDiffPath(file);
       const previousPath = resolveFileDiffPreviousPath(file);
-      const original = originalFiles.find((candidate) => resolveFileDiffPath(candidate) === path);
-      const position = resolveDiffReviewPosition(
-        original ?? file,
-        range.end,
-        range.endSide ?? range.side,
-      );
+      const sourceFile = parsedSlices
+        .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
+        .find((candidate) => resolveFileDiffPath(candidate) === path);
+      const side = range.endSide ?? range.side;
+      const position =
+        (sourceFile && resolveDiffReviewPosition(sourceFile, range.end, side)) ??
+        resolveDiffReviewPosition(file, range.end, side);
       if (position === null) return;
       setDraft({
         fileKey: item.id,
@@ -759,7 +721,7 @@ function PullRequestCodeTab({
         range,
       });
     },
-    [canCommentOnLines, files, originalFiles],
+    [canCommentOnLines, files, parsedSlices],
   );
 
   // Built here because the parsed diff only lives here, and built by the same function the
@@ -868,18 +830,11 @@ function PullRequestCodeTab({
         if (withheld) ({ additions, deletions } = withheld);
       }
       const stat = (
-        <span className="flex items-center gap-3">
-          {whitespaceMode !== "all" &&
-          item.fileDiff.cacheKey?.includes(":whitespace:") &&
-          item.fileDiff.hunks.length === 0 ? (
-            <span className="text-xs text-muted-foreground">Only whitespace changes</span>
-          ) : null}
-          <PullRequestDiffStat
-            additions={additions}
-            deletions={deletions}
-            className="font-mono text-[11px]"
-          />
-        </span>
+        <PullRequestDiffStat
+          additions={additions}
+          deletions={deletions}
+          className="font-mono text-[11px]"
+        />
       );
       const viewedFiles = filesViewedRef.current;
       if (!viewedFiles.enabled) return stat;
@@ -916,7 +871,7 @@ function PullRequestCodeTab({
         </span>
       );
     },
-    [whitespaceMode, omittedFileStats],
+    [omittedFileStats],
   );
 
   const diffViewOptions = useMemo(
@@ -928,7 +883,7 @@ function PullRequestCodeTab({
       preferredHighlighter: PREFERRED_HIGHLIGHTER,
       themeType: resolvedTheme,
       stickyHeaders: true,
-      ...(whitespaceMode === "all" ? { loadDiffFiles } : {}),
+      loadDiffFiles,
       enableGutterUtility: canCommentOnLines && draft === null,
       enableLineSelection: canCommentOnLines && draft === null,
       // Two gestures reach the same place: dragging the line numbers selects a range, and the
@@ -938,16 +893,7 @@ function PullRequestCodeTab({
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
     }),
-    [
-      diffLayout,
-      wordWrap,
-      resolvedTheme,
-      loadDiffFiles,
-      canCommentOnLines,
-      draft,
-      beginComment,
-      whitespaceMode,
-    ],
+    [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canCommentOnLines, draft, beginComment],
   );
 
   const runThreadCommand = useCallback(
@@ -979,7 +925,7 @@ function PullRequestCodeTab({
         workspaceRoot={detail.workspaceRoot}
         canReply={review.reply}
         canResolve={review.resolve}
-        canReact={pullRequestCanReact(detail.capabilities, "review-comment")}
+        canReact={detail.capabilities.reactions === true}
         environmentId={environmentId}
         reference={reference}
         pending={threadPending}
@@ -1334,51 +1280,30 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {whitespace.pending ? <span role="status">Filtering whitespace...</span> : null}
-        {whitespace.error ? (
-          <Tooltip>
-            <TooltipTrigger render={<span role="alert" aria-label={whitespace.error} />}>
-              <TriangleAlertIcon className="size-3.5 text-destructive" />
-            </TooltipTrigger>
-            <TooltipPopup>{whitespace.error}</TooltipPopup>
-          </Tooltip>
-        ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger
+        <Tooltip>
+          <TooltipTrigger
             render={
-              <Button
-                size="xs"
-                variant={whitespaceMode === "all" ? "ghost" : "secondary"}
-                aria-label="Whitespace comparison"
-                disabled={draft !== null}
-                title={
-                  draft ? "Finish or cancel the line comment before changing whitespace" : undefined
+              <Toggle
+                aria-label={
+                  ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
                 }
+                variant="ghost"
+                size="sm"
+                pressed={ignoreWhitespace}
+                onPressedChange={(pressed) => {
+                  setIgnoreWhitespace(Boolean(pressed));
+                  setDraft(null);
+                  setSelectedLines(null);
+                }}
               />
             }
           >
-            {whitespaceMode === "all" ? "Whitespace" : "Ignoring whitespace"}
-            <ChevronDownIcon className="size-3" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuRadioGroup
-              value={whitespaceMode}
-              onValueChange={(value) => {
-                const mode = WHITESPACE_MODES.find((entry) => entry.value === value);
-                if (!mode) return;
-                setDraft(null);
-                setSelectedLines(null);
-                setWhitespaceMode(mode.value);
-              }}
-            >
-              {WHITESPACE_MODES.map((mode) => (
-                <DropdownMenuRadioItem key={mode.value} value={mode.value}>
-                  {mode.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <PilcrowIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+          </TooltipPopup>
+        </Tooltip>
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1526,22 +1451,13 @@ function PullRequestCodeTab({
   }
 
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
-  const orphanPending = pendingComments.filter((comment) => !placedPendingIds.has(comment.id));
   // A file carrying five stranded conversations should read as that file once rather than as
   // five copies of its path.
-  const orphanFiles = new Map<
-    string,
-    { threads: PullRequestReviewThread[]; pending: PendingReviewComment[] }
-  >();
+  const orphanFiles = new Map<string, PullRequestReviewThread[]>();
   for (const thread of orphanThreads) {
     const existing = orphanFiles.get(thread.path);
-    if (existing) existing.threads.push(thread);
-    else orphanFiles.set(thread.path, { threads: [thread], pending: [] });
-  }
-  for (const comment of orphanPending) {
-    const existing = orphanFiles.get(comment.path);
-    if (existing) existing.pending.push(comment);
-    else orphanFiles.set(comment.path, { threads: [], pending: [comment] });
+    if (existing) existing.push(thread);
+    else orphanFiles.set(thread.path, [thread]);
   }
 
   const unstructured =
@@ -1578,21 +1494,20 @@ function PullRequestCodeTab({
                     that has not landed yet, which is not the same as being off the diff. */}
               <span>
                 {nextCursor === null
-                  ? "Comments not on the current diff"
-                  : "Comments not on the diff loaded so far"}
+                  ? "Conversations not on the current diff"
+                  : "Conversations not on the diff loaded so far"}
               </span>
               <ChevronRightIcon
                 aria-hidden
                 className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
               />
               <span aria-hidden className="tabular-nums">
-                {orphanThreads.length + orphanPending.length}
+                {orphanThreads.length}
               </span>
               <span className="sr-only">
                 {orphanThreads.length === 1
                   ? "1 conversation"
                   : `${orphanThreads.length} conversations`}
-                {orphanPending.length > 0 ? ` and ${orphanPending.length} pending comments` : null}
               </span>
             </CollapsibleTrigger>
           </h2>
@@ -1600,7 +1515,7 @@ function PullRequestCodeTab({
             {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
             <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-              {[...orphanFiles].map(([path, { threads, pending }]) => (
+              {[...orphanFiles].map(([path, threads]) => (
                 <div key={path}>
                   <Tooltip>
                     <TooltipTrigger
@@ -1615,17 +1530,6 @@ function PullRequestCodeTab({
                           <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
                         )}
                         {renderThreadCard(thread)}
-                      </div>
-                    ))}
-                    {pending.map((comment) => (
-                      <div key={comment.id}>
-                        <p className="px-3 text-xs text-muted-foreground">
-                          Line {getReviewPositionAnchor(comment.position).line}
-                        </p>
-                        <PendingReviewCommentCard
-                          comment={comment}
-                          onRemove={() => removeComment(reviewKey, comment.id)}
-                        />
                       </div>
                     ))}
                   </div>

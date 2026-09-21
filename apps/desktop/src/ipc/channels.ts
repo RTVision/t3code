@@ -117,3 +117,5 @@ export const SET_TERMINAL_EDITOR_SETTINGS_CHANNEL = "desktop:set-terminal-editor
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
+
+export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";

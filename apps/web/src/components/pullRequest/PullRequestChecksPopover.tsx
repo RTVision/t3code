@@ -6,9 +6,6 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import { CircleDotIcon } from "lucide-react";
-import { PullRequestCiRuns } from "./PullRequestCiRuns";
-
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -51,18 +48,7 @@ function LazyChecksBody({
       </p>
     );
   }
-  return (
-    <>
-      <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />
-      {detailQuery.data.capabilities.ciRuns && (
-        <PullRequestCiRuns
-          environmentId={environmentId}
-          reference={reference}
-          threadRef={threadRef}
-        />
-      )}
-    </>
-  );
+  return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
 function ChecksBody({
@@ -117,34 +103,31 @@ function ChecksBody({
  * The checks indicator and what it opens, in both places a change request is shown: a listing
  * row, which knows only the rollup, and the detail header, which is already holding every check.
  *
- * `checks` decides between the two. Given them, the detail read is skipped; without them, the popup reads
+ * `checks` decides between the two. Given them, nothing is read; without them, the popup reads
  * the detail itself, which is why the row must also say which environment it came from.
  */
 export function PullRequestChecksPopover({
   checksState,
-  ciRuns = false,
   checks,
+  stale = false,
   environmentId,
   reference,
   threadRef = null,
   className,
 }: {
-  checksState?: PullRequestChecksState | null;
-  ciRuns?: boolean;
+  checksState: PullRequestChecksState;
   /** The checks already in hand, for the detail header. Absent on a listing row. */
   checks?: ReadonlyArray<PullRequestCheck>;
+  stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
   /** Thread the popover sits beside; a listing row has none. */
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const presentation =
-    checksState == null
-      ? { label: "Checks", Icon: CircleDotIcon, toneClassName: "text-muted-foreground" }
-      : pullRequestChecksStatePresentation(checksState);
+  const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
-  const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -164,24 +147,15 @@ export function PullRequestChecksPopover({
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
       </PopoverTrigger>
-      <PopoverPopup
-        align="start"
-        className="max-h-[70vh] w-110 max-w-full overflow-y-auto"
-        side="bottom"
-      >
+      <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
-        {checks !== undefined ? (
-          <>
-            <ChecksBody checks={checks} threadRef={threadRef} />
-            {ciRuns && environmentId && reference && (
-              <PullRequestCiRuns
-                environmentId={environmentId}
-                reference={reference}
-                threadRef={threadRef}
-              />
-            )}
-          </>
+        {stale ? (
+          <p className="text-muted-foreground text-xs">
+            Check details are out of date. Refresh the pull request to update them.
+          </p>
+        ) : checks !== undefined ? (
+          <ChecksBody checks={checks} threadRef={threadRef} />
         ) : environmentId !== undefined && reference !== undefined ? (
           <LazyChecksBody
             environmentId={environmentId}

@@ -7,7 +7,9 @@ import {
   type PullRequestComment,
   type PullRequestDetail,
   type PullRequestDetailView,
+  type PullRequestRef,
   type PullRequestReviewThread,
+  type RepositoryIdentity,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -26,7 +28,8 @@ import {
   handoffReviewComments,
   stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
-  pullRequestHandoffLabels,
+  isStackedPullRequestBase,
+  loadingPullRequestCheckoutCommand,
   pullRequestPanelContext,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
@@ -64,7 +67,6 @@ describe("pull request checkout commands", () => {
       "maria/t3code",
       "git clone --single-branch --branch feature/checkout https://bitbucket.org/maria/t3code.git t3code-pr-42",
     ],
-    ["gitea", "feature", null, null],
     ["unknown", "feature", null, null],
   ] as const)("builds the %s command", (provider, branch, repository, expected) => {
     expect(pullRequestCheckoutCommand(provider, 42, branch, repository)).toBe(expected);
@@ -94,6 +96,49 @@ describe("pull request checkout commands", () => {
     ).toBe(
       "git fetch 'https://forgejo.local/maria/repo'\\''$(echo nope)' refs/pull/42/head && git checkout -B pulls/42 FETCH_HEAD",
     );
+  });
+
+  const reference = (host?: string): PullRequestRef => ({
+    projectId: ProjectId.make("project-1"),
+    ...(host === undefined ? {} : { host }),
+    repository: "acme/web",
+    number: 42,
+  });
+  const identity = (provider: string, canonicalKey: string): RepositoryIdentity => ({
+    canonicalKey,
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "git@github.com:acme/web.git",
+    },
+    provider,
+  });
+
+  it("uses a public host when no repository identity is available", () => {
+    expect(loadingPullRequestCheckoutCommand(reference("github.com"), undefined)).toBe(
+      "gh pr checkout 42",
+    );
+    expect(loadingPullRequestCheckoutCommand(reference("gitlab.com"), null)).toBe(
+      "glab mr checkout 42",
+    );
+  });
+
+  it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {
+    const enterprise = identity("github", "github.example.test/acme/web");
+    expect(loadingPullRequestCheckoutCommand(reference("github.example.test"), enterprise)).toBe(
+      "gh pr checkout 42",
+    );
+    expect(loadingPullRequestCheckoutCommand(reference("github.com"), enterprise)).toBeNull();
+  });
+
+  it("does not infer a number-only command without a trusted provider", () => {
+    expect(loadingPullRequestCheckoutCommand(reference(), undefined)).toBeNull();
+    expect(
+      loadingPullRequestCheckoutCommand(
+        reference("github.com"),
+        identity("gitlab", "gitlab.com/acme/web"),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -250,21 +295,44 @@ describe("pull request primary control", () => {
   });
 });
 
-describe("pull request handoff labels", () => {
-  it("names the open thread when actions write to its composer", () => {
-    expect(pullRequestHandoffLabels(true)).toEqual({
-      fixFinding: "Fix in this thread",
-      fixCheck: "Fix in this thread",
-      fixFindings: "Fix findings in this thread",
-    });
+describe("stacked pull request classification", () => {
+  it("requires a known default branch", () => {
+    expect(isStackedPullRequestBase("main", [{ name: "main", isDefault: false }])).toBe(false);
   });
 
-  it("keeps the standalone pull request page labels", () => {
-    expect(pullRequestHandoffLabels(false)).toEqual({
-      fixFinding: "Fix in a thread",
-      fixCheck: "Fix",
-      fixFindings: "Fix findings in a thread",
-    });
+  it("recognizes local and remote forms of the default branch", () => {
+    expect(
+      isStackedPullRequestBase("main", [{ name: "main", isDefault: true, isRemote: false }]),
+    ).toBe(false);
+    expect(
+      isStackedPullRequestBase("main", [
+        { name: "origin/main", isDefault: true, isRemote: true, remoteName: "origin" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("classifies a non-default base as stacked once the default is known", () => {
+    expect(
+      isStackedPullRequestBase("feature-base", [
+        { name: "origin/main", isDefault: true, isRemote: true, remoteName: "origin" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not mistake a nested branch suffix for the default branch", () => {
+    expect(
+      isStackedPullRequestBase("main", [
+        {
+          name: "origin/feature/main",
+          isDefault: true,
+          isRemote: true,
+          remoteName: "origin",
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      isStackedPullRequestBase("1.0", [{ name: "release/1.0", isDefault: true, isRemote: false }]),
+    ).toBe(true);
   });
 });
 
@@ -289,30 +357,6 @@ describe("review verdicts", () => {
     expect(pullRequestReviewOutcome("CHANGES_REQUESTED")).toBe("changes-requested");
     expect(pullRequestReviewOutcome("changes_requested")).toBe("changes-requested");
     expect(pullRequestReviewOutcome("DISMISSED")).toBe("dismissed");
-  });
-
-  it("uses the host's stale assessment in summaries and the timeline", () => {
-    const review = {
-      ...TIMELINE_SOURCE.comments[0]!,
-      kind: "review" as const,
-      body: "",
-      reviewState: "approved",
-      reviewStale: true,
-    };
-    expect(latestPullRequestReviewOutcomes([review])[0]?.stale).toBe(true);
-    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments: [review] });
-    expect(events.find((event) => event.id === review.id)).toMatchObject({
-      kind: "review",
-      body: null,
-      reviewState: "approved",
-      reviewStale: true,
-    });
-    expect(
-      latestPullRequestReviewOutcomes(
-        [{ ...review, reviewStale: false }],
-        [{ oid: "new", messageHeadline: "new", committedDate: "2099-01-01T00:00:00Z" }],
-      )[0]?.stale,
-    ).toBe(false);
   });
 
   it("is not a verdict where the review only carried remarks", () => {
