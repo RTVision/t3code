@@ -6,6 +6,7 @@ import type {
   PullRequestReviewThread,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
   ChevronDownIcon,
@@ -37,6 +38,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestCiRuns } from "./PullRequestCiRuns";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -654,7 +656,7 @@ export function PullRequestSummaryTab({
     const reactionBar = (
       <PullRequestReactionBar
         reactions={comment.reactions ?? []}
-        canReact={detail.capabilities.reactions === true}
+        canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
         subjectId={comment.id}
         environmentId={environmentId}
         reference={reference}
@@ -797,6 +799,7 @@ export function PullRequestSummaryTab({
                   environmentId={environmentId}
                   reference={reference}
                   allowed={detail.viewerPermissions.requestReviewers}
+                  comments={detail.comments}
                 />
               ) : null}
             </span>
@@ -868,6 +871,13 @@ export function PullRequestSummaryTab({
       </Section>
 
       <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+        {detail.capabilities.ciRuns && (
+          <PullRequestCiRuns
+            environmentId={environmentId}
+            reference={reference}
+            threadRef={threadRef}
+          />
+        )}
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>
@@ -1041,7 +1051,7 @@ export function PullRequestSummaryTab({
                               <PullRequestReactionBar
                                 className="ml-auto justify-end"
                                 reactions={comment.reactions ?? []}
-                                canReact={detail.capabilities.reactions === true}
+                                canReact={pullRequestCanReact(detail.capabilities, comment.kind)}
                                 subjectId={comment.id}
                                 environmentId={environmentId}
                                 reference={reference}

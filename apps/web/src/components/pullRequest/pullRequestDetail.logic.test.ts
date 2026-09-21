@@ -28,8 +28,8 @@ import {
   handoffReviewComments,
   stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
-  isStackedPullRequestBase,
   loadingPullRequestCheckoutCommand,
+  pullRequestHandoffLabels,
   pullRequestPanelContext,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
@@ -67,6 +67,7 @@ describe("pull request checkout commands", () => {
       "maria/t3code",
       "git clone --single-branch --branch feature/checkout https://bitbucket.org/maria/t3code.git t3code-pr-42",
     ],
+    ["gitea", "feature", null, null],
     ["unknown", "feature", null, null],
   ] as const)("builds the %s command", (provider, branch, repository, expected) => {
     expect(pullRequestCheckoutCommand(provider, 42, branch, repository)).toBe(expected);
@@ -295,44 +296,21 @@ describe("pull request primary control", () => {
   });
 });
 
-describe("stacked pull request classification", () => {
-  it("requires a known default branch", () => {
-    expect(isStackedPullRequestBase("main", [{ name: "main", isDefault: false }])).toBe(false);
+describe("pull request handoff labels", () => {
+  it("names the open thread when actions write to its composer", () => {
+    expect(pullRequestHandoffLabels(true)).toEqual({
+      fixFinding: "Fix in this thread",
+      fixCheck: "Fix in this thread",
+      fixFindings: "Fix findings in this thread",
+    });
   });
 
-  it("recognizes local and remote forms of the default branch", () => {
-    expect(
-      isStackedPullRequestBase("main", [{ name: "main", isDefault: true, isRemote: false }]),
-    ).toBe(false);
-    expect(
-      isStackedPullRequestBase("main", [
-        { name: "origin/main", isDefault: true, isRemote: true, remoteName: "origin" },
-      ]),
-    ).toBe(false);
-  });
-
-  it("classifies a non-default base as stacked once the default is known", () => {
-    expect(
-      isStackedPullRequestBase("feature-base", [
-        { name: "origin/main", isDefault: true, isRemote: true, remoteName: "origin" },
-      ]),
-    ).toBe(true);
-  });
-
-  it("does not mistake a nested branch suffix for the default branch", () => {
-    expect(
-      isStackedPullRequestBase("main", [
-        {
-          name: "origin/feature/main",
-          isDefault: true,
-          isRemote: true,
-          remoteName: "origin",
-        },
-      ]),
-    ).toBe(true);
-    expect(
-      isStackedPullRequestBase("1.0", [{ name: "release/1.0", isDefault: true, isRemote: false }]),
-    ).toBe(true);
+  it("keeps the standalone pull request page labels", () => {
+    expect(pullRequestHandoffLabels(false)).toEqual({
+      fixFinding: "Fix in a thread",
+      fixCheck: "Fix",
+      fixFindings: "Fix findings in a thread",
+    });
   });
 });
 
@@ -357,6 +335,30 @@ describe("review verdicts", () => {
     expect(pullRequestReviewOutcome("CHANGES_REQUESTED")).toBe("changes-requested");
     expect(pullRequestReviewOutcome("changes_requested")).toBe("changes-requested");
     expect(pullRequestReviewOutcome("DISMISSED")).toBe("dismissed");
+  });
+
+  it("uses the host's stale assessment in summaries and the timeline", () => {
+    const review = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      kind: "review" as const,
+      body: "",
+      reviewState: "approved",
+      reviewStale: true,
+    };
+    expect(latestPullRequestReviewOutcomes([review])[0]?.stale).toBe(true);
+    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments: [review] });
+    expect(events.find((event) => event.id === review.id)).toMatchObject({
+      kind: "review",
+      body: null,
+      reviewState: "approved",
+      reviewStale: true,
+    });
+    expect(
+      latestPullRequestReviewOutcomes(
+        [{ ...review, reviewStale: false }],
+        [{ oid: "new", messageHeadline: "new", committedDate: "2099-01-01T00:00:00Z" }],
+      )[0]?.stale,
+    ).toBe(false);
   });
 
   it("is not a verdict where the review only carried remarks", () => {

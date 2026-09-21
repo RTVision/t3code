@@ -70,6 +70,7 @@ function PullRequestRowImpl({
   selected,
   showProjectTitle,
   showProvider,
+  showReviewRequest,
   environmentLabel,
   matchedElsewhere,
   statsKey,
@@ -81,6 +82,8 @@ function PullRequestRowImpl({
   showProjectTitle: boolean;
   /** Only when the list spans more than one host, where the repository alone is ambiguous. */
   showProvider: boolean;
+  /** The group heading or Reviewing filter may already identify outstanding requests. */
+  showReviewRequest: boolean;
   /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string;
   /**
@@ -142,17 +145,17 @@ function PullRequestRowImpl({
         title={entry.title}
         signals={
           <>
-            {entry.checksState === undefined ? null : (
-              <PullRequestChecksPopover
-                checksState={entry.checksState}
-                environmentId={entry.environmentId}
-                reference={{
-                  projectId: entry.projectId,
-                  repository: entry.repository,
-                  number: entry.number,
-                }}
-              />
-            )}
+            {/* Always offered: a host whose listing carries no rollup (Gitea) still has
+                checks and CI runs the popover can read lazily from the detail. */}
+            <PullRequestChecksPopover
+              checksState={entry.checksState ?? null}
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+            />
             {/* Only a verdict the host actually reports: an approval, a request for changes,
                 or a review the branch rules still require. No glyph on the common case of a
                 pull request nobody has reviewed, so a row only wears a person when the person
@@ -189,6 +192,11 @@ function PullRequestRowImpl({
         metaClassName="@container/pr-row-meta"
         meta={
           <>
+            {showReviewRequest && entry.viewerReviewRequested && entry.state === "open" ? (
+              <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 text-amber-700 dark:text-amber-400">
+                Your review requested
+              </span>
+            ) : null}
             {matchedElsewhere ? (
               <Tooltip>
                 <TooltipTrigger

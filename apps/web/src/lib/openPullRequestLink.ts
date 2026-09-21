@@ -1,4 +1,9 @@
-import type { EnvironmentId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  RepositoryIdentity,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
@@ -23,6 +28,7 @@ export {
   parseChangeRequestUrl,
   type ChangeRequestLink,
   gitHubPullRequestBrowserUrl,
+  giteaPullRequestBrowserUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   matchesLinkedPullRequestUrl,
   changeRequestRepositoryUrl,
@@ -71,6 +77,15 @@ export function findProjectForChangeRequest(
     if (!identity || !matchesChangeRequestAuthority(project, link)) return false;
     const kind = identity.provider as SourceControlProviderKind | undefined;
     if (kind === undefined) return false;
+
+    // HTTP remotes preserve the web root even when the provider display name omits it.
+    // Unknown identities can use the same match before the server refines their provider.
+    if (identity.provider === "gitea" || identity.provider === "unknown") {
+      const remoteMatch = giteaHttpRemoteMatchesLink(identity, link);
+      if (remoteMatch !== null && (identity.provider === "gitea" || remoteMatch)) {
+        return remoteMatch;
+      }
+    }
     const web = resolvedForgejoRepository(project);
     if (web)
       return (
@@ -140,6 +155,32 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
   );
 }
 
+/** Returns null when a remote cannot authoritatively identify a Gitea web root. */
+function giteaHttpRemoteMatchesLink(
+  identity: RepositoryIdentity,
+  link: ChangeRequestLink,
+  matchRepository = true,
+): boolean | null {
+  try {
+    const remote = new URL(identity.locator.remoteUrl.trim());
+    if (remote.protocol !== "http:" && remote.protocol !== "https:") return null;
+    if (remote.host.toLowerCase() !== (link.authority ?? link.host).toLowerCase()) return false;
+    const remotePath = remote.pathname.split("/").filter((segment) => segment.length > 0);
+    if (remotePath.length < 2) return false;
+    remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
+    if (remotePath.some((segment) => segment.length === 0)) return false;
+    if (matchRepository) {
+      return remotePath.join("/").toLowerCase() === link.repository.toLowerCase();
+    }
+    return (
+      remotePath.slice(0, -2).join("/").toLowerCase() ===
+      link.repository.split("/").slice(0, -2).join("/").toLowerCase()
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Any project checked out from the link's host. Thread links are host-level, so a pull request
  * from a repository nobody has checked out is still linkable as long as one project on that
@@ -161,6 +202,11 @@ export function findProjectOnChangeRequestHost(
   return projects.find((project) => {
     const identity = project.repositoryIdentity;
     const kind = identity?.provider as SourceControlProviderKind | undefined;
+    if (identity && (kind === "gitea" || kind === "unknown")) {
+      const rootMatch = giteaHttpRemoteMatchesLink(identity, link, false);
+      if (rootMatch !== null) return rootMatch;
+      if (link.repository.split("/").length > 2) return false;
+    }
     const web = resolvedForgejoRepository(project);
     if (web) {
       const mount = web.pathname

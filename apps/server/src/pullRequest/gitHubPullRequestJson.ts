@@ -95,6 +95,17 @@ const RawCheckSchema = Schema.Struct({
   completedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+/** The repository a head ref belongs to, when GitHub can still resolve it. */
+const RawHeadRepositorySchema = Schema.Struct({
+  nameWithOwner: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/** GitHub keeps the owner separate from the repository object on `gh pr` JSON output. */
+const RawHeadRepositoryOwnerSchema = Schema.Struct({
+  login: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 const RawListItemSchema = Schema.Struct({
   number: Schema.Int,
   title: Schema.String,
@@ -102,6 +113,10 @@ const RawListItemSchema = Schema.Struct({
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   headRefName: Schema.String,
   baseRefName: Schema.String,
+  /** Whether GitHub explicitly says that the head is from another repository. */
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepository: Schema.optional(Schema.NullOr(RawHeadRepositorySchema)),
+  headRepositoryOwner: Schema.optional(Schema.NullOr(RawHeadRepositoryOwnerSchema)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
@@ -395,10 +410,6 @@ const RawCommitSchema = Schema.Struct({
 
 const RawDetailSchema = Schema.Struct({
   ...RawListItemSchema.fields,
-  /** GitHub's explicit distinction between a fork head and a branch in the base repository. */
-  isCrossRepository: Schema.optional(Schema.Boolean),
-  /** Names the fork a pull request came from, which is what qualifies its head ref. */
-  headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   /** The exact head revision, used to find workflow runs that GitHub has not started yet. */
   headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
@@ -702,9 +713,9 @@ export function decodeActorAvatarsJson(
 }
 
 export const PULL_REQUEST_LIST_JSON_FIELDS =
-  "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup";
+  "number,title,url,author,headRefName,baseRefName,isCrossRepository,headRepository,headRepositoryOwner,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,headRefOid,autoMergeRequest`;
 
 /** Pull refs let the comparison share the detail read without first resolving a fork branch. */
 export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
@@ -715,6 +726,7 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
       additions deletions changedFiles createdAt updatedAt mergedAt closedAt
       headRefName baseRefName headRefOid isCrossRepository
       headRepositoryOwner { login }
+      headRepository { nameWithOwner }
       author { login avatarUrl ... on User { id name } }
       autoMergeRequest { mergeMethod }
       viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
@@ -1177,6 +1189,10 @@ export interface GitHubPullRequestListItem {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  /** The repository-qualified head ref, omitted when GitHub could not resolve the source. */
+  readonly headRepositoryNameWithOwner?: string | null;
+  /** True only when GitHub explicitly says the head belongs to another repository. */
+  readonly isCrossRepository?: boolean;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -1196,8 +1212,6 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
-  /** True only when GitHub says the head belongs to another repository. */
-  readonly isCrossRepository?: boolean;
   /** The owner of the head branch's repository; null where `gh` did not say. */
   readonly headRepositoryOwner: string | null;
   readonly headSha?: string | null;
@@ -1234,6 +1248,39 @@ export interface GitHubPullRequestActivity {
 function trimmed(value: string | null | undefined): string | null {
   const text = value?.trim() ?? "";
   return text.length > 0 ? text : null;
+}
+
+/**
+ * GitHub normally gives `nameWithOwner`; older `gh` versions expose the name and owner as two
+ * fields. A bare repository name is not a repository identity, so it is discarded when neither
+ * field can qualify it.
+ */
+function headRepositoryNameWithOwner(raw: {
+  readonly headRepository?: Schema.Schema.Type<typeof RawHeadRepositorySchema> | null | undefined;
+  readonly headRepositoryOwner?:
+    | Schema.Schema.Type<typeof RawHeadRepositoryOwnerSchema>
+    | null
+    | undefined;
+}): string | null {
+  const explicit = trimmed(raw.headRepository?.nameWithOwner);
+  if (explicit?.includes("/")) return explicit;
+  const owner = trimmed(raw.headRepositoryOwner?.login);
+  const name = trimmed(raw.headRepository?.name);
+  return owner !== null && name !== null ? `${owner}/${name}` : null;
+}
+
+function headRepositoryOwner(raw: {
+  readonly headRepository?: Schema.Schema.Type<typeof RawHeadRepositorySchema> | null | undefined;
+  readonly headRepositoryOwner?:
+    | Schema.Schema.Type<typeof RawHeadRepositoryOwnerSchema>
+    | null
+    | undefined;
+}): string | null {
+  return (
+    trimmed(raw.headRepositoryOwner?.login) ??
+    headRepositoryNameWithOwner(raw)?.split("/", 1)[0] ??
+    null
+  );
 }
 
 /**
@@ -1581,6 +1628,7 @@ function toCommits(
 }
 
 function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPullRequestListItem {
+  const repository = headRepositoryNameWithOwner(raw);
   return {
     authorId: trimmed(raw.author?.id),
     number: raw.number,
@@ -1588,6 +1636,10 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
     url: raw.url,
     author: toActor(raw.author),
     headBranch: raw.headRefName,
+    ...(repository === null ? {} : { headRepositoryNameWithOwner: repository }),
+    ...(typeof raw.isCrossRepository === "boolean"
+      ? { isCrossRepository: raw.isCrossRepository }
+      : {}),
     baseBranch: raw.baseRefName,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
@@ -1611,7 +1663,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),
-    headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
+    headRepositoryOwner: headRepositoryOwner(raw),
     headSha: trimmed(raw.headRefOid),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,
