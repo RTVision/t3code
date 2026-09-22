@@ -270,7 +270,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           data-app-sidebar=""
           data-vim-pane="sidebar"
           tabIndex={-1}
-          className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+          className="border-r border-sidebar-border"
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,

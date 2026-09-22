@@ -345,7 +345,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           )}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="px-[var(--sidebar-content-inset)] py-1">
+      <SidebarFooter>
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
