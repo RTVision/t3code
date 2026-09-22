@@ -1,5 +1,3 @@
-import { onAppCommand } from "../vim/commandBus";
-import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -18,6 +16,9 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isEditableFocused } from "../lib/editableFocus";
+import { isModelPickerOpen } from "../modelPickerVisibility";
+import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -60,20 +61,29 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
-      if (event.defaultPrevented && !requestedCommand) return;
-      const command =
-        requestedCommand ??
-        resolveShortcutCommand(event, keybindings, {
-          context: {
-            terminalFocus: isTerminalFocused(),
-            terminalOpen,
-            previewFocus: isPreviewFocused(),
-            previewOpen,
-          },
-        });
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen,
+          editableFocus: isEditableFocused(event.target),
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
 
       if (isCommandPaletteOpen()) {
+        return;
+      }
+
+      if (command === "thread.undo") {
+        if (event.repeat || isModelPickerOpen()) return;
+        if (undoLatestThreadAction()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
         return;
       }
 
@@ -158,10 +168,8 @@ function ChatRouteGlobalShortcuts() {
       }
     };
 
-    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
-      unsubscribeCommand();
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
