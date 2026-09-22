@@ -13,7 +13,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
-import { Textarea } from "../ui/textarea";
+import { MentionTextarea } from "../ui/mention-textarea";
 import { toastManager } from "../ui/toast";
 import {
   pullRequestReviewKey,
@@ -123,7 +123,7 @@ export function PullRequestReviewForm({
 
   return (
     <>
-      <Textarea
+      <MentionTextarea
         ref={textareaRef}
         rows={3}
         className="[&_textarea]:max-h-64"
@@ -134,7 +134,7 @@ export function PullRequestReviewForm({
             : "Summarize your review (optional)"
         }
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onValueChange={(value) => setSummary(reviewKey, value)}
       />
       <div className="mt-2 flex justify-between gap-2">
         <Select
