@@ -1685,9 +1685,9 @@ export const make = Effect.gen(function* () {
     // needs its own full search. Search unmerged closures too: a newer closed PR must still win
     // over an older merge.
     if (exhaustive && parsedByNumber.size === 0) {
-      for (const headSelector of headContext.headSelectors) {
+      for (const headSelector of probeableHeadSelectors(provider.kind, headContext.headSelectors)) {
         for (const state of ["merged", "closed"] as const) {
-          const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+          const pullRequests = yield* provider.listChangeRequests({
             cwd,
             headSelector,
             state,
