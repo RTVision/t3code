@@ -213,6 +213,123 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			const hasThemes = this.highlighter != null && areThemesAttached(options.theme);
  			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
  			const canHighlight = !forcePlainText && hasLangs;
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -186,6 +186,15 @@ interface Hunk {
+   hunkContext?: string;
+   /** Raw hunk header string (e.g., `@@ -1,5 +1,7 @@`). */
+   hunkSpecs?: string;
++  /**
++   * T3 patch: code tokenized, but not rendered, before this hunk when the
++   * diff is partial, so the hunk starts in the right grammar state. Applied
++   * only to sides whose language equals `lang`.
++   */
++  grammarContext?: {
++    lang: string;
++    code: string;
++  };
+   /**
+    * Starting line index for this hunk when rendered in split (side-by-side)
+    * view.
+diff --git a/dist/utils/renderDiffWithHighlighter.js b/dist/utils/renderDiffWithHighlighter.js
+--- a/dist/utils/renderDiffWithHighlighter.js
++++ b/dist/utils/renderDiffWithHighlighter.js
+@@ -94,8 +94,9 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			}
+ 		}
+ 	});
+-	for (const bucket of buckets.values()) {
++	for (const [bucketIndex, bucket] of buckets) {
+ 		if (bucket.deletionContent.length === 0 && bucket.additionContent.length === 0) continue;
++		const grammarContext = shouldGroupAll || forcePlainText ? void 0 : diff.hunks[bucketIndex]?.grammarContext;
+ 		const deletionFile = {
+ 			name: diff.prevName ?? diff.name,
+ 			contents: bucket.deletionContent.value
+@@ -113,7 +114,8 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			additionDecorations: bucket.additionDecorations,
+ 			highlighter,
+ 			options,
+-			languageOverride: forcePlainText ? "text" : diff.lang
++			languageOverride: forcePlainText ? "text" : diff.lang,
++			grammarContext
+ 		});
+ 		if (shouldGroupAll) {
+ 			code.deletionLines = deletionLines;
+@@ -216,7 +218,7 @@ function createBucket() {
+ 		additionSegments: []
+ 	};
+ }
+-function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
++function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, grammarContext, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
+ 	const deletionLang = languageOverride ?? getFiletypeFromFileName(deletionFile.name);
+ 	const additionLang = languageOverride ?? getFiletypeFromFileName(additionFile.name);
+ 	const { state, transformers } = createTransformerWithState(options.useTokenTransformer);
+@@ -245,6 +247,7 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 		deletionLines: (() => {
+ 			if (deletionFile.contents === "") return [];
+ 			hastConfig.lang = deletionLang;
++			hastConfig.grammarContextCode = grammarContext?.lang === deletionLang ? grammarContext.code : void 0;
+ 			state.lineInfo = deletionInfo;
+ 			hastConfig.decorations = deletionDecorations;
+ 			return getLineNodes(highlighter.codeToHast(cleanLastNewline(deletionFile.contents), hastConfig));
+@@ -252,6 +255,7 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 		additionLines: (() => {
+ 			if (additionFile.contents === "") return [];
+ 			hastConfig.lang = additionLang;
++			hastConfig.grammarContextCode = grammarContext?.lang === additionLang ? grammarContext.code : void 0;
+ 			hastConfig.decorations = additionDecorations;
+ 			state.lineInfo = additionInfo;
+ 			return getLineNodes(highlighter.codeToHast(cleanLastNewline(additionFile.contents), hastConfig));
+diff --git a/dist/worker/worker.js b/dist/worker/worker.js
+--- a/dist/worker/worker.js
++++ b/dist/worker/worker.js
+@@ -1368,8 +1368,9 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			}
+ 		}
+ 	});
+-	for (const bucket of buckets.values()) {
++	for (const [bucketIndex, bucket] of buckets) {
+ 		if (bucket.deletionContent.length === 0 && bucket.additionContent.length === 0) continue;
++		const grammarContext = shouldGroupAll || forcePlainText ? void 0 : diff.hunks[bucketIndex]?.grammarContext;
+ 		const deletionFile = {
+ 			name: diff.prevName ?? diff.name,
+ 			contents: bucket.deletionContent.value
+@@ -1387,7 +1388,8 @@ function renderDiffWithHighlighter(diff, highlighter, options, { forcePlainText,
+ 			additionDecorations: bucket.additionDecorations,
+ 			highlighter,
+ 			options,
+-			languageOverride: forcePlainText ? "text" : diff.lang
++			languageOverride: forcePlainText ? "text" : diff.lang,
++			grammarContext
+ 		});
+ 		if (shouldGroupAll) {
+ 			code.deletionLines = deletionLines;
+@@ -1490,7 +1492,7 @@ function createBucket() {
+ 		additionSegments: []
+ 	};
+ }
+-function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
++function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, grammarContext, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
+ 	const deletionLang = languageOverride ?? getFiletypeFromFileName(deletionFile.name);
+ 	const additionLang = languageOverride ?? getFiletypeFromFileName(additionFile.name);
+ 	const { state, transformers } = createTransformerWithState(options.useTokenTransformer);
+@@ -1519,6 +1521,7 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 		deletionLines: (() => {
+ 			if (deletionFile.contents === "") return [];
+ 			hastConfig.lang = deletionLang;
++			hastConfig.grammarContextCode = grammarContext?.lang === deletionLang ? grammarContext.code : void 0;
+ 			state.lineInfo = deletionInfo;
+ 			hastConfig.decorations = deletionDecorations;
+ 			return getLineNodes(highlighter.codeToHast(cleanLastNewline(deletionFile.contents), hastConfig));
+@@ -1526,6 +1529,7 @@ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo
+ 		additionLines: (() => {
+ 			if (additionFile.contents === "") return [];
+ 			hastConfig.lang = additionLang;
++			hastConfig.grammarContextCode = grammarContext?.lang === additionLang ? grammarContext.code : void 0;
+ 			hastConfig.decorations = additionDecorations;
+ 			state.lineInfo = additionInfo;
+ 			return getLineNodes(highlighter.codeToHast(cleanLastNewline(additionFile.contents), hastConfig));
 diff --git a/package.json b/package.json
 index ff61c90..1e170e5 100644
 --- a/package.json

@@ -7,6 +7,8 @@ const { getSharedHighlighter } = vi.hoisted(() => ({
 
 vi.mock("@pierre/diffs", () => ({
   getSharedHighlighter,
+  registerCustomLanguage: vi.fn(),
+  RegisteredCustomLanguages: new Map(),
 }));
 
 import { getSyntaxHighlighterPromise } from "./syntaxHighlighting";
