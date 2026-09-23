@@ -2,31 +2,24 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
   title = "Could not load pull requests",
   error,
   onRetry,
-  browserUrl,
   refreshing = false,
+  gitHubUrl,
 }: {
   title?: string;
   error: string;
   onRetry?: () => void;
-  browserUrl?: string;
   refreshing?: boolean;
+  gitHubUrl?: string;
 }) {
   return (
-    <Empty className="min-h-0 justify-center-safe overflow-y-auto px-4 py-16 md:px-4 [&>*]:shrink-0">
+    <Empty className="min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
         <PullRequestGlyph.pullRequest />
       </EmptyMedia>
@@ -36,8 +29,8 @@ export function PullRequestsUnavailableState({
             shows its message rather than trying to infer one from the failure text. */}
         <EmptyDescription>{error}</EmptyDescription>
       </EmptyHeader>
-      {onRetry || browserUrl ? (
-        <EmptyContent className="flex-row flex-wrap justify-center gap-2">
+      {onRetry || gitHubUrl ? (
+        <div className="flex flex-wrap justify-center gap-2">
           {onRetry ? (
             <Button
               size="sm"
@@ -50,17 +43,17 @@ export function PullRequestsUnavailableState({
               Retry
             </Button>
           ) : null}
-          {browserUrl ? (
+          {gitHubUrl ? (
             <Button
               size="sm"
               variant="outline"
-              render={<a href={browserUrl} target="_blank" rel="noopener noreferrer" />}
+              render={<a href={gitHubUrl} target="_blank" rel="noopener noreferrer" />}
             >
               <ExternalLinkIcon aria-hidden className="size-3.5" />
-              Open in browser
+              Open on GitHub
             </Button>
           ) : null}
-        </EmptyContent>
+        </div>
       ) : null}
     </Empty>
   );

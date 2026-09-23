@@ -10,7 +10,6 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
-import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -71,6 +70,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -259,7 +260,7 @@ function PullRequestCodeTab({
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -332,10 +333,7 @@ function PullRequestCodeTab({
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: {
-        ...reference,
-        ...(commit === null ? {} : { commit }),
-      },
+      input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
   const reviewKey = referenceKey;
@@ -354,9 +352,7 @@ function PullRequestCodeTab({
   const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
     reportFailure: false,
   });
-  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents, {
-    reportFailure: false,
-  });
+  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
   const loadDiffFiles = useMemo(
     () =>
       createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -380,6 +376,9 @@ function PullRequestCodeTab({
       resolve: hostReview.resolve && viewer.resolve,
     };
   }, [detail.capabilities.review, detail.viewerPermissions]);
+  // A comment is posted against the pull request's head diff, so a line number taken from one
+  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
+  const canCommentOnLines = review.inlineComment && commit === null;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -409,9 +408,6 @@ function PullRequestCodeTab({
       ),
     [parsedSlices],
   );
-  // A comment is posted against the pull request's head diff, so a line number taken from one
-  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
-  const canCommentOnLines = review.inlineComment && commit === null;
   const filePaths = useMemo(() => files.map((file) => resolveFileDiffPath(file)), [files]);
   // Offered under a commit scope as well as from the whole change, because reading a change one
   // commit at a time is what the scope is for. The tick is kept against the change request rather
@@ -473,21 +469,6 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, detail.reviewThreads, files]);
 
-  const placedPendingIds = useMemo(() => {
-    const placed = new Set<string>();
-    if (commit !== null) return placed;
-    for (const file of files) {
-      const path = resolveFileDiffPath(file);
-      for (const comment of pendingComments) {
-        const anchor = getReviewPositionAnchor(comment.position);
-        if (comment.path === path && isLineInFileDiff(file, anchor.side, anchor.line)) {
-          placed.add(comment.id);
-        }
-      }
-    }
-    return placed;
-  }, [commit, files, pendingComments]);
-
   // Hashing what the annotations show is the costly part of an item's version, and none of it
   // moves when a file is ticked or folded, so it is kept apart from the two that do.
   const annotatedFiles = useMemo(
@@ -522,7 +503,7 @@ function PullRequestCodeTab({
         // commit's diff must not place them either — the same line means other code there.
         if (commit === null) {
           for (const comment of pendingComments) {
-            if (comment.path !== path || !placedPendingIds.has(comment.id)) continue;
+            if (comment.path !== path) continue;
             const anchor = getReviewPositionAnchor(comment.position);
             groupAt(anchor.side, anchor.line).pending.push(comment);
           }
@@ -574,15 +555,7 @@ function PullRequestCodeTab({
           ),
         };
       }),
-    [
-      commit,
-      detail.reviewThreads,
-      draft,
-      files,
-      pendingComments,
-      placedPendingIds,
-      placedThreadIds,
-    ],
+    [commit, detail.reviewThreads, draft, files, pendingComments, placedThreadIds],
   );
 
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
@@ -812,7 +785,7 @@ function PullRequestCodeTab({
           variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className="mr-1 rounded hover:bg-transparent"
+          className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
@@ -947,7 +920,7 @@ function PullRequestCodeTab({
         workspaceRoot={detail.workspaceRoot}
         canReply={review.reply}
         canResolve={review.resolve}
-        canReact={pullRequestCanReact(detail.capabilities, "review-comment")}
+        canReact={detail.capabilities.reactions === true}
         environmentId={environmentId}
         reference={reference}
         pending={threadPending}
@@ -1098,38 +1071,39 @@ function PullRequestCodeTab({
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="inline-flex h-6 min-w-0 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
+              render={<Button size="xs" variant="secondary" />}
+              className="min-w-0 max-w-64"
               aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-80">
-              <DropdownMenuItem
-                className={commit === null ? "bg-foreground/[0.08]" : undefined}
-                onClick={() => onSelectedCommitChange(null)}
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={commit ?? "all"}
+                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
               >
-                <span>All commits</span>
-              </DropdownMenuItem>
-              {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
-                <DropdownMenuItem
-                  key={entry.oid}
-                  className={entry.oid === commit ? "bg-foreground/[0.08]" : undefined}
-                  onClick={() => onSelectedCommitChange(entry.oid)}
-                >
-                  {/* Headlines run long, and the abbreviated oid after one is what a reader
-                      matches against the commit list on the host. */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
-                    />
-                    <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
-                  </Tooltip>
-                  <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {entry.oid.slice(0, 7)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                <DropdownMenuRadioItem value="all" closeOnClick>
+                  <span>All commits</span>
+                </DropdownMenuRadioItem>
+                {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
+                  <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
+                    {/* Headlines run long, and the abbreviated oid after one is what a reader
+                        matches against the commit list on the host. */}
+                    <span className="flex items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
+                        />
+                        <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
+                      </Tooltip>
+                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                        {entry.oid.slice(0, 7)}
+                      </span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
               {orderedCommits.length > visibleCommitCount ? (
                 // Kept out of the radio group: it changes how much of the list is on screen
                 // rather than what the diff is scoped to.
@@ -1403,22 +1377,13 @@ function PullRequestCodeTab({
   }
 
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
-  const orphanPending = pendingComments.filter((comment) => !placedPendingIds.has(comment.id));
   // A file carrying five stranded conversations should read as that file once rather than as
   // five copies of its path.
-  const orphanFiles = new Map<
-    string,
-    { threads: PullRequestReviewThread[]; pending: PendingReviewComment[] }
-  >();
+  const orphanFiles = new Map<string, PullRequestReviewThread[]>();
   for (const thread of orphanThreads) {
     const existing = orphanFiles.get(thread.path);
-    if (existing) existing.threads.push(thread);
-    else orphanFiles.set(thread.path, { threads: [thread], pending: [] });
-  }
-  for (const comment of orphanPending) {
-    const existing = orphanFiles.get(comment.path);
-    if (existing) existing.pending.push(comment);
-    else orphanFiles.set(comment.path, { threads: [], pending: [comment] });
+    if (existing) existing.push(thread);
+    else orphanFiles.set(thread.path, [thread]);
   }
 
   const unstructured =
@@ -1442,75 +1407,63 @@ function PullRequestCodeTab({
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (
-        <Collapsible
-          className="shrink-0 border-b border-border/60"
-          open={orphansOpen}
-          onOpenChange={setOrphansOpen}
-        >
-          {/* Still a heading, so the section keeps its place in a screen reader's outline;
+        <div className="shrink-0 border-b border-border/60">
+          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+            {/* Still a heading, so the section keeps its place in a screen reader's outline;
                 the count is spelled out there rather than left as a bare number. */}
-          <h2>
-            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-              {/* While slices are still arriving a conversation may simply belong to a file
+            <h2>
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+                {/* While slices are still arriving a conversation may simply belong to a file
                     that has not landed yet, which is not the same as being off the diff. */}
-              <span>
-                {nextCursor === null
-                  ? "Comments not on the current diff"
-                  : "Comments not on the diff loaded so far"}
-              </span>
-              <ChevronRightIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-              />
-              <span aria-hidden className="tabular-nums">
-                {orphanThreads.length + orphanPending.length}
-              </span>
-              <span className="sr-only">
-                {orphanThreads.length === 1
-                  ? "1 conversation"
-                  : `${orphanThreads.length} conversations`}
-                {orphanPending.length > 0 ? ` and ${orphanPending.length} pending comments` : null}
-              </span>
-            </CollapsibleTrigger>
-          </h2>
-          <CollapsiblePanel>
-            {/* Capped: opened on a change with dozens of them, this would otherwise leave no
+                <span>
+                  {nextCursor === null
+                    ? "Conversations not on the current diff"
+                    : "Conversations not on the diff loaded so far"}
+                </span>
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+                />
+                <span aria-hidden className="tabular-nums">
+                  {orphanThreads.length}
+                </span>
+                <span className="sr-only">
+                  {orphanThreads.length === 1
+                    ? "1 conversation"
+                    : `${orphanThreads.length} conversations`}
+                </span>
+              </CollapsibleTrigger>
+            </h2>
+            <CollapsiblePanel>
+              {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
-            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-              {[...orphanFiles].map(([path, { threads, pending }]) => (
-                <div key={path}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
-                    />
-                    <TooltipPopup side="top">{path}</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-1 space-y-2">
-                    {threads.map((thread) => (
-                      <div key={thread.id}>
-                        {thread.line === null ? null : (
-                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
-                        )}
-                        {renderThreadCard(thread)}
-                      </div>
-                    ))}
-                    {pending.map((comment) => (
-                      <div key={comment.id}>
-                        <p className="px-3 text-xs text-muted-foreground">
-                          Line {getReviewPositionAnchor(comment.position).line}
-                        </p>
-                        <PendingReviewCommentCard
-                          comment={comment}
-                          onRemove={() => removeComment(reviewKey, comment.id)}
-                        />
-                      </div>
-                    ))}
+              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+                {[...orphanFiles].map(([path, threads]) => (
+                  <div key={path}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
+                        }
+                      />
+                      <TooltipPopup side="top">{path}</TooltipPopup>
+                    </Tooltip>
+                    <div className="mt-1 space-y-2">
+                      {threads.map((thread) => (
+                        <div key={thread.id}>
+                          {thread.line === null ? null : (
+                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                          )}
+                          {renderThreadCard(thread)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it

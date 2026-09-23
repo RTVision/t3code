@@ -1,8 +1,3 @@
-import { claimVimPaneFocus } from "../vim/runtime";
-import { useVimSidebar } from "../vim/useVimSidebar";
-import { VimNavigation } from "../vim/VimNavigation";
-import { onAppCommand } from "../vim/commandBus";
-import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -12,7 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
@@ -21,13 +16,16 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
+import { isEditableFocused } from "../lib/editableFocus";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import { isModelPickerOpen } from "../modelPickerVisibility";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import {
-  useClientSettings,
-  useEnvironmentIdentificationMode,
-  useLegacySidebarEnabled,
-} from "../hooks/useSettings";
+import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -83,17 +81,9 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
-  useVimSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
-  useEffect(() => {
-    if (isSidebarVisible)
-      claimVimPaneFocus(
-        "sidebar",
-        document.querySelector<HTMLElement>('[data-vim-pane="sidebar"]'),
-      );
-  }, [isSidebarVisible]);
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -101,8 +91,8 @@ function SidebarControl() {
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
-      if (event.defaultPrevented && !requestedCommand) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
@@ -110,7 +100,6 @@ function SidebarControl() {
         return;
       }
       if (
-        !requestedCommand &&
         isRichTextBoldShortcut(event) &&
         event.target instanceof HTMLElement &&
         event.target.closest('[data-composer-rich-text="true"]')
@@ -119,8 +108,7 @@ function SidebarControl() {
         // available everywhere else, including the plain-text composer.
         return;
       }
-      if ((requestedCommand ?? resolveShortcutCommand(event, keybindings)) !== "sidebar.toggle")
-        return;
+      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -128,12 +116,8 @@ function SidebarControl() {
     };
 
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
-    const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      unsubscribeCommand();
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [keybindings, toggleSidebar]);
 
   return (
@@ -148,11 +132,12 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
+              // Over the stage artwork the trigger is a control on imagery, like the media
+              // viewer's arrows; that variant positions itself, so the layout is reset here.
+              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
               className={cn(
                 "pointer-events-auto",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 isSidebarVisible &&
                   stageBackdropVariant &&
                   resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
@@ -169,6 +154,56 @@ function SidebarControl() {
   );
 }
 
+// Moves through the app's route history like a browser's back/forward buttons.
+function NavigationHistoryShortcuts() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const routeThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: routeThreadRef
+            ? selectThreadTerminalUiState(
+                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+                routeThreadRef,
+              ).terminalOpen
+            : false,
+          previewFocus: isPreviewFocused(),
+          previewOpen: routeThreadRef
+            ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+              "preview"
+            : false,
+          editableFocus: isEditableFocused(event.target),
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "navigation.back" && command !== "navigation.forward") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (command === "navigation.back") window.history.back();
+      else window.history.forward();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [keybindings, routeThreadRef]);
+
+  return null;
+}
+
 // Settings swaps the thread sidebar out of the tree. Keep the lightweight
 // project projection subscribed so returning to a draft never renders the
 // zero-project state while the environment snapshot reconnects.
@@ -180,7 +215,6 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
-  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   // Settings routes show the settings nav in place of whichever thread
@@ -268,9 +302,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
-          data-vim-pane="sidebar"
-          tabIndex={-1}
-          className="border-r border-sidebar-border"
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,
@@ -293,15 +324,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {vimEnabled ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
-            <VimNavigation isOnSettings={isOnSettings} />
-          </div>
-        ) : (
-          children
-        )}
+        {children}
         <SidebarControl />
+        <NavigationHistoryShortcuts />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );
