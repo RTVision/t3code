@@ -10,6 +10,7 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
+import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -260,7 +261,7 @@ function PullRequestCodeTab({
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
+  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -333,7 +334,10 @@ function PullRequestCodeTab({
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
+      input: {
+        ...reference,
+        ...(commit === null ? {} : { commit }),
+      },
     }),
   );
   const reviewKey = referenceKey;
@@ -352,7 +356,9 @@ function PullRequestCodeTab({
   const loadThreadComments = useAtomCommand(pullRequestEnvironment.threadComments, {
     reportFailure: false,
   });
-  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
+  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents, {
+    reportFailure: false,
+  });
   const loadDiffFiles = useMemo(
     () =>
       createPullRequestDiffFileContentsLoader(getDiffFileContents, {
@@ -376,9 +382,6 @@ function PullRequestCodeTab({
       resolve: hostReview.resolve && viewer.resolve,
     };
   }, [detail.capabilities.review, detail.viewerPermissions]);
-  // A comment is posted against the pull request's head diff, so a line number taken from one
-  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
-  const canCommentOnLines = review.inlineComment && commit === null;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -408,6 +411,9 @@ function PullRequestCodeTab({
       ),
     [parsedSlices],
   );
+  // A comment is posted against the pull request's head diff, so a line number taken from one
+  // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
+  const canCommentOnLines = review.inlineComment && commit === null;
   const filePaths = useMemo(() => files.map((file) => resolveFileDiffPath(file)), [files]);
   // Offered under a commit scope as well as from the whole change, because reading a change one
   // commit at a time is what the scope is for. The tick is kept against the change request rather
@@ -469,6 +475,21 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, detail.reviewThreads, files]);
 
+  const placedPendingIds = useMemo(() => {
+    const placed = new Set<string>();
+    if (commit !== null) return placed;
+    for (const file of files) {
+      const path = resolveFileDiffPath(file);
+      for (const comment of pendingComments) {
+        const anchor = getReviewPositionAnchor(comment.position);
+        if (comment.path === path && isLineInFileDiff(file, anchor.side, anchor.line)) {
+          placed.add(comment.id);
+        }
+      }
+    }
+    return placed;
+  }, [commit, files, pendingComments]);
+
   // Hashing what the annotations show is the costly part of an item's version, and none of it
   // moves when a file is ticked or folded, so it is kept apart from the two that do.
   const annotatedFiles = useMemo(
@@ -503,7 +524,7 @@ function PullRequestCodeTab({
         // commit's diff must not place them either — the same line means other code there.
         if (commit === null) {
           for (const comment of pendingComments) {
-            if (comment.path !== path) continue;
+            if (comment.path !== path || !placedPendingIds.has(comment.id)) continue;
             const anchor = getReviewPositionAnchor(comment.position);
             groupAt(anchor.side, anchor.line).pending.push(comment);
           }
@@ -555,7 +576,15 @@ function PullRequestCodeTab({
           ),
         };
       }),
-    [commit, detail.reviewThreads, draft, files, pendingComments, placedThreadIds],
+    [
+      commit,
+      detail.reviewThreads,
+      draft,
+      files,
+      pendingComments,
+      placedPendingIds,
+      placedThreadIds,
+    ],
   );
 
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
@@ -920,7 +949,7 @@ function PullRequestCodeTab({
         workspaceRoot={detail.workspaceRoot}
         canReply={review.reply}
         canResolve={review.resolve}
-        canReact={detail.capabilities.reactions === true}
+        canReact={pullRequestCanReact(detail.capabilities, "review-comment")}
         environmentId={environmentId}
         reference={reference}
         pending={threadPending}
@@ -1377,13 +1406,22 @@ function PullRequestCodeTab({
   }
 
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
+  const orphanPending = pendingComments.filter((comment) => !placedPendingIds.has(comment.id));
   // A file carrying five stranded conversations should read as that file once rather than as
   // five copies of its path.
-  const orphanFiles = new Map<string, PullRequestReviewThread[]>();
+  const orphanFiles = new Map<
+    string,
+    { threads: PullRequestReviewThread[]; pending: PendingReviewComment[] }
+  >();
   for (const thread of orphanThreads) {
     const existing = orphanFiles.get(thread.path);
-    if (existing) existing.push(thread);
-    else orphanFiles.set(thread.path, [thread]);
+    if (existing) existing.threads.push(thread);
+    else orphanFiles.set(thread.path, { threads: [thread], pending: [] });
+  }
+  for (const comment of orphanPending) {
+    const existing = orphanFiles.get(comment.path);
+    if (existing) existing.pending.push(comment);
+    else orphanFiles.set(comment.path, { threads: [], pending: [comment] });
   }
 
   const unstructured =
@@ -1417,20 +1455,23 @@ function PullRequestCodeTab({
                     that has not landed yet, which is not the same as being off the diff. */}
                 <span>
                   {nextCursor === null
-                    ? "Conversations not on the current diff"
-                    : "Conversations not on the diff loaded so far"}
+                    ? "Comments not on the current diff"
+                    : "Comments not on the diff loaded so far"}
                 </span>
                 <ChevronRightIcon
                   aria-hidden
                   className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
                 />
                 <span aria-hidden className="tabular-nums">
-                  {orphanThreads.length}
+                  {orphanThreads.length + orphanPending.length}
                 </span>
                 <span className="sr-only">
                   {orphanThreads.length === 1
                     ? "1 conversation"
                     : `${orphanThreads.length} conversations`}
+                  {orphanPending.length > 0
+                    ? ` and ${orphanPending.length} pending comments`
+                    : null}
                 </span>
               </CollapsibleTrigger>
             </h2>
@@ -1438,7 +1479,7 @@ function PullRequestCodeTab({
               {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
               <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-                {[...orphanFiles].map(([path, threads]) => (
+                {[...orphanFiles].map(([path, { threads, pending }]) => (
                   <div key={path}>
                     <Tooltip>
                       <TooltipTrigger
@@ -1455,6 +1496,17 @@ function PullRequestCodeTab({
                             <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
                           )}
                           {renderThreadCard(thread)}
+                        </div>
+                      ))}
+                      {pending.map((comment) => (
+                        <div key={comment.id}>
+                          <p className="px-3 text-xs text-muted-foreground">
+                            Line {getReviewPositionAnchor(comment.position).line}
+                          </p>
+                          <PendingReviewCommentCard
+                            comment={comment}
+                            onRemove={() => removeComment(reviewKey, comment.id)}
+                          />
                         </div>
                       ))}
                     </div>

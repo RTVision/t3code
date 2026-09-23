@@ -1,3 +1,8 @@
+import { claimVimPaneFocus } from "../vim/runtime";
+import { useVimSidebar } from "../vim/useVimSidebar";
+import { VimNavigation } from "../vim/VimNavigation";
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -25,7 +30,11 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -81,9 +90,17 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
+  useVimSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
+  useEffect(() => {
+    if (isSidebarVisible)
+      claimVimPaneFocus(
+        "sidebar",
+        document.querySelector<HTMLElement>('[data-vim-pane="sidebar"]'),
+      );
+  }, [isSidebarVisible]);
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -91,8 +108,8 @@ function SidebarControl() {
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+    const onKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+      if (event.defaultPrevented && !requestedCommand) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
@@ -100,6 +117,7 @@ function SidebarControl() {
         return;
       }
       if (
+        !requestedCommand &&
         isRichTextBoldShortcut(event) &&
         event.target instanceof HTMLElement &&
         event.target.closest('[data-composer-rich-text="true"]')
@@ -108,7 +126,8 @@ function SidebarControl() {
         // available everywhere else, including the plain-text composer.
         return;
       }
-      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
+      if ((requestedCommand ?? resolveShortcutCommand(event, keybindings)) !== "sidebar.toggle")
+        return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -116,8 +135,12 @@ function SidebarControl() {
     };
 
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
+    const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [keybindings, toggleSidebar]);
 
   return (
@@ -215,6 +238,7 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   // Settings routes show the settings nav in place of whichever thread
@@ -302,6 +326,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
+          data-vim-pane="sidebar"
+          tabIndex={-1}
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,
@@ -324,7 +350,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {children}
+        {vimEnabled ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
+            <VimNavigation isOnSettings={isOnSettings} />
+          </div>
+        ) : (
+          children
+        )}
         <SidebarControl />
         <NavigationHistoryShortcuts />
       </SidebarProvider>
