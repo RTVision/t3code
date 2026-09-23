@@ -150,6 +150,50 @@ describe("GiteaPullRequestProvider", () => {
       expect("autoMergeEnabled" in detail).toBe(false);
     }),
   );
+  it.effect("carries merge and close times in the summary", () =>
+    Effect.gen(function* () {
+      const request = vi.fn<GiteaCli.GiteaCli["Service"]["request"]>((input) =>
+        input.path === "/repos/acme/web/pulls/7"
+          ? Effect.succeed(
+              response({
+                ...rawPullRequest(),
+                state: "closed",
+                merged: true,
+                merged_at: "2026-09-03T10:00:00Z",
+                closed_at: "2026-09-03T10:00:00Z",
+              }),
+            )
+          : Effect.die(`Unexpected Gitea request: ${input.path}`),
+      );
+      const apiLayer = GiteaPullRequestApi.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            GiteaCli.GiteaCli,
+            GiteaCli.GiteaCli.of({
+              baseUrl: Option.some("https://forge.example.test/gitea"),
+              sshHosts: [],
+              request,
+              probeAuth: Effect.die("not used"),
+            }),
+          ),
+        ),
+      );
+      const provider = yield* makeGiteaPullRequestProvider.pipe(Effect.provide(apiLayer));
+
+      const summary = yield* provider.getChangeRequestSummary!({
+        cwd: "/repo",
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(summary).toMatchObject({
+        state: "merged",
+        mergedAt: "2026-09-03T10:00:00.000Z",
+        closedAt: "2026-09-03T10:00:00.000Z",
+      });
+    }),
+  );
   it.effect.each([undefined, "fix"])(
     "retains Reviewing coverage warnings in provider listings (%s)",
     (query) =>
