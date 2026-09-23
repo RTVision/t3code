@@ -253,11 +253,6 @@ export async function pruneRuntimeVersions(
 ): Promise<void> {
   const runtimeDir = NodePath.join(baseDir, "runtime");
   const versionsDir = NodePath.join(runtimeDir, "versions");
-  const keep = new Set([
-    await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE)),
-    await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)),
-    state.update?.status === "committed" ? state.update.fromVersion : undefined,
-  ]);
   const older = (await NodeFSP.readdir(versionsDir))
     .filter(
       (name) =>
@@ -267,8 +262,15 @@ export async function pruneRuntimeVersions(
     .slice(0, -1);
   for (const version of older) {
     const versionDir = NodePath.join(versionsDir, version);
+    // Re-read per deletion: a deferred `t3 update` may repoint the unit while
+    // this detached loop is still running.
+    const keep = [
+      await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE)),
+      await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)),
+      state.update?.status === "committed" ? state.update.fromVersion : undefined,
+    ];
     const bootable =
-      keep.has(version) ||
+      keep.includes(version) ||
       launcherPaths.some(
         (launcherPath) =>
           launcherPath !== undefined &&
