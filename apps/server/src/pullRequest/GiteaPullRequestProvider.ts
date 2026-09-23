@@ -277,6 +277,9 @@ export const make = Effect.gen(function* () {
           state: pullRequest.state,
           isDraft: pullRequest.isDraft,
           updatedAt: pullRequest.updatedAt,
+          // Thread settlement anchors on these, so a merge without them never settles.
+          mergedAt: pullRequest.mergedAt,
+          closedAt: pullRequest.closedAt,
         })),
       ),
 
