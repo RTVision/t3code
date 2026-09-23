@@ -59,7 +59,7 @@ export class DiskSpace extends Context.Service<
     /** The current report followed by every meaningful change. */
     readonly streamChanges: Stream.Stream<ServerLowDiskSpace | null>;
   }
->()("t3/diskSpace/DiskSpace") {}
+>()("t3/diskSpace") {}
 
 const make = Effect.gen(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
