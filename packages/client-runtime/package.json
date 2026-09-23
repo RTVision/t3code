@@ -11,6 +11,10 @@
       "types": "./src/device/hubAccess.ts",
       "default": "./src/device/hubAccess.ts"
     },
+    "./low-disk-space": {
+      "types": "./src/lowDiskSpace.ts",
+      "default": "./src/lowDiskSpace.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"

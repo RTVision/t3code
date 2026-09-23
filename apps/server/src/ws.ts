@@ -87,6 +87,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import * as DiskSpace from "./diskSpace.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -550,6 +551,7 @@ const makeWsRpcLayer = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+      const diskSpace = yield* DiskSpace.DiskSpace;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
@@ -1821,6 +1823,7 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
+          const lowDiskSpace = yield* diskSpace.current;
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
           );
@@ -1838,6 +1841,7 @@ const makeWsRpcLayer = (
             keybindings: keybindingsConfig.keybindings,
             issues: keybindingsConfig.issues,
             providers,
+            ...(lowDiskSpace === null ? {} : { lowDiskSpace }),
             availableEditors,
             // Same discovery-with-timeout treatment as editors: a slow probe
             // must not stall server.getConfig, so it degrades to no targets.
@@ -3730,6 +3734,23 @@ const makeWsRpcLayer = (
                       })),
                     )
                   : Stream.empty;
+              // Same gate again. The snapshot already carries the current
+              // report, so only changes after it go out.
+              const lowDiskSpaceUpdates =
+                input.lowDiskSpace === true
+                  ? Stream.concat(
+                      Stream.make(config.lowDiskSpace ?? null),
+                      diskSpace.streamChanges,
+                    ).pipe(
+                      Stream.changesWith(DiskSpace.sameDiskSpaceReport),
+                      Stream.drop(1),
+                      Stream.map((lowDiskSpace) => ({
+                        version: 1 as const,
+                        type: "lowDiskSpaceUpdated" as const,
+                        payload: { lowDiskSpace },
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -3745,7 +3766,10 @@ const makeWsRpcLayer = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, lowDiskSpaceUpdates),
+                    ),
                   ),
                 ),
               );
