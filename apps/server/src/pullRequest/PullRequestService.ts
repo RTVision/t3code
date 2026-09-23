@@ -1720,60 +1720,62 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: 3 },
         ).pipe(
-          Effect.map(([{ value: changeRequest, observedAt }, viewer, capabilities]): PullRequestDetail => ({
-            provider: project.api.kind,
-            capabilities: {
-              ...capabilities,
-              dependencies: {
-                branchRelationships: true,
-                nativeMembership: false,
+          Effect.map(
+            ([{ value: changeRequest, observedAt }, viewer, capabilities]): PullRequestDetail => ({
+              provider: project.api.kind,
+              capabilities: {
+                ...capabilities,
+                dependencies: {
+                  branchRelationships: true,
+                  nativeMembership: false,
+                },
               },
-            },
-            projectId: project.project.id,
-            projectTitle: project.project.title,
-            workspaceRoot: project.project.workspaceRoot,
-            repository: project.repository,
-            number: changeRequest.number,
-            title: changeRequest.title,
-            body: changeRequest.body,
-            url: changeRequest.url,
-            author: changeRequest.author,
-            state: changeRequest.state,
-            isDraft: changeRequest.isDraft,
-            mergeability: changeRequest.mergeability,
-            additions: changeRequest.additions,
-            deletions: changeRequest.deletions,
-            changedFiles: changeRequest.changedFiles,
-            headBranch: changeRequest.headBranch,
-            ...(changeRequest.headRepositoryNameWithOwner === undefined
-              ? {}
-              : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
-            baseBranch: changeRequest.baseBranch,
-            createdAt: changeRequest.createdAt,
-            updatedAt: changeRequest.updatedAt,
-            observedAt,
-            mergedAt: changeRequest.mergedAt,
-            closedAt: changeRequest.closedAt,
-            reviewers: changeRequest.reviewers,
-            labels: changeRequest.labels,
-            checks: changeRequest.checks,
-            mergeCapabilities: changeRequest.mergeCapabilities,
-            viewerPermissions: changeRequest.viewerPermissions,
-            ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
-            ...(changeRequest.baseComparison === undefined
-              ? {}
-              : { baseComparison: changeRequest.baseComparison }),
-            ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
-            ...(changeRequest.autoMergeEnabled === undefined
-              ? {}
-              : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
-            ...(changeRequest.autoMergeMethod === undefined
-              ? {}
-              : { autoMergeMethod: changeRequest.autoMergeMethod }),
-            ...(changeRequest.workflowApprovalsRequired === undefined
-              ? {}
-              : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
-          })),
+              projectId: project.project.id,
+              projectTitle: project.project.title,
+              workspaceRoot: project.project.workspaceRoot,
+              repository: project.repository,
+              number: changeRequest.number,
+              title: changeRequest.title,
+              body: changeRequest.body,
+              url: changeRequest.url,
+              author: changeRequest.author,
+              state: changeRequest.state,
+              isDraft: changeRequest.isDraft,
+              mergeability: changeRequest.mergeability,
+              additions: changeRequest.additions,
+              deletions: changeRequest.deletions,
+              changedFiles: changeRequest.changedFiles,
+              headBranch: changeRequest.headBranch,
+              ...(changeRequest.headRepositoryNameWithOwner === undefined
+                ? {}
+                : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
+              baseBranch: changeRequest.baseBranch,
+              createdAt: changeRequest.createdAt,
+              updatedAt: changeRequest.updatedAt,
+              observedAt,
+              mergedAt: changeRequest.mergedAt,
+              closedAt: changeRequest.closedAt,
+              reviewers: changeRequest.reviewers,
+              labels: changeRequest.labels,
+              checks: changeRequest.checks,
+              mergeCapabilities: changeRequest.mergeCapabilities,
+              viewerPermissions: changeRequest.viewerPermissions,
+              ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
+              ...(changeRequest.baseComparison === undefined
+                ? {}
+                : { baseComparison: changeRequest.baseComparison }),
+              ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
+              ...(changeRequest.autoMergeEnabled === undefined
+                ? {}
+                : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
+              ...(changeRequest.autoMergeMethod === undefined
+                ? {}
+                : { autoMergeMethod: changeRequest.autoMergeMethod }),
+              ...(changeRequest.workflowApprovalsRequired === undefined
+                ? {}
+                : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            }),
+          ),
         ),
       ),
     );
