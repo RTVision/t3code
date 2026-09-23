@@ -45,11 +45,11 @@ const PullRequest = Schema.Struct({
   base: Branch,
 });
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-// Open PRs are few, so a branch lookup reads all of them. Closed PRs are the repository's whole
-// history and branch status re-runs this lookup every minute, so only the most recently updated
-// closed pages are read; a branch whose PR closed long ago stops showing it.
-const MAX_OPEN_PULL_REQUEST_PAGES = 100;
-const CLOSED_PULL_REQUEST_SCAN_PAGES = 2;
+const MAX_PULL_REQUEST_PAGES = 100;
+// Branch status asks for all states every minute. Open PRs are few, so it reads all of them, but
+// closed PRs are the repository's whole history, so it reads only the most recently updated
+// closed pages; a branch whose PR closed long ago stops showing it.
+const ALL_STATES_CLOSED_PULL_REQUEST_PAGES = 2;
 
 function normalizeRepositoryIdentity(value: string): string {
   return value.trim().toLowerCase();
@@ -303,7 +303,7 @@ export const make = Effect.gen(function* () {
               (!hasNext && (Number.isFinite(total) ? scanned >= total : pulls.length < 50))
             )
               break;
-            if (page >= MAX_OPEN_PULL_REQUEST_PAGES)
+            if (page >= MAX_PULL_REQUEST_PAGES)
               return yield* failure(
                 "listChangeRequests",
                 input.cwd,
@@ -313,8 +313,12 @@ export const make = Effect.gen(function* () {
           }
         });
         if (input.state === "open" || input.state === "all")
-          yield* scan("open", MAX_OPEN_PULL_REQUEST_PAGES);
-        if (input.state !== "open") yield* scan("closed", CLOSED_PULL_REQUEST_SCAN_PAGES);
+          yield* scan("open", MAX_PULL_REQUEST_PAGES);
+        if (input.state !== "open")
+          yield* scan(
+            "closed",
+            input.state === "all" ? ALL_STATES_CLOSED_PULL_REQUEST_PAGES : MAX_PULL_REQUEST_PAGES,
+          );
         return items;
       },
     ),

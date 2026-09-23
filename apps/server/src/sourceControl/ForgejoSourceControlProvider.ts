@@ -169,11 +169,11 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
   url: raw.clone_url,
   sshUrl: raw.ssh_url,
 });
-// Open PRs are few, so a branch lookup reads all of them. Closed PRs are the repository's whole
-// history and branch status re-runs this lookup every minute, so only the most recently updated
-// closed pages are read; a branch whose PR closed long ago stops showing it.
-const MAX_OPEN_PULL_REQUEST_PAGES = 100;
-const CLOSED_PULL_REQUEST_SCAN_PAGES = 2;
+const MAX_PULL_REQUEST_PAGES = 100;
+// Branch status asks for all states every minute. Open PRs are few, so it reads all of them, but
+// closed PRs are the repository's whole history, so it reads only the most recently updated
+// closed pages; a branch whose PR closed long ago stops showing it.
+const ALL_STATES_CLOSED_PULL_REQUEST_PAGES = 2;
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -263,11 +263,21 @@ export const make = Effect.gen(function* () {
                   results.push(normalized);
               }
               if (items.length === 0) break;
+              if (page >= MAX_PULL_REQUEST_PAGES)
+                return yield* new ForgejoCli.ForgejoCliError({
+                  command: "tea",
+                  cwd: input.cwd,
+                  detail: "Too many Forgejo PR pages to resolve this branch reliably.",
+                });
             }
           });
         if (input.state === "open" || input.state === "all")
-          yield* scan("open", MAX_OPEN_PULL_REQUEST_PAGES);
-        if (input.state !== "open") yield* scan("closed", CLOSED_PULL_REQUEST_SCAN_PAGES);
+          yield* scan("open", MAX_PULL_REQUEST_PAGES);
+        if (input.state !== "open")
+          yield* scan(
+            "closed",
+            input.state === "all" ? ALL_STATES_CLOSED_PULL_REQUEST_PAGES : MAX_PULL_REQUEST_PAGES,
+          );
         return results.slice(0, limit);
       }).pipe(mapError("listChangeRequests", input.cwd)),
     getChangeRequest: (input) =>
