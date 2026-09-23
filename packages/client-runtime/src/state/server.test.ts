@@ -424,6 +424,33 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("sets and clears the low disk space report", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const lowDiskSpace = {
+      level: "critical" as const,
+      path: "/home/t3",
+      availableBytes: 500_000_000,
+      totalBytes: 100_000_000_000,
+    };
+    const low = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "lowDiskSpaceUpdated",
+      payload: { lowDiskSpace },
+    });
+    expect(Option.getOrThrow(low).config.lowDiskSpace).toEqual(lowDiskSpace);
+
+    const cleared = applyServerConfigProjection(low, {
+      version: 1,
+      type: "lowDiskSpaceUpdated",
+      payload: { lowDiskSpace: null },
+    });
+    expect("lowDiskSpace" in Option.getOrThrow(cleared).config).toBe(false);
+  });
+
   it("carries published environment themes in and out of the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,

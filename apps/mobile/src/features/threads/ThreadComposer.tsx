@@ -34,6 +34,7 @@ import {
 } from "react";
 import { Alert, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { LowDiskSpaceBanner } from "../../components/LowDiskSpaceBanner";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentsStillUploading,
@@ -672,6 +673,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
+        ) : null}
+        {props.serverConfig?.lowDiskSpace ? (
+          <LowDiskSpaceBanner
+            report={props.serverConfig.lowDiskSpace}
+            environmentLabel={props.environmentLabel}
+          />
         ) : null}
 
         <ComposerSurface

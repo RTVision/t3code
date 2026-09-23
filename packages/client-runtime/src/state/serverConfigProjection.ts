@@ -95,5 +95,15 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "lowDiskSpaceUpdated":
+      return Option.map(current, (projection) => {
+        const { lowDiskSpace: _previous, ...config } = projection.config;
+        const lowDiskSpace = event.payload.lowDiskSpace;
+        return {
+          config: lowDiskSpace === null ? config : { ...config, lowDiskSpace },
+          latestEvent: event,
+          source: "live" as const,
+        };
+      });
   }
 }

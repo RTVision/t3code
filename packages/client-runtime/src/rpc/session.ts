@@ -153,11 +153,17 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
 ) {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
-  const serverConfigInput: ServerConfigSubscriptionInput = {
+  // Every surface renders the low-disk warning, so every config subscription
+  // opts in; callers never need to ask.
+  const withLowDiskSpace = (input: ServerConfigSubscriptionInput) => ({
+    lowDiskSpace: true,
+    ...input,
+  });
+  const serverConfigInput: ServerConfigSubscriptionInput = withLowDiskSpace({
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-  };
+  });
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     const networkHint =
@@ -354,8 +360,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }),
       ),
     );
-    const subscribeServerConfig = (input: ServerConfigSubscriptionInput) =>
-      Stream.unwrap(
+    const subscribeServerConfig = (requested: ServerConfigSubscriptionInput) => {
+      const input = withLowDiskSpace(requested);
+      return Stream.unwrap(
         validatedInitialConfig.pipe(
           Effect.as(
             Equal.equals(input, serverConfigInput)
@@ -364,6 +371,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           ),
         ),
       );
+    };
     const probe = initialConfig.pipe(
       Effect.flatMap((config) =>
         (config.environment.capabilities.connectionProbe === true

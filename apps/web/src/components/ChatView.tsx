@@ -12,6 +12,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { describeLowDiskSpace } from "@t3tools/client-runtime/low-disk-space";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -240,6 +241,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
+  HardDriveIcon,
   Minimize2Icon,
   PaperclipIcon,
   WifiOffIcon,
@@ -2676,8 +2678,32 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const lowDiskSpace = serverConfig?.lowDiskSpace ?? null;
+  // Only a warning can be dismissed, and only until the page reloads; a
+  // critical report always shows because the server is about to fail.
+  const lowDiskSpaceKey =
+    lowDiskSpace === null
+      ? null
+      : `${serverConfig?.environment.environmentId}:${lowDiskSpace.level}`;
+  const [dismissedLowDiskSpaceKey, setDismissedLowDiskSpaceKey] = useState<string | null>(null);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
+    if (lowDiskSpace !== null && lowDiskSpaceKey !== dismissedLowDiskSpaceKey) {
+      const critical = lowDiskSpace.level === "critical";
+      items.push({
+        id: `low-disk-space:${lowDiskSpaceKey}`,
+        variant: critical ? "error" : "warning",
+        icon: <HardDriveIcon />,
+        title: `${critical ? "Disk almost full" : "Low disk space"} on ${versionMismatchServerLabel}`,
+        description: describeLowDiskSpace(lowDiskSpace),
+        ...(critical
+          ? {}
+          : {
+              dismissLabel: "Dismiss disk space warning",
+              onDismiss: () => setDismissedLowDiskSpaceKey(lowDiskSpaceKey),
+            }),
+      });
+    }
     const updateRunning = serverUpdateState.status === "running";
     const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
     const disconnectAction =
@@ -2858,6 +2884,9 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchDesktopAppUpdate,
     versionMismatchThreadContinuation,
     versionMismatchServerLabel,
+    lowDiskSpace,
+    lowDiskSpaceKey,
+    dismissedLowDiskSpaceKey,
   ]);
   const providerInstanceEntries = useMemo(
     () =>
