@@ -1547,7 +1547,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("exhaustive branch PR lookup searches merged history the capped lookup missed", () =>
+  it.effect("exhaustive branch PR lookup searches closed history the capped lookup missed", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1571,6 +1571,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                 updatedAt: "2026-01-07T15:00:00Z",
               },
             ]),
+            encodeCliJson([
+              {
+                number: 223,
+                title: "Newer PR closed without merging",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/223",
+                baseRefName: "release",
+                headRefName: "feature/old-merge",
+                state: "CLOSED",
+                updatedAt: "2026-02-07T15:00:00Z",
+              },
+            ]),
           ],
         },
       });
@@ -1585,10 +1596,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
 
       expect(capped).toBeNull();
-      expect(exhaustive).toMatchObject({ number: 222, state: "merged" });
+      // Cleanup must not treat the older merge as the branch's answer.
+      expect(exhaustive).toMatchObject({ number: 223, state: "closed" });
       const listCalls = ghCalls.filter((call) => call.startsWith("pr list "));
-      expect(listCalls).toHaveLength(3);
+      expect(listCalls).toHaveLength(4);
       expect(listCalls[2]).toContain("--state merged");
+      expect(listCalls[3]).toContain("--state closed");
     }),
   );
 

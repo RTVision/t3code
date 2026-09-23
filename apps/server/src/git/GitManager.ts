@@ -1681,19 +1681,22 @@ export const make = Effect.gen(function* () {
         parsedByNumber.set(pr.number, pr);
       }
     }
-    // Gitea and Forgejo read only recent closed pages for an all-states lookup, so an old merge
-    // needs its own full search.
+    // Gitea and Forgejo read only recent closed pages for an all-states lookup, so old history
+    // needs its own full search. Search unmerged closures too: a newer closed PR must still win
+    // over an older merge.
     if (exhaustive && parsedByNumber.size === 0) {
       for (const headSelector of headContext.headSelectors) {
-        const merged = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
-          cwd,
-          headSelector,
-          state: "merged",
-          // A bare selector also matches forks' same-named branches, which are filtered below.
-          limit: 20,
-        });
-        for (const pr of merged.map(toPullRequestInfo)) {
-          if (matchesBranchHeadContext(pr, headContext)) parsedByNumber.set(pr.number, pr);
+        for (const state of ["merged", "closed"] as const) {
+          const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+            cwd,
+            headSelector,
+            state,
+            // A bare selector also matches forks' same-named branches, which are filtered below.
+            limit: 20,
+          });
+          for (const pr of pullRequests.map(toPullRequestInfo)) {
+            if (matchesBranchHeadContext(pr, headContext)) parsedByNumber.set(pr.number, pr);
+          }
         }
       }
     }
