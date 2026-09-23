@@ -262,7 +262,7 @@ export const make = Effect.gen(function* () {
                 if (input.state === "all" || normalized.state === input.state)
                   results.push(normalized);
               }
-              if (items.length === 0) break;
+              if (items.length === 0 || results.length >= limit) break;
               if (page >= MAX_PULL_REQUEST_PAGES)
                 return yield* new ForgejoCli.ForgejoCliError({
                   command: "tea",

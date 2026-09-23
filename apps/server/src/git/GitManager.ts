@@ -1689,7 +1689,8 @@ export const make = Effect.gen(function* () {
           cwd,
           headSelector,
           state: "merged",
-          limit: 1,
+          // A bare selector also matches forks' same-named branches, which are filtered below.
+          limit: 20,
         });
         for (const pr of merged.map(toPullRequestInfo)) {
           if (matchesBranchHeadContext(pr, headContext)) parsedByNumber.set(pr.number, pr);
