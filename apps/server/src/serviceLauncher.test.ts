@@ -232,6 +232,39 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect("stops pruning when a version marker exists but cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
+      const runtimeDir = path.join(root, "runtime");
+      const versionsDir = path.join(runtimeDir, "versions");
+      for (const version of ["0.0.1", "0.0.2", "0.0.3"]) {
+        yield* fs.makeDirectory(path.join(versionsDir, version), { recursive: true });
+      }
+      // A directory in the marker's place fails the read with EISDIR.
+      yield* fs.makeDirectory(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE));
+
+      const outcome = yield* Effect.promise(() =>
+        pruneRuntimeVersions(
+          root,
+          { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.3" },
+          [],
+        ).then(
+          () => "pruned",
+          () => "stopped",
+        ),
+      );
+
+      assert.equal(outcome, "stopped");
+      assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
+        "0.0.1",
+        "0.0.2",
+        "0.0.3",
+      ]);
+    }),
+  );
+
   it.effect("serializes shutdown with launcher recovery", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

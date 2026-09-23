@@ -232,11 +232,18 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
-/** Versions named one per line in a runtime marker file; none if it is absent. */
+/**
+ * Versions named one per line in a runtime marker file; none if it is absent.
+ * Any other read failure rejects, which stops pruning: a marker that exists
+ * but cannot be read may name a version the next boot needs.
+ */
 const readVersionMarker = (filePath: string) =>
   NodeFSP.readFile(filePath, "utf8").then(
     (contents) => contents.split("\n").map((line) => line.trim()),
-    (): ReadonlyArray<string> => [],
+    (cause: unknown): ReadonlyArray<string> => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw cause;
+    },
   );
 
 /**
