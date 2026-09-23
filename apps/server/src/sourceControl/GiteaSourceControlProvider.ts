@@ -40,6 +40,8 @@ const PullRequest = Schema.Struct({
   state: Schema.Literals(["open", "closed"]),
   merged: Schema.Boolean,
   draft: Schema.optionalKey(Schema.Boolean),
+  closed_at: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_at: Schema.optional(Schema.NullOr(Schema.String)),
   updated_at: Schema.DateTimeUtcFromString,
   head: Branch,
   base: Branch,
@@ -68,6 +70,8 @@ function toChangeRequest(pull: typeof PullRequest.Type): ChangeRequest {
     headRefName: pull.head.ref,
     state: pull.merged ? "merged" : pull.state,
     ...(pull.draft === undefined ? {} : { isDraft: pull.draft }),
+    closedAt: pull.closed_at ?? null,
+    mergedAt: pull.merged_at ?? null,
     updatedAt: Option.some(pull.updated_at),
     isCrossRepository:
       pull.head.repo === null ||

@@ -94,6 +94,8 @@ it.effect("maps merged state, draft and deleted source repository accurately", (
     body: pull(42, {
       state: "closed",
       merged: true,
+      closed_at: "2026-09-05T00:00:00Z",
+      merged_at: "2026-09-05T00:00:00Z",
       draft: true,
       head: { ref: "feature", repo: null },
     }),
@@ -105,6 +107,9 @@ it.effect("maps merged state, draft and deleted source repository accurately", (
       reference: "42",
     });
     assert.strictEqual(result.state, "merged");
+    // Thread settlement anchors on these, so a merge without them never settles.
+    assert.strictEqual(result.mergedAt, "2026-09-05T00:00:00Z");
+    assert.strictEqual(result.closedAt, "2026-09-05T00:00:00Z");
     assert.isTrue(result.isDraft);
     assert.isTrue(result.isCrossRepository);
     assert.isNull(result.headRepositoryNameWithOwner);
