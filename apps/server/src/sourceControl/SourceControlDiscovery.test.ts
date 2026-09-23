@@ -222,6 +222,60 @@ it.effect("loads Forgejo pull request references from files and commits views", 
   ),
 );
 
+it.effect("reads every open Forgejo page but only the most recent closed pages", () => {
+  const requested: Array<string> = [];
+  const pull = (number: number, state: string, ref: string) => ({
+    number,
+    title: `PR ${number}`,
+    html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+    state,
+    merged: state === "closed",
+    base: { ref: "main", sha: "base", repo: null },
+    head: { ref, sha: "head", repo: null },
+  });
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const results = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all",
+    });
+    assert.deepStrictEqual(
+      results.map((item) => item.number),
+      [1, 101],
+    );
+    assert.deepStrictEqual(requested, ["open:1", "open:2", "closed:1", "closed:2"]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        Layer.mock(VcsProcess.VcsProcess)({}),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) => {
+            const params = new URL(input.path, "https://forgejo.test/api/v1/").searchParams;
+            const state = params.get("state");
+            const page = Number(params.get("page"));
+            requested.push(`${state}:${page}`);
+            const body =
+              state === "open"
+                ? page === 1
+                  ? [pull(1, "open", "feature")]
+                  : []
+                : [pull(100 + page, "closed", page === 1 ? "feature" : "unrelated")];
+            return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
   () => {

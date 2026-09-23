@@ -114,7 +114,11 @@ export class GitManager extends Context.Service<
     /** Resolve the PR for a saved branch without changing the current checkout. */
     readonly branchPullRequest: (
       input: { readonly cwd: string; readonly branch: string },
-      options?: { readonly refresh?: boolean },
+      /**
+       * `exhaustive` also searches merged history that the capped status lookup skips on hosts
+       * that page through every PR. Use it for decisions that must not miss an old merge.
+       */
+      options?: { readonly refresh?: boolean; readonly exhaustive?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -1064,6 +1068,7 @@ export const make = Effect.gen(function* () {
       defaultBranch: string | null;
       localBranchExists?: boolean;
       remoteName?: string | null;
+      exhaustive?: boolean;
     },
   ) =>
     [
@@ -1073,6 +1078,7 @@ export const make = Effect.gen(function* () {
       details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
+      details.exhaustive === true ? "1" : "",
       String(prLookupEpoch(cwd)),
     ].join("\u0000");
   // Consecutive failures per cache key, so a branch that keeps failing waits
@@ -1101,6 +1107,7 @@ export const make = Effect.gen(function* () {
         defaultBranch = "",
         branchExists = "1",
         remoteName = "",
+        exhaustive = "",
       ] = key.split("\u0000");
       const details = {
         branch,
@@ -1123,7 +1130,7 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext, exhaustive === "1");
         return { latest, headContext };
       });
     },
@@ -1654,6 +1661,7 @@ export const make = Effect.gen(function* () {
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
+    exhaustive = false,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
@@ -1671,6 +1679,25 @@ export const make = Effect.gen(function* () {
           continue;
         }
         parsedByNumber.set(pr.number, pr);
+      }
+    }
+    // Gitea and Forgejo read only recent closed pages for an all-states lookup, so old history
+    // needs its own full search. Search unmerged closures too: a newer closed PR must still win
+    // over an older merge.
+    if (exhaustive && parsedByNumber.size === 0) {
+      for (const headSelector of probeableHeadSelectors(provider.kind, headContext.headSelectors)) {
+        for (const state of ["merged", "closed"] as const) {
+          const pullRequests = yield* provider.listChangeRequests({
+            cwd,
+            headSelector,
+            state,
+            // A bare selector also matches forks' same-named branches, which are filtered below.
+            limit: 20,
+          });
+          for (const pr of pullRequests.map(toPullRequestInfo)) {
+            if (matchesBranchHeadContext(pr, headContext)) parsedByNumber.set(pr.number, pr);
+          }
+        }
       }
     }
 
@@ -2221,6 +2248,7 @@ export const make = Effect.gen(function* () {
       defaultBranch,
       localBranchExists,
       ...(localBranchExists ? {} : { remoteName }),
+      ...(options?.exhaustive ? { exhaustive: true } : {}),
     });
     if (options?.refresh) {
       // A completed turn can create a PR or reuse a merged PR's branch.

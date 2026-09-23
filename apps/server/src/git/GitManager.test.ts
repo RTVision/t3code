@@ -1547,6 +1547,64 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("exhaustive branch PR lookup searches closed history the capped lookup missed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/old-merge"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/old-merge"]);
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            "[]",
+            encodeCliJson([
+              {
+                number: 222,
+                title: "Old merged PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/222",
+                baseRefName: "main",
+                headRefName: "feature/old-merge",
+                state: "MERGED",
+                updatedAt: "2026-01-07T15:00:00Z",
+              },
+            ]),
+            encodeCliJson([
+              {
+                number: 223,
+                title: "Newer PR closed without merging",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/223",
+                baseRefName: "release",
+                headRefName: "feature/old-merge",
+                state: "CLOSED",
+                updatedAt: "2026-02-07T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const capped = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/old-merge",
+      });
+      const exhaustive = yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/old-merge" },
+        { refresh: true, exhaustive: true },
+      );
+
+      expect(capped).toBeNull();
+      // Cleanup must not treat the older merge as the branch's answer.
+      expect(exhaustive).toMatchObject({ number: 223, state: "closed" });
+      const listCalls = ghCalls.filter((call) => call.startsWith("pr list "));
+      expect(listCalls).toHaveLength(4);
+      expect(listCalls[2]).toContain("--state merged");
+      expect(listCalls[3]).toContain("--state closed");
+    }),
+  );
+
   it.effect("branch PR lookup propagates provider failures", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

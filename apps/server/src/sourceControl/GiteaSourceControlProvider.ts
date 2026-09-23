@@ -47,6 +47,11 @@ const PullRequest = Schema.Struct({
   base: Branch,
 });
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const MAX_PULL_REQUEST_PAGES = 100;
+// Branch status asks for all states every minute. Open PRs are few, so it reads all of them, but
+// closed PRs are the repository's whole history, so it reads only the most recently updated
+// closed pages; a branch whose PR closed long ago stops showing it.
+const ALL_STATES_CLOSED_PULL_REQUEST_PAGES = 2;
 
 function normalizeRepositoryIdentity(value: string): string {
   return value.trim().toLowerCase();
@@ -241,71 +246,83 @@ export const make = Effect.gen(function* () {
         const refName = SourceControlProvider.sourceBranch(input);
         const items: ChangeRequest[] = [];
         const limit = input.limit ?? 20;
-        let page = 1;
-        let scanned = 0;
-        // Filter across provider pages: a matching branch may not be among the first 50 PRs.
-        while (items.length < limit) {
-          const query = new URLSearchParams({
-            state: input.state === "merged" ? "closed" : input.state,
-            sort: "recentupdate",
-            page: String(page),
-            limit: "50",
-          });
-          const response = yield* api
-            .request({
-              operation: "listChangeRequests",
-              method: "GET",
-              path: `${giteaRepositoryPath(repository)}/pulls?${query}`,
-            })
-            .pipe(
+        // Gitea cannot filter PRs by head branch, so matches come from paging the PR list.
+        const scan = Effect.fn("GiteaSourceControlProvider.scanChangeRequests")(function* (
+          endpointState: "open" | "closed",
+          maxPages: number,
+        ) {
+          let page = 1;
+          let scanned = 0;
+          while (items.length < limit && page <= maxPages) {
+            const query = new URLSearchParams({
+              state: endpointState,
+              sort: "recentupdate",
+              page: String(page),
+              limit: "50",
+            });
+            const response = yield* api
+              .request({
+                operation: "listChangeRequests",
+                method: "GET",
+                path: `${giteaRepositoryPath(repository)}/pulls?${query}`,
+              })
+              .pipe(
+                Effect.mapError((error) => failure("listChangeRequests", input.cwd, error.detail)),
+              );
+            const pulls = yield* GiteaCli.decodeGiteaResponse(
+              "listChangeRequests",
+              Schema.Array(PullRequest),
+              response,
+            ).pipe(
               Effect.mapError((error) => failure("listChangeRequests", input.cwd, error.detail)),
             );
-          const pulls = yield* GiteaCli.decodeGiteaResponse(
-            "listChangeRequests",
-            Schema.Array(PullRequest),
-            response,
-          ).pipe(
-            Effect.mapError((error) => failure("listChangeRequests", input.cwd, error.detail)),
-          );
-          for (const pull of pulls) {
-            const item = toChangeRequest(pull);
-            const headRepository = pull.head.repo?.full_name;
-            if (
-              item.headRefName !== refName ||
-              (input.state !== "all" && item.state !== input.state)
-            )
-              continue;
-            if (
-              source?.owner !== undefined &&
-              headRepository?.split("/")[0]?.toLowerCase() !== source.owner.toLowerCase()
-            )
-              continue;
-            if (
-              source?.repository !== undefined &&
-              headRepository?.toLowerCase() !== source.repository.toLowerCase() &&
-              headRepository?.split("/")[1]?.toLowerCase() !== source.repository.toLowerCase()
-            )
-              continue;
-            items.push(item);
+            for (const pull of pulls) {
+              const item = toChangeRequest(pull);
+              const headRepository = pull.head.repo?.full_name;
+              if (
+                item.headRefName !== refName ||
+                (input.state !== "all" && item.state !== input.state)
+              )
+                continue;
+              if (
+                source?.owner !== undefined &&
+                headRepository?.split("/")[0]?.toLowerCase() !== source.owner.toLowerCase()
+              )
+                continue;
+              if (
+                source?.repository !== undefined &&
+                headRepository?.toLowerCase() !== source.repository.toLowerCase() &&
+                headRepository?.split("/")[1]?.toLowerCase() !== source.repository.toLowerCase()
+              )
+                continue;
+              items.push(item);
+              if (items.length >= limit) break;
+            }
             if (items.length >= limit) break;
+            scanned += pulls.length;
+            const hasNext = /rel="?next"?/u.test(response.headers.link ?? "");
+            const total = Number(response.headers["x-total-count"]);
+            if (
+              pulls.length === 0 ||
+              (!hasNext && (Number.isFinite(total) ? scanned >= total : pulls.length < 50))
+            )
+              break;
+            if (page >= MAX_PULL_REQUEST_PAGES)
+              return yield* failure(
+                "listChangeRequests",
+                input.cwd,
+                "Too many Gitea PR pages to resolve this branch reliably.",
+              );
+            page += 1;
           }
-          if (items.length >= limit) break;
-          scanned += pulls.length;
-          const hasNext = /rel="?next"?/u.test(response.headers.link ?? "");
-          const total = Number(response.headers["x-total-count"]);
-          if (
-            pulls.length === 0 ||
-            (!hasNext && (Number.isFinite(total) ? scanned >= total : pulls.length < 50))
-          )
-            break;
-          if (page >= 100)
-            return yield* failure(
-              "listChangeRequests",
-              input.cwd,
-              "Too many Gitea PR pages to resolve this branch reliably.",
-            );
-          page += 1;
-        }
+        });
+        if (input.state === "open" || input.state === "all")
+          yield* scan("open", MAX_PULL_REQUEST_PAGES);
+        if (input.state !== "open")
+          yield* scan(
+            "closed",
+            input.state === "all" ? ALL_STATES_CLOSED_PULL_REQUEST_PAGES : MAX_PULL_REQUEST_PAGES,
+          );
         return items;
       },
     ),

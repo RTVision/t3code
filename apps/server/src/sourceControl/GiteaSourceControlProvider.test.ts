@@ -298,6 +298,57 @@ it.effect("filters merged and closed results after querying Gitea's closed PRs",
   });
 });
 
+it.effect("reads every open page but only the most recent closed pages for all states", () => {
+  const { provider, request } = setup((input) => {
+    const params = new URL(input.path, context.provider.baseUrl).searchParams;
+    const page = Number(params.get("page"));
+    if (params.get("state") === "open")
+      return {
+        body: [
+          pull(page, { head: { ref: page === 2 ? "feature" : "unrelated", repo: repository } }),
+        ],
+        headers: {
+          "x-total-count": "2",
+          ...(page === 1
+            ? {
+                link: `<${context.provider.baseUrl}/api/v1/repos/team/repo/pulls?page=2>; rel="next"`,
+              }
+            : {}),
+        },
+      };
+    return {
+      body: [
+        pull(100 + page, {
+          state: "closed",
+          merged: true,
+          head: { ref: page === 1 ? "feature" : "unrelated", repo: repository },
+        }),
+      ],
+      headers: {
+        "x-total-count": "5000",
+        link: `<${context.provider.baseUrl}/api/v1/repos/team/repo/pulls?page=${page + 1}>; rel="next"`,
+      },
+    };
+  });
+  return Effect.gen(function* () {
+    const results = yield* (yield* provider).listChangeRequests({
+      cwd: "/repo",
+      context,
+      headSelector: "feature",
+      state: "all",
+    });
+    const requested = request.mock.calls.map(([input]) => {
+      const params = new URL(input.path, context.provider.baseUrl).searchParams;
+      return `${params.get("state")}:${params.get("page")}`;
+    });
+    assert.deepStrictEqual(
+      results.map((item) => item.number),
+      [2, 101],
+    );
+    assert.deepStrictEqual(requested, ["open:1", "open:2", "closed:1", "closed:2"]);
+  });
+});
+
 it.effect("distinguishes identical branch names in different forks", () => {
   const { provider } = setup(() => ({
     body: [

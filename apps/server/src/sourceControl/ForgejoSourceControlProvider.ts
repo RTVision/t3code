@@ -169,6 +169,11 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
   url: raw.clone_url,
   sshUrl: raw.ssh_url,
 });
+const MAX_PULL_REQUEST_PAGES = 100;
+// Branch status asks for all states every minute. Open PRs are few, so it reads all of them, but
+// closed PRs are the repository's whole history, so it reads only the most recently updated
+// closed pages; a branch whose PR closed long ago stops showing it.
+const ALL_STATES_CLOSED_PULL_REQUEST_PAGES = 2;
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -235,26 +240,44 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
-          const items = yield* request(
-            {
-              ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&sort=recentupdate&limit=50&page=${page}`,
-            },
-            Schema.Array(ForgejoPullRequestSchema),
+        // Forgejo cannot filter PRs by head branch, so matches come from paging the PR list.
+        const scan = (endpointState: "open" | "closed", maxPages: number) =>
+          Effect.gen(function* () {
+            for (let page = 1; results.length < limit && page <= maxPages; page++) {
+              const items = yield* request(
+                {
+                  ...input,
+                  path: `${repositoryPath(repo.repository)}/pulls?state=${endpointState}&sort=recentupdate&limit=50&page=${page}`,
+                },
+                Schema.Array(ForgejoPullRequestSchema),
+              );
+              for (const item of items) {
+                if (
+                  item.head.ref !== branch ||
+                  (source?.repository && item.head.repo?.full_name !== source.repository) ||
+                  (source?.owner && item.head.repo?.owner.login !== source.owner)
+                )
+                  continue;
+                const normalized = toForgejoChangeRequest(item);
+                if (input.state === "all" || normalized.state === input.state)
+                  results.push(normalized);
+              }
+              if (items.length === 0 || results.length >= limit) break;
+              if (page >= MAX_PULL_REQUEST_PAGES)
+                return yield* new ForgejoCli.ForgejoCliError({
+                  command: "tea",
+                  cwd: input.cwd,
+                  detail: "Too many Forgejo PR pages to resolve this branch reliably.",
+                });
+            }
+          });
+        if (input.state === "open" || input.state === "all")
+          yield* scan("open", MAX_PULL_REQUEST_PAGES);
+        if (input.state !== "open")
+          yield* scan(
+            "closed",
+            input.state === "all" ? ALL_STATES_CLOSED_PULL_REQUEST_PAGES : MAX_PULL_REQUEST_PAGES,
           );
-          for (const item of items) {
-            if (
-              item.head.ref !== branch ||
-              (source?.repository && item.head.repo?.full_name !== source.repository) ||
-              (source?.owner && item.head.repo?.owner.login !== source.owner)
-            )
-              continue;
-            const normalized = toForgejoChangeRequest(item);
-            if (input.state === "all" || normalized.state === input.state) results.push(normalized);
-          }
-          if (items.length === 0) break;
-        }
         return results.slice(0, limit);
       }).pipe(mapError("listChangeRequests", input.cwd)),
     getChangeRequest: (input) =>
