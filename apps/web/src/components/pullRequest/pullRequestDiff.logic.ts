@@ -27,42 +27,47 @@ export function isLineInFileDiff(
  */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
+/** Files the reader folded or opened by hand, and which way, since the toolbar last spoke. */
+export type DiffFoldChoices = ReadonlyMap<string, boolean>;
+
 /**
  * Whether a file is drawn folded.
  *
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. The caller supplies the saved default until the toolbar overrides it; individual
- * files can still be toggled independently.
+ * A diff arrives a slice at a time, so the reader's own choices are kept apart from what the
+ * toolbar last said rather than as the set of folded files: a file that has not loaded yet has no
+ * choice, and follows the toolbar when it lands. A choice records the fold itself, not a flip of
+ * the default, so a viewed state that changes underneath it (a push leaving the file stale, a tick
+ * on another device) cannot turn the reader's open file into a folded one.
  */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
+  foldChoices: DiffFoldChoices,
   viewed: boolean,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded" || (foldOverride === null && viewed);
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  return (
+    foldChoices.get(fileKey) ?? (foldOverride === "folded" || (foldOverride === null && viewed))
+  );
 }
 
 /**
  * The reader's fold choices after a file was ticked off, or put back.
  *
- * Clearing a file puts it away and un-clearing brings it back, whatever the default or an earlier
- * toggle said, which keeps folding a difference from what the toolbar last asked, and so keeps
- * "collapse all" from ticking anything off.
+ * Clearing a file puts it away and un-clearing brings it back. Where the default already does that,
+ * the file's choice is dropped instead of recorded, so the default keeps following the file's
+ * viewed state afterwards, and a push that leaves it stale opens it again.
  */
-export function toggleFileDiffFoldForViewed(
+export function foldChoicesAfterViewed(
   fileKey: string,
   viewed: boolean,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
-): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys, viewed) === viewed)
-    return toggledFileKeys;
-  const next = new Set(toggledFileKeys);
-  if (next.has(fileKey)) next.delete(fileKey);
-  else next.add(fileKey);
+  foldChoices: DiffFoldChoices,
+): DiffFoldChoices {
+  const followsDefault = isFileDiffCollapsed(fileKey, foldOverride, new Map(), viewed) === viewed;
+  if (followsDefault ? !foldChoices.has(fileKey) : foldChoices.get(fileKey) === viewed)
+    return foldChoices;
+  const next = new Map(foldChoices);
+  if (followsDefault) next.delete(fileKey);
+  else next.set(fileKey, viewed);
   return next;
 }
