@@ -93,6 +93,12 @@ export interface DiffSliceState {
   readonly key: string;
   readonly cursor: string | null;
   readonly slices: ReadonlyArray<DiffSlice>;
+  /**
+   * The loaded slices are being read again, from the first, after the pull request reported a
+   * new revision. Held until the last of them is confirmed, so a failed read along the way —
+   * the last slice's included — is still owed a retry.
+   */
+  readonly revalidating: boolean;
 }
 
 function isSameSlice(existing: DiffSlice, next: DiffSlice): boolean {
@@ -119,9 +125,9 @@ function isSameSlice(existing: DiffSlice, next: DiffSlice): boolean {
  * A new slice is appended. One that came back different means the diff moved under the review,
  * so it replaces the old one and the slices after it go too: their cursors were positions in the
  * old diff. One that came back the same leaves the state alone — unless the loaded slices are
- * being read again (the cursor sits before the last of them), in which case a settled answer
- * hands the cursor to the next one. The cached answer a read shows while it is still out
- * confirms nothing, so it does not move the walk.
+ * being read again, in which case a settled answer hands the cursor to the next one, and ends
+ * the walk at the last. The cached answer a read shows while it is still out, or a failed read
+ * still carries, confirms nothing, so it does not move the walk.
  */
 export function applyDiffSlice(
   previous: DiffSliceState,
@@ -132,13 +138,19 @@ export function applyDiffSlice(
   const index = slices.findIndex((candidate) => candidate.cursor === slice.cursor);
   const existing = slices[index];
   if (existing === undefined) {
-    return { key, cursor: slice.cursor, slices: [...slices, slice] };
+    return { key, cursor: slice.cursor, slices: [...slices, slice], revalidating: false };
   }
   if (isSameSlice(existing, slice)) {
+    if (!settled || !previous.revalidating) return previous;
     const following = slices[index + 1];
-    return following === undefined || !settled
-      ? previous
+    return following === undefined
+      ? { ...previous, revalidating: false }
       : { ...previous, cursor: following.cursor };
   }
-  return { key, cursor: slice.cursor, slices: [...slices.slice(0, index), slice] };
+  return {
+    key,
+    cursor: slice.cursor,
+    slices: [...slices.slice(0, index), slice],
+    revalidating: false,
+  };
 }

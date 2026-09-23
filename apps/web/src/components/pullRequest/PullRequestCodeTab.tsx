@@ -271,6 +271,7 @@ function PullRequestCodeTab({
     key: "",
     cursor: null,
     slices: NO_SLICES,
+    revalidating: false,
   });
   const parseCache = useRef(new Map<string, RenderablePatch>());
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
@@ -289,7 +290,7 @@ function PullRequestCodeTab({
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
     parseCache.current.clear();
   }, [scopeKey]);
 
@@ -435,7 +436,7 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
@@ -465,9 +466,9 @@ function PullRequestCodeTab({
     // A push can have left a ticked file standing against an older version of it.
     refreshFilesViewed();
     setSliceState((previous) =>
-      previous.key !== scopeKey || previous.cursor === null
+      previous.key !== scopeKey || previous.slices.length === 0
         ? previous
-        : { ...previous, cursor: null },
+        : { ...previous, cursor: null, revalidating: true },
     );
   }, [
     commit,
@@ -481,8 +482,7 @@ function PullRequestCodeTab({
     scopeKey,
   ]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
-  const cursorIndex = loadedSlices.findIndex((slice) => slice.cursor === cursor);
-  const revalidating = cursorIndex !== -1 && cursorIndex < loadedSlices.length - 1;
+  const revalidating = sliceState.key === scopeKey && sliceState.revalidating;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
   const withheldContent =

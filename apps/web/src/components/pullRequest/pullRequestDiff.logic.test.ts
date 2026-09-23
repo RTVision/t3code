@@ -148,14 +148,21 @@ describe("diff slices", () => {
     key: "pr-1",
     cursor: "b",
     slices: [slice(null, "one", "a"), slice("a", "two", "b"), slice("b", "three", null)],
+    revalidating: false,
   };
 
   it("appends a new slice and moves the cursor onto it", () => {
-    const first = applyDiffSlice(
-      { key: "", cursor: null, slices: [] },
-      { key: "pr-1", slice: slice(null, "one", "a"), settled: true },
-    );
-    expect(first).toEqual({ key: "pr-1", cursor: null, slices: [slice(null, "one", "a")] });
+    expect(
+      applyDiffSlice(
+        { key: "", cursor: null, slices: [], revalidating: false },
+        { key: "pr-1", slice: slice(null, "one", "a"), settled: true },
+      ),
+    ).toEqual({
+      key: "pr-1",
+      cursor: null,
+      slices: [slice(null, "one", "a")],
+      revalidating: false,
+    });
   });
 
   it("keeps the same state when the last slice comes back unchanged", () => {
@@ -165,8 +172,8 @@ describe("diff slices", () => {
   });
 
   it("walks the loaded slices again, one settled answer at a time", () => {
-    const walking = { ...loaded, cursor: null };
-    // The cached answer shown while the read is out does not advance the walk.
+    const walking = { ...loaded, cursor: null, revalidating: true };
+    // The cached answer shown while the read is out, or kept by a failed one, does not advance it.
     expect(
       applyDiffSlice(walking, { key: "pr-1", slice: slice(null, "one", "a"), settled: false }),
     ).toBe(walking);
@@ -175,32 +182,60 @@ describe("diff slices", () => {
       slice: slice(null, "one", "a"),
       settled: true,
     });
-    expect(second).toEqual({ ...loaded, cursor: "a" });
+    expect(second).toEqual({ ...walking, cursor: "a" });
     expect(second.slices).toBe(loaded.slices);
-    const last = applyDiffSlice(second, {
+    const third = applyDiffSlice(second, {
       key: "pr-1",
       slice: slice("a", "two", "b"),
       settled: true,
     });
-    expect(last).toEqual(loaded);
+    expect(third).toEqual({ ...walking, cursor: "b" });
+    // The last slice is owed a settled answer too before the walk is over.
+    expect(
+      applyDiffSlice(third, { key: "pr-1", slice: slice("b", "three", null), settled: false }),
+    ).toBe(third);
+    expect(
+      applyDiffSlice(third, { key: "pr-1", slice: slice("b", "three", null), settled: true }),
+    ).toEqual(loaded);
+  });
+
+  it("ends a walk over a single slice only once it is confirmed", () => {
+    const single: DiffSliceState = {
+      key: "pr-1",
+      cursor: null,
+      slices: [slice(null, "one", null)],
+      revalidating: true,
+    };
+    expect(
+      applyDiffSlice(single, { key: "pr-1", slice: slice(null, "one", null), settled: false }),
+    ).toBe(single);
+    expect(
+      applyDiffSlice(single, { key: "pr-1", slice: slice(null, "one", null), settled: true }),
+    ).toEqual({ ...single, revalidating: false });
   });
 
   it("replaces a slice that changed and drops the ones read after it", () => {
     expect(
       applyDiffSlice(
-        { ...loaded, cursor: "a" },
+        { ...loaded, cursor: "a", revalidating: true },
         { key: "pr-1", slice: slice("a", "two, pushed", "c"), settled: true },
       ),
     ).toEqual({
       key: "pr-1",
       cursor: "a",
       slices: [slice(null, "one", "a"), slice("a", "two, pushed", "c")],
+      revalidating: false,
     });
   });
 
   it("starts over when the answer belongs to another scope", () => {
     expect(
       applyDiffSlice(loaded, { key: "pr-2", slice: slice(null, "other", null), settled: true }),
-    ).toEqual({ key: "pr-2", cursor: null, slices: [slice(null, "other", null)] });
+    ).toEqual({
+      key: "pr-2",
+      cursor: null,
+      slices: [slice(null, "other", null)],
+      revalidating: false,
+    });
   });
 });
