@@ -3,6 +3,8 @@ import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
+import { withHunkGrammarContext } from "./diffGrammarContext";
+
 const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
@@ -180,7 +182,9 @@ export function getRenderablePatch(
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
-      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
+      return withHunkGrammarContext(
+        options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered,
+      );
     });
     if (files.length > 0) {
       return { kind: "files", files, sourceFiles };

@@ -1,7 +1,10 @@
 import {
   getSharedHighlighter,
+  registerCustomLanguage,
+  RegisteredCustomLanguages,
   type DiffsHighlighter,
   type HighlighterTypes,
+  type LanguageRegistration,
   type SupportedLanguages,
 } from "@pierre/diffs";
 
@@ -14,6 +17,37 @@ import { resolveDiffThemeName } from "./diffRendering";
  * pass this value.
  */
 export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "shiki-wasm";
+
+type LanguageModule = Promise<{ default: LanguageRegistration[] }>;
+
+/**
+ * SFC grammars only highlight `<style lang="scss">` and `lang="less"` blocks
+ * when those grammars are already loaded, so load them with the SFC grammar.
+ * Diff hunk seeds in `diffGrammarContext.ts` also rely on SCSS being present.
+ */
+function withStyleLanguages(load: () => LanguageModule) {
+  return async () => {
+    const [scss, less, language] = await Promise.all([
+      import("@shikijs/langs/scss"),
+      import("@shikijs/langs/less"),
+      load(),
+    ]);
+    return { default: [...scss.default, ...less.default, ...language.default] };
+  };
+}
+
+const SFC_LANGUAGE_LOADERS = {
+  vue: () => import("@shikijs/langs/vue"),
+  svelte: () => import("@shikijs/langs/svelte"),
+  astro: () => import("@shikijs/langs/astro"),
+} satisfies Record<string, () => LanguageModule>;
+
+for (const [language, load] of Object.entries(SFC_LANGUAGE_LOADERS)) {
+  // Pierre's registry outlives this module across HMR reloads.
+  if (!RegisteredCustomLanguages.has(language)) {
+    registerCustomLanguage(language, withStyleLanguages(load));
+  }
+}
 
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 

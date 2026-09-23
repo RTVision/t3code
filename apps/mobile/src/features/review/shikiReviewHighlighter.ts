@@ -1,4 +1,8 @@
-import { createHighlighterCore, type HighlighterCore } from "@shikijs/core";
+import {
+  createHighlighterCore,
+  type HighlighterCore,
+  type LanguageRegistration,
+} from "@shikijs/core";
 import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
 import bashLanguage from "@shikijs/langs/bash";
 import javascriptLanguage from "@shikijs/langs/javascript";
@@ -72,6 +76,22 @@ const loadedLanguages = new Set<string>([
   "yaml",
 ]);
 const languageLoadingPromises = new Map<string, Promise<boolean>>();
+
+/**
+ * SFC grammars only highlight `<style lang="scss">` and `lang="less"` blocks
+ * when those grammars are already loaded, so load them with the SFC grammar.
+ */
+function withStyleLanguages(load: () => Promise<{ default: LanguageRegistration[] }>) {
+  return async (): Promise<LoadedLanguageModule> => {
+    const [scss, less, language] = await Promise.all([
+      import("@shikijs/langs/scss"),
+      import("@shikijs/langs/less"),
+      load(),
+    ]);
+    return { default: [...scss.default, ...less.default, ...language.default] };
+  };
+}
+
 const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   javascript: () => import("@shikijs/langs/javascript"),
   typescript: () => import("@shikijs/langs/typescript"),
@@ -108,9 +128,9 @@ const languageImports: Partial<Record<string, () => Promise<unknown>>> = {
   less: () => import("@shikijs/langs/less"),
   xml: () => import("@shikijs/langs/xml"),
   svg: () => import("@shikijs/langs/xml"),
-  vue: () => import("@shikijs/langs/vue"),
-  svelte: () => import("@shikijs/langs/svelte"),
-  astro: () => import("@shikijs/langs/astro"),
+  vue: withStyleLanguages(() => import("@shikijs/langs/vue")),
+  svelte: withStyleLanguages(() => import("@shikijs/langs/svelte")),
+  astro: withStyleLanguages(() => import("@shikijs/langs/astro")),
   json: () => import("@shikijs/langs/json"),
   jsonc: () => import("@shikijs/langs/jsonc"),
   yaml: () => import("@shikijs/langs/yaml"),
