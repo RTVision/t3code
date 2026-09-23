@@ -27,7 +27,11 @@ export function isLineInFileDiff(
  */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/** Files the reader folded or opened by hand, and which way, since the toolbar last spoke. */
+/**
+ * Files the reader folded or opened by hand, and which way, since the toolbar last spoke. Keyed by
+ * path, like viewed state: a file's render key carries its slice's patch hash, so a push to any
+ * file in the slice would otherwise drop the choice and fold a viewed file the reader had opened.
+ */
 export type DiffFoldChoices = ReadonlyMap<string, boolean>;
 
 /**
@@ -40,14 +44,12 @@ export type DiffFoldChoices = ReadonlyMap<string, boolean>;
  * on another device) cannot turn the reader's open file into a folded one.
  */
 export function isFileDiffCollapsed(
-  fileKey: string,
+  path: string,
   foldOverride: DiffFoldOverride,
   foldChoices: DiffFoldChoices,
   viewed: boolean,
 ): boolean {
-  return (
-    foldChoices.get(fileKey) ?? (foldOverride === "folded" || (foldOverride === null && viewed))
-  );
+  return foldChoices.get(path) ?? (foldOverride === "folded" || (foldOverride === null && viewed));
 }
 
 /**
@@ -58,16 +60,16 @@ export function isFileDiffCollapsed(
  * viewed state afterwards, and a push that leaves it stale opens it again.
  */
 export function foldChoicesAfterViewed(
-  fileKey: string,
+  path: string,
   viewed: boolean,
   foldOverride: DiffFoldOverride,
   foldChoices: DiffFoldChoices,
 ): DiffFoldChoices {
-  const followsDefault = isFileDiffCollapsed(fileKey, foldOverride, new Map(), viewed) === viewed;
-  if (followsDefault ? !foldChoices.has(fileKey) : foldChoices.get(fileKey) === viewed)
+  const followsDefault = isFileDiffCollapsed(path, foldOverride, new Map(), viewed) === viewed;
+  if (followsDefault ? !foldChoices.has(path) : foldChoices.get(path) === viewed)
     return foldChoices;
   const next = new Map(foldChoices);
-  if (followsDefault) next.delete(fileKey);
-  else next.set(fileKey, viewed);
+  if (followsDefault) next.delete(path);
+  else next.set(path, viewed);
   return next;
 }

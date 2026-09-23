@@ -84,12 +84,15 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("c.ts", null, choices, false)).toBe(false);
   });
 
-  it("holds a file the reader opened by hand when its viewed state changes underneath", () => {
-    // Opened after being ticked off, then pushed to: stale files count as not viewed, and the
-    // reader's open file must not fold because the default moved.
-    const choices = new Map([["a.ts", false]]);
-    expect(isFileDiffCollapsed("a.ts", null, choices, true)).toBe(false);
-    expect(isFileDiffCollapsed("a.ts", null, choices, false)).toBe(false);
+  it("holds a file the reader opened by hand while its viewed state moves underneath", () => {
+    // Ticked off, then opened by hand the way the chevron records it.
+    const ticked = foldChoicesAfterViewed("a.ts", true, null, new Map());
+    expect(isFileDiffCollapsed("a.ts", null, ticked, true)).toBe(true);
+    const opened = new Map(ticked).set("a.ts", false);
+    expect(isFileDiffCollapsed("a.ts", null, opened, true)).toBe(false);
+    // A push leaves it stale, which counts as not viewed, then another device ticks it again.
+    expect(isFileDiffCollapsed("a.ts", null, opened, false)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, opened, true)).toBe(false);
   });
 });
 

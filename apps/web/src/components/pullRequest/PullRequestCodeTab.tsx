@@ -592,7 +592,7 @@ function PullRequestCodeTab({
     () =>
       annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
         const viewed = filesViewedEnabled && isFileViewed(path);
-        const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, foldChoices, viewed);
+        const collapsed = isFileDiffCollapsed(path, effectiveFoldOverride, foldChoices, viewed);
         // Ticking a file that is already folded changes no fold, so without this the box on
         // screen would keep saying the opposite of what the count says.
         const viewedMark = filesViewedEnabled
@@ -665,10 +665,10 @@ function PullRequestCodeTab({
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
   const setFileFolded = useCallback(
-    (fileKey: string, folded: boolean) =>
+    (path: string, folded: boolean) =>
       setFoldChoices((current) => {
-        if (current.get(fileKey) === folded) return current;
-        return new Map(current).set(fileKey, folded);
+        if (current.get(path) === folded) return current;
+        return new Map(current).set(path, folded);
       }),
     [],
   );
@@ -677,10 +677,10 @@ function PullRequestCodeTab({
   // back. Folding is still held apart from what has been ticked, so folding everything ticks
   // nothing off.
   const setFileViewed = useCallback(
-    (fileKey: string, path: string, viewed: boolean) => {
+    (path: string, viewed: boolean) => {
       setViewed(path, viewed);
       setFoldChoices((current) =>
-        foldChoicesAfterViewed(fileKey, viewed, effectiveFoldOverride, current),
+        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
       );
     },
     [effectiveFoldOverride, setViewed],
@@ -691,7 +691,7 @@ function PullRequestCodeTab({
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
-      if (item.collapsed === true) setFileFolded(item.id, false);
+      if (item.collapsed === true) setFileFolded(path, false);
       requestTreeReveal(item.id);
     },
     [items, requestTreeReveal, setFileFolded],
@@ -803,6 +803,8 @@ function PullRequestCodeTab({
 
   const renderHeaderPrefix = useCallback(
     (item: CodeViewItem<ReviewAnnotationGroup>) => {
+      if (item.type !== "diff") return null;
+      const path = resolveFileDiffPath(item.fileDiff);
       // The item the viewer is drawing already carries the state the memo settled on, so the
       // chevron follows it rather than recomputing the default here.
       const collapsed = item.collapsed === true;
@@ -815,7 +817,7 @@ function PullRequestCodeTab({
           className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
-            setFileFolded(item.id, !collapsed);
+            setFileFolded(path, !collapsed);
           }}
         >
           {collapsed ? (
@@ -875,7 +877,7 @@ function PullRequestCodeTab({
             <Checkbox
               aria-label={stale ? "Changed" : "Viewed"}
               checked={viewed}
-              onCheckedChange={(next) => setFileViewedRef.current(item.id, path, next === true)}
+              onCheckedChange={(next) => setFileViewedRef.current(path, next === true)}
             />
             {stale ? (
               <Tooltip>
@@ -1542,7 +1544,7 @@ function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) setFileFolded(item.id, item.collapsed !== true);
+                if (item !== undefined) setFileFolded(filePath, item.collapsed !== true);
                 return;
               }
             }
