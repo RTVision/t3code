@@ -167,7 +167,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("prunes old runtimes but keeps rollback, newer, and launcher versions", () =>
+  it.effect("prunes old runtimes but keeps rollback, newer, and bootable versions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -178,15 +178,24 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         yield* fs.makeDirectory(path.join(versionsDir, entry), { recursive: true });
       }
 
+      // A deferred `t3 update` repointed the unit at 0.0.11 while the
+      // launcher kept running from 0.0.10.
+      yield* fs.writeFileString(
+        path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE),
+        "0.0.11\n",
+      );
+
       yield* Effect.promise(() =>
         pruneRuntimeVersions(root, "0.0.13", [path.join(versionsDir, "0.0.10", "t3"), undefined]),
       );
 
-      // 0.0.12 is the rollback target, 0.0.10 runs the launcher, 0.1.0 may be
-      // a staged update, and non-version entries are never touched.
+      // 0.0.12 is the rollback target, 0.0.10 runs the launcher, the unit
+      // boots 0.0.11 next, 0.1.0 may be a staged update, and non-version
+      // entries are never touched.
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-x",
         "0.0.10",
+        "0.0.11",
         "0.0.12",
         "0.0.13",
         "0.1.0",

@@ -234,15 +234,25 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
 /**
  * Deletes runtimes older than the active version, keeping the newest of them
  * for a manual rollback. Newer versions may be a staged update and are left
- * alone, as is any version that `launcherPaths` (the running launcher's own
- * executable or script) lives in, since the boot unit may start it from there.
+ * alone. So is any version the boot unit may start: the one `launcherPaths`
+ * (the running launcher's own executable or script) lives in, and the one a
+ * deferred `t3 update` restart names, since that update repoints the unit
+ * without restarting the running launcher.
  */
 export async function pruneRuntimeVersions(
   baseDir: string,
   activeVersion: string,
   launcherPaths: ReadonlyArray<string | undefined>,
 ): Promise<void> {
-  const versionsDir = NodePath.join(baseDir, "runtime", "versions");
+  const runtimeDir = NodePath.join(baseDir, "runtime");
+  const versionsDir = NodePath.join(runtimeDir, "versions");
+  const restartVersion = await NodeFSP.readFile(
+    NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE),
+    "utf8",
+  ).then(
+    (contents) => contents.trim(),
+    () => undefined,
+  );
   const older = (await NodeFSP.readdir(versionsDir))
     .filter(
       (name) => isExactServiceVersion(name) && compareExactServiceVersions(name, activeVersion) < 0,
@@ -251,12 +261,14 @@ export async function pruneRuntimeVersions(
     .slice(0, -1);
   for (const version of older) {
     const versionDir = NodePath.join(versionsDir, version);
-    const runsLauncher = launcherPaths.some(
-      (launcherPath) =>
-        launcherPath !== undefined &&
-        !NodePath.relative(versionDir, NodePath.resolve(launcherPath)).startsWith(".."),
-    );
-    if (!runsLauncher) await NodeFSP.rm(versionDir, { recursive: true, force: true });
+    const bootable =
+      version === restartVersion ||
+      launcherPaths.some(
+        (launcherPath) =>
+          launcherPath !== undefined &&
+          !NodePath.relative(versionDir, NodePath.resolve(launcherPath)).startsWith(".."),
+      );
+    if (!bootable) await NodeFSP.rm(versionDir, { recursive: true, force: true });
   }
 }
 
