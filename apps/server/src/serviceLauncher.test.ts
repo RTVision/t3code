@@ -190,9 +190,10 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       for (const entry of entries) {
         yield* fs.makeDirectory(path.join(versionsDir, entry), { recursive: true });
       }
-      // The unit was last written for 0.0.9, and a deferred `t3 update`
-      // restart still waits on 0.0.11; the running launcher is 0.0.10.
-      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE), "0.0.9\n");
+      // A unit replacement from 0.0.8 to 0.0.9 did not finish, and a deferred
+      // `t3 update` restart still waits on 0.0.11; the running launcher is
+      // 0.0.10.
+      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE), "0.0.8\n0.0.9\n");
       yield* fs.writeFileString(path.join(runtimeDir, SERVICE_RESTART_PENDING_FILE), "0.0.11\n");
 
       yield* Effect.promise(() =>
@@ -213,8 +214,8 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         ),
       );
 
-      // Only 0.0.8 and 0.0.13 are gone. 0.0.14 is the newest older version,
-      // 0.0.12 the committed update's origin, 0.0.9 what the unit boots,
+      // Only 0.0.13 is gone. 0.0.14 is the newest older version, 0.0.12 the
+      // committed update's origin, 0.0.8 and 0.0.9 what the unit may boot,
       // 0.0.10 the running launcher, 0.0.11 the deferred restart, 0.1.0 a
       // possible staged update, and non-version entries are never touched.
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
@@ -224,6 +225,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         "0.0.12",
         "0.0.14",
         "0.0.15",
+        "0.0.8",
         "0.0.9",
         "0.1.0",
       ]);

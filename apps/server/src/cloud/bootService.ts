@@ -896,13 +896,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      yield* writeDurably(unitPath, manager.render(plan));
-      // Only once the unit names this version: a failed unit write must leave
-      // the marker on the version the unit still boots.
-      yield* writeDurably(
-        path.join(input.baseDir, "runtime", SERVICE_BOOT_VERSION_FILE),
-        `${input.cliVersion}\n`,
+      // Two phases so a failure at any step leaves every version the unit may
+      // boot marked: the old and new targets while the unit is replaced, then
+      // only the new one once the unit names it.
+      const bootVersionPath = path.join(input.baseDir, "runtime", SERVICE_BOOT_VERSION_FILE);
+      const previousBootVersions = yield* fs.readFileString(bootVersionPath).pipe(
+        Effect.map((contents) => contents.split("\n").filter((line) => line.trim() !== "")),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
       );
+      yield* writeDurably(
+        bootVersionPath,
+        `${[...new Set([...previousBootVersions, input.cliVersion])].join("\n")}\n`,
+      );
+      yield* writeDurably(unitPath, manager.render(plan));
+      yield* writeDurably(bootVersionPath, `${input.cliVersion}\n`);
 
       if (start) {
         yield* runSteps(manager.activate);

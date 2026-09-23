@@ -232,10 +232,11 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
+/** Versions named one per line in a runtime marker file; none if it is absent. */
 const readVersionMarker = (filePath: string) =>
   NodeFSP.readFile(filePath, "utf8").then(
-    (contents) => contents.trim(),
-    () => undefined,
+    (contents) => contents.split("\n").map((line) => line.trim()),
+    (): ReadonlyArray<string> => [],
   );
 
 /**
@@ -243,7 +244,7 @@ const readVersionMarker = (filePath: string) =>
  * staged update and are left alone. Among older ones it keeps rollback
  * targets (the newest, and the version the last committed update left) and
  * anything the boot unit may start: the version `launcherPaths` (the running
- * launcher's own executable or script) lives in, the one the unit was last
+ * launcher's own executable or script) lives in, the ones the unit was last
  * written for, and the one a deferred `t3 update` restart names.
  */
 export async function pruneRuntimeVersions(
@@ -265,8 +266,8 @@ export async function pruneRuntimeVersions(
     // Re-read per deletion: a deferred `t3 update` may repoint the unit while
     // this detached loop is still running.
     const keep = [
-      await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE)),
-      await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)),
+      ...(await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE))),
+      ...(await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE))),
       state.update?.status === "committed" ? state.update.fromVersion : undefined,
     ];
     const bootable =
