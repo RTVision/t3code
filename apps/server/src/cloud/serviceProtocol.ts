@@ -14,6 +14,10 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
     it when it starts (whoever restarted the service), so while it exists the
     service is known to be behind its unit and status reports it that way. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** The runtime versions the installed boot unit may start, one per line: the
+    old and new targets while the unit is being replaced, then just the new. Remote updates move the active version without touching the unit, so
+    runtime pruning reads this to never delete what the next boot needs. */
+export const SERVICE_BOOT_VERSION_FILE = ".boot-version";
 
 export interface PendingServiceUpdate {
   readonly id: string;

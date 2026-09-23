@@ -28,6 +28,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
@@ -231,6 +232,62 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
+/**
+ * Versions named one per line in a runtime marker file; none if it is absent.
+ * Any other read failure rejects, which stops pruning: a marker that exists
+ * but cannot be read may name a version the next boot needs.
+ */
+const readVersionMarker = (filePath: string) =>
+  NodeFSP.readFile(filePath, "utf8").then(
+    (contents) => contents.split("\n").map((line) => line.trim()),
+    (cause: unknown): ReadonlyArray<string> => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw cause;
+    },
+  );
+
+/**
+ * Deletes runtimes older than the active version. Newer versions may be a
+ * staged update and are left alone. Among older ones it keeps rollback
+ * targets (the newest, and the version the last committed update left) and
+ * anything the boot unit may start: the version `launcherPaths` (the running
+ * launcher's own executable or script) lives in, the ones the unit was last
+ * written for, and the one a deferred `t3 update` restart names.
+ */
+export async function pruneRuntimeVersions(
+  baseDir: string,
+  state: ServiceState,
+  launcherPaths: ReadonlyArray<string | undefined>,
+): Promise<void> {
+  const runtimeDir = NodePath.join(baseDir, "runtime");
+  const versionsDir = NodePath.join(runtimeDir, "versions");
+  const older = (await NodeFSP.readdir(versionsDir))
+    .filter(
+      (name) =>
+        isExactServiceVersion(name) && compareExactServiceVersions(name, state.activeVersion) < 0,
+    )
+    .toSorted(compareExactServiceVersions)
+    .slice(0, -1);
+  for (const version of older) {
+    const versionDir = NodePath.join(versionsDir, version);
+    // Re-read per deletion: a deferred `t3 update` may repoint the unit while
+    // this detached loop is still running.
+    const keep = [
+      ...(await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE))),
+      ...(await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE))),
+      state.update?.status === "committed" ? state.update.fromVersion : undefined,
+    ];
+    const bootable =
+      keep.includes(version) ||
+      launcherPaths.some(
+        (launcherPath) =>
+          launcherPath !== undefined &&
+          !NodePath.relative(versionDir, NodePath.resolve(launcherPath)).startsWith(".."),
+      );
+    if (!bootable) await NodeFSP.rm(versionDir, { recursive: true, force: true });
+  }
+}
+
 function terminalUpdate<S extends TerminalStatus>(input: {
   readonly pending: PendingServiceUpdate;
   readonly status: S;
@@ -370,6 +427,12 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  // Detached so a large delete never delays boot or an update handoff.
+  #pruneRuntimeVersions(): void {
+    const launcherPaths = [process.execPath, process.argv[1]];
+    void pruneRuntimeVersions(this.#baseDir, this.#state, launcherPaths).catch(() => undefined);
+  }
+
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
@@ -390,6 +453,7 @@ export class Launcher {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
       await this.#startChild(this.#state.activeVersion, "active", update);
+      this.#pruneRuntimeVersions();
       return;
     }
     if (await databaseRestorePending(this.#baseDir, update)) {
@@ -566,6 +630,7 @@ export class Launcher {
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    this.#pruneRuntimeVersions();
   }
 
   async #handlePreparedTimeout(child: ManagedChild): Promise<void> {

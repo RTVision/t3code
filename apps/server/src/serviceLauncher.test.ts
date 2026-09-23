@@ -4,11 +4,17 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  pruneRuntimeVersions,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -159,6 +165,103 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.writeFileString(restartPending, "1.0.0\n");
       yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
+    }),
+  );
+
+  it.effect("prunes old runtimes but keeps rollback, newer, and bootable versions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
+      const runtimeDir = path.join(root, "runtime");
+      const versionsDir = path.join(runtimeDir, "versions");
+      const entries = [
+        "0.0.8",
+        "0.0.9",
+        "0.0.10",
+        "0.0.11",
+        "0.0.12",
+        "0.0.13",
+        "0.0.14",
+        "0.0.15",
+        "0.1.0",
+        ".staging-x",
+      ];
+      for (const entry of entries) {
+        yield* fs.makeDirectory(path.join(versionsDir, entry), { recursive: true });
+      }
+      // A unit replacement from 0.0.8 to 0.0.9 did not finish, and a deferred
+      // `t3 update` restart still waits on 0.0.11; the running launcher is
+      // 0.0.10.
+      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE), "0.0.8\n0.0.9\n");
+      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_RESTART_PENDING_FILE), "0.0.11\n");
+
+      yield* Effect.promise(() =>
+        pruneRuntimeVersions(
+          root,
+          {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "0.0.15",
+            // 0.0.14 failed earlier; the last good version is 0.0.12.
+            update: {
+              id: "update-1",
+              fromVersion: "0.0.12",
+              targetVersion: "0.0.15",
+              status: "committed",
+            },
+          },
+          [path.join(versionsDir, "0.0.10", "t3"), undefined],
+        ),
+      );
+
+      // Only 0.0.13 is gone. 0.0.14 is the newest older version, 0.0.12 the
+      // committed update's origin, 0.0.8 and 0.0.9 what the unit may boot,
+      // 0.0.10 the running launcher, 0.0.11 the deferred restart, 0.1.0 a
+      // possible staged update, and non-version entries are never touched.
+      assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
+        ".staging-x",
+        "0.0.10",
+        "0.0.11",
+        "0.0.12",
+        "0.0.14",
+        "0.0.15",
+        "0.0.8",
+        "0.0.9",
+        "0.1.0",
+      ]);
+    }),
+  );
+
+  it.effect("stops pruning when a version marker exists but cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
+      const runtimeDir = path.join(root, "runtime");
+      const versionsDir = path.join(runtimeDir, "versions");
+      for (const version of ["0.0.1", "0.0.2", "0.0.3"]) {
+        yield* fs.makeDirectory(path.join(versionsDir, version), { recursive: true });
+      }
+      // A directory in the marker's place fails the read with EISDIR.
+      yield* fs.makeDirectory(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE));
+
+      const outcome = yield* Effect.promise(() =>
+        pruneRuntimeVersions(
+          root,
+          { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: "0.0.3" },
+          [],
+        ).then(
+          () => "pruned",
+          () => "stopped",
+        ),
+      );
+
+      assert.equal(outcome, "stopped");
+      assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
+        "0.0.1",
+        "0.0.2",
+        "0.0.3",
+      ]);
     }),
   );
 
