@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  pruneRuntimeVersions,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -159,6 +164,33 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.writeFileString(restartPending, "1.0.0\n");
       yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
+    }),
+  );
+
+  it.effect("prunes old runtimes but keeps rollback, newer, and launcher versions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
+      const versionsDir = path.join(root, "runtime", "versions");
+      const entries = ["0.0.9", "0.0.10", "0.0.11", "0.0.12", "0.0.13", "0.1.0", ".staging-x"];
+      for (const entry of entries) {
+        yield* fs.makeDirectory(path.join(versionsDir, entry), { recursive: true });
+      }
+
+      yield* Effect.promise(() =>
+        pruneRuntimeVersions(root, "0.0.13", [path.join(versionsDir, "0.0.10", "t3"), undefined]),
+      );
+
+      // 0.0.12 is the rollback target, 0.0.10 runs the launcher, 0.1.0 may be
+      // a staged update, and non-version entries are never touched.
+      assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
+        ".staging-x",
+        "0.0.10",
+        "0.0.12",
+        "0.0.13",
+        "0.1.0",
+      ]);
     }),
   );
 

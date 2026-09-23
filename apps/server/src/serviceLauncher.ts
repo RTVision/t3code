@@ -231,6 +231,35 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
+/**
+ * Deletes runtimes older than the active version, keeping the newest of them
+ * for a manual rollback. Newer versions may be a staged update and are left
+ * alone, as is any version that `launcherPaths` (the running launcher's own
+ * executable or script) lives in, since the boot unit may start it from there.
+ */
+export async function pruneRuntimeVersions(
+  baseDir: string,
+  activeVersion: string,
+  launcherPaths: ReadonlyArray<string | undefined>,
+): Promise<void> {
+  const versionsDir = NodePath.join(baseDir, "runtime", "versions");
+  const older = (await NodeFSP.readdir(versionsDir))
+    .filter(
+      (name) => isExactServiceVersion(name) && compareExactServiceVersions(name, activeVersion) < 0,
+    )
+    .toSorted(compareExactServiceVersions)
+    .slice(0, -1);
+  for (const version of older) {
+    const versionDir = NodePath.join(versionsDir, version);
+    const runsLauncher = launcherPaths.some(
+      (launcherPath) =>
+        launcherPath !== undefined &&
+        !NodePath.relative(versionDir, NodePath.resolve(launcherPath)).startsWith(".."),
+    );
+    if (!runsLauncher) await NodeFSP.rm(versionDir, { recursive: true, force: true });
+  }
+}
+
 function terminalUpdate<S extends TerminalStatus>(input: {
   readonly pending: PendingServiceUpdate;
   readonly status: S;
@@ -370,6 +399,14 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  // Detached so a large delete never delays boot or an update handoff.
+  #pruneRuntimeVersions(): void {
+    const launcherPaths = [process.execPath, process.argv[1]];
+    void pruneRuntimeVersions(this.#baseDir, this.#state.activeVersion, launcherPaths).catch(
+      () => undefined,
+    );
+  }
+
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
@@ -390,6 +427,7 @@ export class Launcher {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
       await this.#startChild(this.#state.activeVersion, "active", update);
+      this.#pruneRuntimeVersions();
       return;
     }
     if (await databaseRestorePending(this.#baseDir, update)) {
@@ -566,6 +604,7 @@ export class Launcher {
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    this.#pruneRuntimeVersions();
   }
 
   async #handlePreparedTimeout(child: ManagedChild): Promise<void> {
