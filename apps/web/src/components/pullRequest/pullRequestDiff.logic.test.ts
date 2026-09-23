@@ -2,9 +2,10 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  foldChoicesAfterViewed,
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  type DiffFoldChoices,
 } from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
@@ -52,61 +53,82 @@ describe("isLineInFileDiff", () => {
 });
 
 describe("isFileDiffCollapsed", () => {
-  const NO_TOGGLES: ReadonlySet<string> = new Set();
+  const NO_CHOICES: DiffFoldChoices = new Map();
 
   it("opens every file before the reader has touched anything", () => {
-    expect(isFileDiffCollapsed("a.ts", null, NO_TOGGLES)).toBe(false);
-    expect(isFileDiffCollapsed("b.ts", null, NO_TOGGLES)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, NO_CHOICES, false)).toBe(false);
+    expect(isFileDiffCollapsed("b.ts", null, NO_CHOICES, false)).toBe(false);
   });
 
-  it("opens every file once the toolbar has asked for it", () => {
-    // Pressing the toolbar clears the reader's own toggles, which is why the set is empty here.
-    expect(isFileDiffCollapsed("a.ts", "expanded", NO_TOGGLES)).toBe(false);
-    expect(isFileDiffCollapsed("b.ts", "expanded", NO_TOGGLES)).toBe(false);
+  it("keeps a file already ticked off folded by default", () => {
+    // Coming back to a change should open what is left to review, not what was already read.
+    expect(isFileDiffCollapsed("a.ts", null, NO_CHOICES, true)).toBe(true);
+  });
+
+  it("opens every file once the toolbar has asked for it, ticked off or not", () => {
+    // Pressing the toolbar clears the reader's own choices, which is why the map is empty here.
+    expect(isFileDiffCollapsed("a.ts", "expanded", NO_CHOICES, false)).toBe(false);
+    expect(isFileDiffCollapsed("b.ts", "expanded", NO_CHOICES, true)).toBe(false);
   });
 
   it("folds every file again on the second press", () => {
-    expect(isFileDiffCollapsed("a.ts", "folded", NO_TOGGLES)).toBe(true);
-    expect(isFileDiffCollapsed("b.ts", "folded", NO_TOGGLES)).toBe(true);
+    expect(isFileDiffCollapsed("a.ts", "folded", NO_CHOICES, false)).toBe(true);
+    expect(isFileDiffCollapsed("b.ts", "folded", NO_CHOICES, true)).toBe(true);
   });
 
   it("keeps a file the reader folded closed as the next slice arrives", () => {
     // The file keys grow with every slice, so the answer for one already folded must not depend
     // on how many of them there are by then.
-    const toggled = new Set(["b.ts"]);
-    expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(true);
-    expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(false);
+    const choices = new Map([["b.ts", true]]);
+    expect(isFileDiffCollapsed("b.ts", null, choices, false)).toBe(true);
+    expect(isFileDiffCollapsed("c.ts", null, choices, false)).toBe(false);
   });
 
-  it("still answers to a toggle after either toolbar press", () => {
-    expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
-    expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  it("holds a file the reader opened by hand while its viewed state moves underneath", () => {
+    // Ticked off, then opened by hand the way the chevron records it.
+    const ticked = foldChoicesAfterViewed("a.ts", true, null, new Map());
+    expect(isFileDiffCollapsed("a.ts", null, ticked, true)).toBe(true);
+    const opened = new Map(ticked).set("a.ts", false);
+    expect(isFileDiffCollapsed("a.ts", null, opened, true)).toBe(false);
+    // A push leaves it stale, which counts as not viewed, then another device ticks it again.
+    expect(isFileDiffCollapsed("a.ts", null, opened, false)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, opened, true)).toBe(false);
   });
 });
 
-describe("toggleFileDiffFoldForViewed", () => {
-  it("puts a file away when it is ticked off", () => {
-    // Files start expanded, so ticking one off is the case that has somewhere to go.
-    expect([...toggleFileDiffFoldForViewed("a.ts", true, null, new Set())]).toEqual(["a.ts"]);
+describe("foldChoicesAfterViewed", () => {
+  it("lets the default put a file away when it is ticked off", () => {
+    const untouched: DiffFoldChoices = new Map();
+    expect(foldChoicesAfterViewed("a.ts", true, null, untouched)).toBe(untouched);
+    expect(foldChoicesAfterViewed("a.ts", false, null, untouched)).toBe(untouched);
   });
 
-  it("brings a file back when the tick is taken off", () => {
-    expect([...toggleFileDiffFoldForViewed("a.ts", false, null, new Set(["a.ts"]))]).toEqual([]);
+  it("drops a hand choice the tick now agrees with, so the default keeps following the file", () => {
+    const choices = foldChoicesAfterViewed("a.ts", true, null, new Map([["a.ts", false]]));
+    expect(choices.size).toBe(0);
+    expect(isFileDiffCollapsed("a.ts", null, choices, true)).toBe(true);
+    // A push later leaves the file stale, which counts as not viewed, and it opens again.
+    expect(isFileDiffCollapsed("a.ts", null, choices, false)).toBe(false);
   });
 
-  it("leaves the fold alone when it already says what the tick does", () => {
-    const folded = new Set(["a.ts"]);
-    expect(toggleFileDiffFoldForViewed("a.ts", true, null, folded)).toBe(folded);
-  });
-
-  it("moves against whatever the toolbar last asked for", () => {
+  it("records the fold where the toolbar's default disagrees with the tick", () => {
     // Everything is open, so ticking a file off has to fold that one against the default.
-    expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
-    expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+    expect([...foldChoicesAfterViewed("a.ts", true, "expanded", new Map())]).toEqual([
+      ["a.ts", true],
+    ]);
+    expect(foldChoicesAfterViewed("a.ts", false, "expanded", new Map([["a.ts", true]])).size).toBe(
+      0,
+    );
+    expect([...foldChoicesAfterViewed("a.ts", false, "folded", new Map())]).toEqual([
+      ["a.ts", false],
+    ]);
   });
 
   it("touches only the file that was ticked", () => {
-    const toggled = new Set(["a.ts", "b.ts"]);
-    expect([...toggleFileDiffFoldForViewed("a.ts", false, null, toggled)]).toEqual(["b.ts"]);
+    const choices = new Map([
+      ["a.ts", false],
+      ["b.ts", true],
+    ]);
+    expect([...foldChoicesAfterViewed("a.ts", true, null, choices)]).toEqual([["b.ts", true]]);
   });
 });

@@ -2460,7 +2460,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("default-diff-file-state")}
-          description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
+          description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab. Files you have marked viewed stay collapsed."
           resetAction={
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton

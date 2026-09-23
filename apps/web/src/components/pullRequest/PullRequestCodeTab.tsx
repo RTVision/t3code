@@ -82,7 +82,8 @@ import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewA
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  foldChoicesAfterViewed,
+  type DiffFoldChoices,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
@@ -223,14 +224,14 @@ function PullRequestCodeTab({
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [foldChoices, setFoldChoices] = useState<DiffFoldChoices>(() => new Map());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
   // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   /** Set once the reader has asked for every file at once, until they pick a file apart again. */
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  // An expanded default still folds what has been ticked off; only the toolbar opens everything.
+  const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
@@ -267,7 +268,7 @@ function PullRequestCodeTab({
   useEffect(() => {
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -590,11 +591,12 @@ function PullRequestCodeTab({
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
     () =>
       annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-        const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+        const viewed = filesViewedEnabled && isFileViewed(path);
+        const collapsed = isFileDiffCollapsed(path, effectiveFoldOverride, foldChoices, viewed);
         // Ticking a file that is already folded changes no fold, so without this the box on
         // screen would keep saying the opposite of what the count says.
         const viewedMark = filesViewedEnabled
-          ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+          ? `e${viewed ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
           : "";
         return {
           id: fileKey,
@@ -611,7 +613,7 @@ function PullRequestCodeTab({
       effectiveFoldOverride,
       isFileViewed,
       isFileViewedStale,
-      toggledFiles,
+      foldChoices,
     ],
   );
   const omittedFileStats = useMemo(
@@ -662,27 +664,23 @@ function PullRequestCodeTab({
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
-  const toggleFile = useCallback(
-    (fileKey: string) =>
-      setToggledFiles((current) => {
-        // The override becomes this file's new default the moment it is folded into the set below,
-        // so nothing has to be re-derived when the reader goes back to choosing one at a time.
-        const next = new Set(current);
-        if (next.has(fileKey)) next.delete(fileKey);
-        else next.add(fileKey);
-        return next;
+  const setFileFolded = useCallback(
+    (path: string, folded: boolean) =>
+      setFoldChoices((current) => {
+        if (current.get(path) === folded) return current;
+        return new Map(current).set(path, folded);
       }),
     [],
   );
 
   // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
-  // back. Folding is still held as the reader's difference from the toolbar's default rather
-  // than derived from what has been ticked, so folding everything ticks nothing off.
+  // back. Folding is still held apart from what has been ticked, so folding everything ticks
+  // nothing off.
   const setFileViewed = useCallback(
-    (fileKey: string, path: string, viewed: boolean) => {
+    (path: string, viewed: boolean) => {
       setViewed(path, viewed);
-      setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
+      setFoldChoices((current) =>
+        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
       );
     },
     [effectiveFoldOverride, setViewed],
@@ -693,10 +691,10 @@ function PullRequestCodeTab({
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
-      if (item.collapsed === true) toggleFile(item.id);
+      if (item.collapsed === true) setFileFolded(path, false);
       requestTreeReveal(item.id);
     },
-    [items, requestTreeReveal, toggleFile],
+    [items, requestTreeReveal, setFileFolded],
   );
 
   const toggleAllFiles = () => {
@@ -704,7 +702,7 @@ function PullRequestCodeTab({
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFoldChoices(new Map());
   };
 
   // Newest first: the last commit is the one a reader coming back to a change is looking for.
@@ -805,6 +803,8 @@ function PullRequestCodeTab({
 
   const renderHeaderPrefix = useCallback(
     (item: CodeViewItem<ReviewAnnotationGroup>) => {
+      if (item.type !== "diff") return null;
+      const path = resolveFileDiffPath(item.fileDiff);
       // The item the viewer is drawing already carries the state the memo settled on, so the
       // chevron follows it rather than recomputing the default here.
       const collapsed = item.collapsed === true;
@@ -817,7 +817,7 @@ function PullRequestCodeTab({
           className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
-            toggleFile(item.id);
+            setFileFolded(path, !collapsed);
           }}
         >
           {collapsed ? (
@@ -828,7 +828,7 @@ function PullRequestCodeTab({
         </Button>
       );
     },
-    [toggleFile],
+    [setFileFolded],
   );
 
   // Read through refs rather than closed over. The viewer memoizes each visible file's header
@@ -877,7 +877,7 @@ function PullRequestCodeTab({
             <Checkbox
               aria-label={stale ? "Changed" : "Viewed"}
               checked={viewed}
-              onCheckedChange={(next) => setFileViewedRef.current(item.id, path, next === true)}
+              onCheckedChange={(next) => setFileViewedRef.current(path, next === true)}
             />
             {stale ? (
               <Tooltip>
@@ -1544,7 +1544,7 @@ function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) toggleFile(item.id);
+                if (item !== undefined) setFileFolded(filePath, item.collapsed !== true);
                 return;
               }
             }
