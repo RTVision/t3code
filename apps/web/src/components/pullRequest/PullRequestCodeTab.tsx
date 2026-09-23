@@ -320,10 +320,11 @@ function PullRequestCodeTab({
           nextCursor: data.nextCursor,
           omittedFileStats: data.omittedFileStats ?? [],
         },
-        settled: !diffQuery.isPending,
+        // A failed read still carries the last good answer, which confirms nothing either.
+        settled: !diffQuery.isPending && diffQuery.error === null,
       }),
     );
-  }, [cursor, diffQuery.data, diffQuery.isPending, scopeKey]);
+  }, [cursor, diffQuery.data, diffQuery.error, diffQuery.isPending, scopeKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
   const refreshFirstDiffPage = useAtomRefresh(
@@ -446,25 +447,39 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (appliedRevalidateToken.current === revalidateToken) return;
     appliedRevalidateToken.current = revalidateToken;
-    if (loadedSlices.length === 0) return;
-    for (const slice of loadedSlices) {
+    // The page being read goes too, so a first read still out when the revision moved is asked
+    // again rather than landing with the older answer.
+    const cursors = new Set([...loadedSlices.map((slice) => slice.cursor), cursor]);
+    for (const pageCursor of cursors) {
       registry.refresh(
         pullRequestEnvironment.diff({
           environmentId,
           input: {
             ...reference,
-            ...(slice.cursor === null ? {} : { cursor: slice.cursor }),
+            ...(pageCursor === null ? {} : { cursor: pageCursor }),
             ...(commit === null ? {} : { commit }),
           },
         }),
       );
     }
+    // A push can have left a ticked file standing against an older version of it.
+    refreshFilesViewed();
     setSliceState((previous) =>
       previous.key !== scopeKey || previous.cursor === null
         ? previous
         : { ...previous, cursor: null },
     );
-  }, [commit, environmentId, loadedSlices, reference, registry, revalidateToken, scopeKey]);
+  }, [
+    commit,
+    cursor,
+    environmentId,
+    loadedSlices,
+    reference,
+    refreshFilesViewed,
+    registry,
+    revalidateToken,
+    scopeKey,
+  ]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   const cursorIndex = loadedSlices.findIndex((slice) => slice.cursor === cursor);
   const revalidating = cursorIndex !== -1 && cursorIndex < loadedSlices.length - 1;
@@ -812,15 +827,21 @@ function PullRequestCodeTab({
     () =>
       // Only while something is still owed. A finished diff whose query fails on a later
       // refresh — a reconnect re-runs every one of them — is whole on screen already, and
-      // saying otherwise sends the reader looking for files that are all there.
-      nextCursor === null ? null : (
+      // saying otherwise sends the reader looking for files that are all there. A check for
+      // new changes that stopped on a failed page is owed, though: the pages after it are
+      // unchecked until it is retried.
+      nextCursor === null && !(revalidating && diffQuery.error !== null) ? null : (
         <div
           ref={setSentinel}
           className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
         >
           {diffQuery.error !== null ? (
             <>
-              <span>The rest of this diff could not be loaded.</span>
+              <span>
+                {revalidating
+                  ? "This diff could not be checked for new changes."
+                  : "The rest of this diff could not be loaded."}
+              </span>
               <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
                 Retry
               </Button>
@@ -830,7 +851,7 @@ function PullRequestCodeTab({
           ) : null}
         </div>
       ),
-    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
+    [nextCursor, revalidating, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -1630,7 +1651,7 @@ function PullRequestCodeTab({
                       size="xs"
                       variant="outline"
                       className="w-full"
-                      disabled={diffQuery.isPending}
+                      disabled={diffQuery.isPending || (revalidating && diffQuery.error === null)}
                       onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
                     >
                       {diffQuery.error !== null
