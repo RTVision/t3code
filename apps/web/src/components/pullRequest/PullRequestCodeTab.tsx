@@ -183,6 +183,20 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
 }
 
 /**
+ * Whether a press came from the file header pinned to the top of the viewer, which is where a
+ * header sits while its file runs on past the top edge. The header lives in the viewer's shadow
+ * tree, so it is found through `composedPath`, which only answers while the event dispatches.
+ */
+function isPinnedHeaderEvent(event: Event, frame: HTMLElement | null): boolean {
+  if (frame === null) return false;
+  const header = event
+    .composedPath()
+    .find((node) => node instanceof HTMLElement && node.hasAttribute("data-diffs-header"));
+  if (!(header instanceof HTMLElement)) return false;
+  return header.getBoundingClientRect().top <= frame.getBoundingClientRect().top + 1;
+}
+
+/**
  * Whether the viewer draws this line at all. A line counts the new file on the right and the old
  * one on the left, and each hunk covers one run of each; a line outside every run — a
  * conversation the host could not mark outdated, or one under a hunk it withheld — has no row to
@@ -673,28 +687,34 @@ function PullRequestCodeTab({
     [],
   );
 
-  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
-  // back. Folding is still held apart from what has been ticked, so folding everything ticks
-  // nothing off.
-  const setFileViewed = useCallback(
-    (path: string, viewed: boolean) => {
-      setViewed(path, viewed);
-      setFoldChoices((current) =>
-        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
-      );
-    },
-    [effectiveFoldOverride, setViewed],
-  );
-
-  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
+  const requestFileReveal = useCodeViewFileReveal(viewer, scopeKey);
   const revealFile = useCallback(
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
       if (item.collapsed === true) setFileFolded(path, false);
-      requestTreeReveal(item.id);
+      requestFileReveal(item.id);
     },
-    [items, requestTreeReveal, setFileFolded],
+    [items, requestFileReveal, setFileFolded],
+  );
+
+  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
+  // back. Folding is still held apart from what has been ticked, so folding everything ticks
+  // nothing off.
+  const setFileViewed = useCallback(
+    (path: string, viewed: boolean, headerPinned: boolean) => {
+      setViewed(path, viewed);
+      setFoldChoices((current) =>
+        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
+      );
+      // Ticked from the pinned header, the reader is part way through the file. Left to itself
+      // the viewer holds the next file where it was on screen and fills the gap from above with
+      // code already read; putting the folded header at the top brings the next file up instead.
+      if (!viewed || !headerPinned) return;
+      const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
+      if (item !== undefined) requestFileReveal(item.id);
+    },
+    [effectiveFoldOverride, items, requestFileReveal, setViewed],
   );
 
   const toggleAllFiles = () => {
@@ -834,6 +854,7 @@ function PullRequestCodeTab({
   // Read through refs rather than closed over. The viewer memoizes each visible file's header
   // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
   // host's answer, would rebuild every header on screen.
+  const codeViewFrameRef = useRef<HTMLDivElement>(null);
   const filesViewedRef = useRef(filesViewed);
   filesViewedRef.current = filesViewed;
   const setFileViewedRef = useRef(setFileViewed);
@@ -877,7 +898,13 @@ function PullRequestCodeTab({
             <Checkbox
               aria-label={stale ? "Changed" : "Viewed"}
               checked={viewed}
-              onCheckedChange={(next) => setFileViewedRef.current(path, next === true)}
+              onCheckedChange={(next, { event }) =>
+                setFileViewedRef.current(
+                  path,
+                  next === true,
+                  isPinnedHeaderEvent(event, codeViewFrameRef.current),
+                )
+              }
             />
             {stale ? (
               <Tooltip>
@@ -1521,6 +1548,7 @@ function PullRequestCodeTab({
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
             up; the viewer inside still owns its own scrolling. */}
         <div
+          ref={codeViewFrameRef}
           className="relative min-h-0 min-w-0 flex-1"
           // The chevron answers this too, but the whole header row is the target a reader
           // actually aims for. The header lives in the viewer's shadow tree, so the capture

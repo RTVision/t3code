@@ -46,7 +46,8 @@ import {
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
-  shouldRefreshPullRequestActivity,
+  pullRequestCodeRevision,
+  pullRequestRevisionChanged,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
@@ -183,30 +184,44 @@ describe("pull request merge method", () => {
   });
 });
 
-describe("pull request activity refresh", () => {
+describe("pull request revisions", () => {
   const first = {
     key: "project:acme/web#7",
-    updatedAt: "2026-08-13T13:00:00Z",
+    revision: "2026-08-13T13:00:00Z",
   };
 
-  it("refreshes activity only after the same pull request changes", () => {
+  it("reports a change only after the same pull request changes", () => {
     expect(
-      shouldRefreshPullRequestActivity(first, {
+      pullRequestRevisionChanged(first, {
         ...first,
-        updatedAt: "2026-08-13T13:01:00Z",
+        revision: "2026-08-13T13:01:00Z",
       }),
     ).toBe(true);
   });
 
-  it("does not duplicate the first activity read or carry a revision across pull requests", () => {
-    expect(shouldRefreshPullRequestActivity(null, first)).toBe(false);
-    expect(shouldRefreshPullRequestActivity(first, first)).toBe(false);
+  it("does not duplicate the first read or carry a revision across pull requests", () => {
+    expect(pullRequestRevisionChanged(null, first)).toBe(false);
+    expect(pullRequestRevisionChanged(first, first)).toBe(false);
     expect(
-      shouldRefreshPullRequestActivity(first, {
+      pullRequestRevisionChanged(first, {
         key: "project:acme/web#8",
-        updatedAt: "2026-08-13T13:01:00Z",
+        revision: "2026-08-13T13:01:00Z",
       }),
     ).toBe(false);
+  });
+
+  it("moves the code revision on a push or a retarget, not on conversation", () => {
+    const code = { baseBranch: "main", commits: [{ oid: "a1" }, { oid: "b2" }] };
+    const revision = pullRequestCodeRevision(code);
+    // A resolved thread arrives as a new detail object with the same commits.
+    expect(pullRequestCodeRevision({ ...code, commits: [...code.commits] })).toBe(revision);
+    expect(
+      pullRequestCodeRevision({ ...code, commits: [...code.commits, { oid: "c3" }] }),
+    ).not.toBe(revision);
+    expect(pullRequestCodeRevision({ ...code, commits: [{ oid: "a1" }, { oid: "b9" }] })).not.toBe(
+      revision,
+    );
+    expect(pullRequestCodeRevision({ ...code, baseBranch: "release" })).not.toBe(revision);
   });
 });
 describe("review thread comment pages", () => {

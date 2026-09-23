@@ -156,12 +156,24 @@ export function loadingPullRequestCheckoutCommand(
   return pullRequestCheckoutCommand(provider, reference.number, "");
 }
 
-/** Activity changes only when the same host resource reports a newer revision. */
-export function shouldRefreshPullRequestActivity(
-  previous: { readonly key: string; readonly updatedAt: string } | null,
-  next: { readonly key: string; readonly updatedAt: string },
+/** Whether the same pull request reports a different revision than the one last seen. */
+export function pullRequestRevisionChanged(
+  previous: { readonly key: string; readonly revision: string } | null,
+  next: { readonly key: string; readonly revision: string },
 ): boolean {
-  return previous !== null && previous.key === next.key && previous.updatedAt !== next.updatedAt;
+  return previous !== null && previous.key === next.key && previous.revision !== next.revision;
+}
+
+/**
+ * What the diff is read from. A push, a rebase, or a new base moves it; a reply, a resolved
+ * conversation, or a reaction also moves `updatedAt` but leaves the code where it was, and
+ * rereading the diff for those would throw away the reader's place in it.
+ */
+export function pullRequestCodeRevision(detail: {
+  readonly baseBranch: string;
+  readonly commits: ReadonlyArray<{ readonly oid: string }>;
+}): string {
+  return JSON.stringify([detail.baseBranch, detail.commits.map((commit) => commit.oid)]);
 }
 /** Appends fetched pages without replacing fresher comments already in the activity response. */
 export function mergePullRequestThreadComments<T extends { readonly id: string }>(
