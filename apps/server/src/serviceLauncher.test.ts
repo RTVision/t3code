@@ -14,6 +14,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -172,32 +173,58 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-prune-" });
-      const versionsDir = path.join(root, "runtime", "versions");
-      const entries = ["0.0.9", "0.0.10", "0.0.11", "0.0.12", "0.0.13", "0.1.0", ".staging-x"];
+      const runtimeDir = path.join(root, "runtime");
+      const versionsDir = path.join(runtimeDir, "versions");
+      const entries = [
+        "0.0.8",
+        "0.0.9",
+        "0.0.10",
+        "0.0.11",
+        "0.0.12",
+        "0.0.13",
+        "0.0.14",
+        "0.0.15",
+        "0.1.0",
+        ".staging-x",
+      ];
       for (const entry of entries) {
         yield* fs.makeDirectory(path.join(versionsDir, entry), { recursive: true });
       }
-
-      // A deferred `t3 update` repointed the unit at 0.0.11 while the
-      // launcher kept running from 0.0.10.
-      yield* fs.writeFileString(
-        path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE),
-        "0.0.11\n",
-      );
+      // The unit was last written for 0.0.9, and a deferred `t3 update`
+      // restart still waits on 0.0.11; the running launcher is 0.0.10.
+      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_BOOT_VERSION_FILE), "0.0.9\n");
+      yield* fs.writeFileString(path.join(runtimeDir, SERVICE_RESTART_PENDING_FILE), "0.0.11\n");
 
       yield* Effect.promise(() =>
-        pruneRuntimeVersions(root, "0.0.13", [path.join(versionsDir, "0.0.10", "t3"), undefined]),
+        pruneRuntimeVersions(
+          root,
+          {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "0.0.15",
+            // 0.0.14 failed earlier; the last good version is 0.0.12.
+            update: {
+              id: "update-1",
+              fromVersion: "0.0.12",
+              targetVersion: "0.0.15",
+              status: "committed",
+            },
+          },
+          [path.join(versionsDir, "0.0.10", "t3"), undefined],
+        ),
       );
 
-      // 0.0.12 is the rollback target, 0.0.10 runs the launcher, the unit
-      // boots 0.0.11 next, 0.1.0 may be a staged update, and non-version
-      // entries are never touched.
+      // Only 0.0.8 and 0.0.13 are gone. 0.0.14 is the newest older version,
+      // 0.0.12 the committed update's origin, 0.0.9 what the unit boots,
+      // 0.0.10 the running launcher, 0.0.11 the deferred restart, 0.1.0 a
+      // possible staged update, and non-version entries are never touched.
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-x",
         "0.0.10",
         "0.0.11",
         "0.0.12",
-        "0.0.13",
+        "0.0.14",
+        "0.0.15",
+        "0.0.9",
         "0.1.0",
       ]);
     }),

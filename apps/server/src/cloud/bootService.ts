@@ -29,6 +29,7 @@ import {
 import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
   parseServiceState,
@@ -895,6 +896,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
+      yield* writeDurably(
+        path.join(input.baseDir, "runtime", SERVICE_BOOT_VERSION_FILE),
+        `${input.cliVersion}\n`,
+      );
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {

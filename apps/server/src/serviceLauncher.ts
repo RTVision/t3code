@@ -28,6 +28,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
@@ -231,38 +232,43 @@ async function runtimeExists(baseDir: string, version: string): Promise<boolean>
   }
 }
 
+const readVersionMarker = (filePath: string) =>
+  NodeFSP.readFile(filePath, "utf8").then(
+    (contents) => contents.trim(),
+    () => undefined,
+  );
+
 /**
- * Deletes runtimes older than the active version, keeping the newest of them
- * for a manual rollback. Newer versions may be a staged update and are left
- * alone. So is any version the boot unit may start: the one `launcherPaths`
- * (the running launcher's own executable or script) lives in, and the one a
- * deferred `t3 update` restart names, since that update repoints the unit
- * without restarting the running launcher.
+ * Deletes runtimes older than the active version. Newer versions may be a
+ * staged update and are left alone. Among older ones it keeps rollback
+ * targets (the newest, and the version the last committed update left) and
+ * anything the boot unit may start: the version `launcherPaths` (the running
+ * launcher's own executable or script) lives in, the one the unit was last
+ * written for, and the one a deferred `t3 update` restart names.
  */
 export async function pruneRuntimeVersions(
   baseDir: string,
-  activeVersion: string,
+  state: ServiceState,
   launcherPaths: ReadonlyArray<string | undefined>,
 ): Promise<void> {
   const runtimeDir = NodePath.join(baseDir, "runtime");
   const versionsDir = NodePath.join(runtimeDir, "versions");
-  const restartVersion = await NodeFSP.readFile(
-    NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE),
-    "utf8",
-  ).then(
-    (contents) => contents.trim(),
-    () => undefined,
-  );
+  const keep = new Set([
+    await readVersionMarker(NodePath.join(runtimeDir, SERVICE_BOOT_VERSION_FILE)),
+    await readVersionMarker(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)),
+    state.update?.status === "committed" ? state.update.fromVersion : undefined,
+  ]);
   const older = (await NodeFSP.readdir(versionsDir))
     .filter(
-      (name) => isExactServiceVersion(name) && compareExactServiceVersions(name, activeVersion) < 0,
+      (name) =>
+        isExactServiceVersion(name) && compareExactServiceVersions(name, state.activeVersion) < 0,
     )
     .toSorted(compareExactServiceVersions)
     .slice(0, -1);
   for (const version of older) {
     const versionDir = NodePath.join(versionsDir, version);
     const bootable =
-      version === restartVersion ||
+      keep.has(version) ||
       launcherPaths.some(
         (launcherPath) =>
           launcherPath !== undefined &&
@@ -414,9 +420,7 @@ export class Launcher {
   // Detached so a large delete never delays boot or an update handoff.
   #pruneRuntimeVersions(): void {
     const launcherPaths = [process.execPath, process.argv[1]];
-    void pruneRuntimeVersions(this.#baseDir, this.#state.activeVersion, launcherPaths).catch(
-      () => undefined,
-    );
+    void pruneRuntimeVersions(this.#baseDir, this.#state, launcherPaths).catch(() => undefined);
   }
 
   async #recover(): Promise<void> {

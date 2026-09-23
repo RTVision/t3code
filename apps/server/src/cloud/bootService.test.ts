@@ -21,6 +21,7 @@ import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_BOOT_VERSION_FILE,
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
@@ -536,6 +537,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.4",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+      // Runtime pruning keeps what the unit boots, not just what is running.
+      expect(
+        yield* fs.readFileString(
+          statePath.replace(/service-state\.json$/, SERVICE_BOOT_VERSION_FILE),
+        ),
+      ).toBe("1.2.4\n");
       expect(
         commands.filter(
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
