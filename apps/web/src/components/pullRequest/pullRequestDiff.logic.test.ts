@@ -2,10 +2,13 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyDiffSlice,
   foldChoicesAfterViewed,
   isFileDiffCollapsed,
   isLineInFileDiff,
   type DiffFoldChoices,
+  type DiffSlice,
+  type DiffSliceState,
 } from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
@@ -130,5 +133,109 @@ describe("foldChoicesAfterViewed", () => {
       ["b.ts", true],
     ]);
     expect([...foldChoicesAfterViewed("a.ts", true, null, choices)]).toEqual([["b.ts", true]]);
+  });
+});
+
+describe("diff slices", () => {
+  const slice = (cursor: string | null, patch: string, nextCursor: string | null): DiffSlice => ({
+    cursor,
+    patch,
+    truncated: false,
+    nextCursor,
+    omittedFileStats: [],
+  });
+  const loaded: DiffSliceState = {
+    key: "pr-1",
+    cursor: "b",
+    slices: [slice(null, "one", "a"), slice("a", "two", "b"), slice("b", "three", null)],
+    revalidating: false,
+  };
+
+  it("appends a new slice and moves the cursor onto it", () => {
+    expect(
+      applyDiffSlice(
+        { key: "", cursor: null, slices: [], revalidating: false },
+        { key: "pr-1", slice: slice(null, "one", "a"), settled: true },
+      ),
+    ).toEqual({
+      key: "pr-1",
+      cursor: null,
+      slices: [slice(null, "one", "a")],
+      revalidating: false,
+    });
+  });
+
+  it("keeps the same state when the last slice comes back unchanged", () => {
+    expect(
+      applyDiffSlice(loaded, { key: "pr-1", slice: slice("b", "three", null), settled: true }),
+    ).toBe(loaded);
+  });
+
+  it("walks the loaded slices again, one settled answer at a time", () => {
+    const walking = { ...loaded, cursor: null, revalidating: true };
+    // The cached answer shown while the read is out, or kept by a failed one, does not advance it.
+    expect(
+      applyDiffSlice(walking, { key: "pr-1", slice: slice(null, "one", "a"), settled: false }),
+    ).toBe(walking);
+    const second = applyDiffSlice(walking, {
+      key: "pr-1",
+      slice: slice(null, "one", "a"),
+      settled: true,
+    });
+    expect(second).toEqual({ ...walking, cursor: "a" });
+    expect(second.slices).toBe(loaded.slices);
+    const third = applyDiffSlice(second, {
+      key: "pr-1",
+      slice: slice("a", "two", "b"),
+      settled: true,
+    });
+    expect(third).toEqual({ ...walking, cursor: "b" });
+    // The last slice is owed a settled answer too before the walk is over.
+    expect(
+      applyDiffSlice(third, { key: "pr-1", slice: slice("b", "three", null), settled: false }),
+    ).toBe(third);
+    expect(
+      applyDiffSlice(third, { key: "pr-1", slice: slice("b", "three", null), settled: true }),
+    ).toEqual(loaded);
+  });
+
+  it("ends a walk over a single slice only once it is confirmed", () => {
+    const single: DiffSliceState = {
+      key: "pr-1",
+      cursor: null,
+      slices: [slice(null, "one", null)],
+      revalidating: true,
+    };
+    expect(
+      applyDiffSlice(single, { key: "pr-1", slice: slice(null, "one", null), settled: false }),
+    ).toBe(single);
+    expect(
+      applyDiffSlice(single, { key: "pr-1", slice: slice(null, "one", null), settled: true }),
+    ).toEqual({ ...single, revalidating: false });
+  });
+
+  it("replaces a slice that changed and drops the ones read after it", () => {
+    expect(
+      applyDiffSlice(
+        { ...loaded, cursor: "a", revalidating: true },
+        { key: "pr-1", slice: slice("a", "two, pushed", "c"), settled: true },
+      ),
+    ).toEqual({
+      key: "pr-1",
+      cursor: "a",
+      slices: [slice(null, "one", "a"), slice("a", "two, pushed", "c")],
+      revalidating: false,
+    });
+  });
+
+  it("starts over when the answer belongs to another scope", () => {
+    expect(
+      applyDiffSlice(loaded, { key: "pr-2", slice: slice(null, "other", null), settled: true }),
+    ).toEqual({
+      key: "pr-2",
+      cursor: null,
+      slices: [slice(null, "other", null)],
+      revalidating: false,
+    });
   });
 });

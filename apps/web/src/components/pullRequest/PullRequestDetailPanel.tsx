@@ -833,6 +833,9 @@ export function PullRequestDetailPanel({
   ]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
+  // Softer than the token above: the diff is read again in place, and only a page that came back
+  // different replaces what is on screen.
+  const [diffRevalidateToken, setDiffRevalidateToken] = useState(0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -844,7 +847,10 @@ export function PullRequestDetailPanel({
       // mutation's activity refresh can leave SWR displaying its previous value.
       if (activityQuery.isPending) return;
       activityQuery.refresh();
-      setRefreshToken((token) => token + 1);
+      // A resolved conversation or a reaction moves this revision as surely as a push does, so
+      // the diff is checked rather than started over: starting over throws away the reader's
+      // place for a change that usually left the code alone.
+      setDiffRevalidateToken((token) => token + 1);
     }
     activityRevision.current = next;
   }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
@@ -2775,6 +2781,7 @@ export function PullRequestDetailPanel({
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
+                    revalidateToken={diffRevalidateToken}
                   />
                 </Suspense>
               </div>

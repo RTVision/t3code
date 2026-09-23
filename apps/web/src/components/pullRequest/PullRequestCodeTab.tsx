@@ -4,7 +4,6 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
-  PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
   PullRequestReviewThread,
@@ -25,9 +24,17 @@ import {
   TextWrapIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -80,11 +87,14 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import {
+  applyDiffSlice,
   isFileDiffCollapsed,
   isLineInFileDiff,
   foldChoicesAfterViewed,
   type DiffFoldChoices,
   type DiffFoldOverride,
+  type DiffSlice,
+  type DiffSliceState,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
@@ -109,16 +119,6 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
-
-/** One answer from the host: a whole number of files, and where the next one carries on. */
-interface DiffSlice {
-  /** What was asked for, null being the first slice. Identifies the slice among the loaded ones. */
-  readonly cursor: string | null;
-  readonly patch: string;
-  readonly truncated: boolean;
-  readonly nextCursor: string | null;
-  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
-}
 
 /**
  * The viewer's own per-file counts are hidden and drawn from this side of its shadow root
@@ -183,6 +183,20 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
 }
 
 /**
+ * Whether a press came from the file header pinned to the top of the viewer, which is where a
+ * header sits while its file runs on past the top edge. The header lives in the viewer's shadow
+ * tree, so it is found through `composedPath`, which only answers while the event dispatches.
+ */
+function isPinnedHeaderEvent(event: Event, frame: HTMLElement | null): boolean {
+  if (frame === null) return false;
+  const header = event
+    .composedPath()
+    .find((node) => node instanceof HTMLElement && node.hasAttribute("data-diffs-header"));
+  if (!(header instanceof HTMLElement)) return false;
+  return header.getBoundingClientRect().top <= frame.getBoundingClientRect().top + 1;
+}
+
+/**
  * Whether the viewer draws this line at all. A line counts the new file on the right and the old
  * one on the left, and each hunk covers one run of each; a line outside every run — a
  * conversation the host could not mark outdated, or one under a hunk it withheld — has no row to
@@ -205,6 +219,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  revalidateToken = 0,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -221,6 +236,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /** Bumped when the pull request reports a new revision: re-read the loaded pages in place. */
+  revalidateToken?: number;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -250,11 +267,12 @@ function PullRequestCodeTab({
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Which pull request the slices belong to travels with them, so a render taken before the
   // reset below cannot read the previous one's slices — or send its cursor to the host.
-  const [sliceState, setSliceState] = useState<{
-    readonly key: string;
-    readonly cursor: string | null;
-    readonly slices: ReadonlyArray<DiffSlice>;
-  }>({ key: "", cursor: null, slices: NO_SLICES });
+  const [sliceState, setSliceState] = useState<DiffSliceState>({
+    key: "",
+    cursor: null,
+    slices: NO_SLICES,
+    revalidating: false,
+  });
   const parseCache = useRef(new Map<string, RenderablePatch>());
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
 
@@ -272,7 +290,7 @@ function PullRequestCodeTab({
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
     parseCache.current.clear();
   }, [scopeKey]);
 
@@ -293,43 +311,21 @@ function PullRequestCodeTab({
   useEffect(() => {
     const data = diffQuery.data;
     if (data === null) return;
-    setSliceState((previous) => {
-      const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
-      const next = {
-        cursor,
-        patch: data.patch,
-        truncated: data.truncated,
-        nextCursor: data.nextCursor,
-        omittedFileStats: data.omittedFileStats ?? [],
-      };
-      const index = slices.findIndex((slice) => slice.cursor === cursor);
-      if (index === -1) {
-        return { key: scopeKey, cursor, slices: [...slices, next] };
-      }
-      const existing = slices[index];
-      if (
-        existing !== undefined &&
-        existing.patch === next.patch &&
-        existing.truncated === next.truncated &&
-        existing.nextCursor === next.nextCursor &&
-        existing.omittedFileStats.length === next.omittedFileStats.length &&
-        existing.omittedFileStats.every((file, index) => {
-          const refreshed = next.omittedFileStats[index];
-          return (
-            refreshed !== undefined &&
-            refreshed.path === file.path &&
-            refreshed.additions === file.additions &&
-            refreshed.deletions === file.deletions
-          );
-        })
-      ) {
-        return previous;
-      }
-      // A page that came back different means the diff moved under the review. The slices
-      // after it go with the replacement: their cursors were positions in the old diff.
-      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
-    });
-  }, [cursor, diffQuery.data, scopeKey]);
+    setSliceState((previous) =>
+      applyDiffSlice(previous, {
+        key: scopeKey,
+        slice: {
+          cursor,
+          patch: data.patch,
+          truncated: data.truncated,
+          nextCursor: data.nextCursor,
+          omittedFileStats: data.omittedFileStats ?? [],
+        },
+        // A failed read still carries the last good answer, which confirms nothing either.
+        settled: !diffQuery.isPending && diffQuery.error === null,
+      }),
+    );
+  }, [cursor, diffQuery.data, diffQuery.error, diffQuery.isPending, scopeKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
   const refreshFirstDiffPage = useAtomRefresh(
@@ -440,11 +436,53 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  // A new revision of the pull request walks the pages already on screen from the first, and
+  // the answer for each is compared against the page it would replace (above). One that only
+  // moved the conversation leaves the diff, and the reader's place in it, as it was.
+  const registry = useContext(RegistryContext);
+  const appliedRevalidateToken = useRef(revalidateToken);
+  useEffect(() => {
+    if (appliedRevalidateToken.current === revalidateToken) return;
+    appliedRevalidateToken.current = revalidateToken;
+    // The page being read goes too, so a first read still out when the revision moved is asked
+    // again rather than landing with the older answer.
+    const cursors = new Set([...loadedSlices.map((slice) => slice.cursor), cursor]);
+    for (const pageCursor of cursors) {
+      registry.refresh(
+        pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(pageCursor === null ? {} : { cursor: pageCursor }),
+            ...(commit === null ? {} : { commit }),
+          },
+        }),
+      );
+    }
+    // A push can have left a ticked file standing against an older version of it.
+    refreshFilesViewed();
+    setSliceState((previous) =>
+      previous.key !== scopeKey || previous.slices.length === 0
+        ? previous
+        : { ...previous, cursor: null, revalidating: true },
+    );
+  }, [
+    commit,
+    cursor,
+    environmentId,
+    loadedSlices,
+    reference,
+    refreshFilesViewed,
+    registry,
+    revalidateToken,
+    scopeKey,
+  ]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
+  const revalidating = sliceState.key === scopeKey && sliceState.revalidating;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
   const withheldContent =
@@ -635,9 +673,12 @@ function PullRequestCodeTab({
 
   // A failed slice must not be asked for again on its own. The files already loaded keep the
   // sentinel on screen, so re-arming it after a failure would request the same slice forever.
+  // Nor while the loaded pages are being read again: asking for the next one would move the
+  // cursor off the walk and leave the pages after it unchecked.
   const canLoadNextSlice =
     nextCursor !== null &&
     nextCursor !== cursor &&
+    !revalidating &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = useCallback(() => {
@@ -673,28 +714,34 @@ function PullRequestCodeTab({
     [],
   );
 
-  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
-  // back. Folding is still held apart from what has been ticked, so folding everything ticks
-  // nothing off.
-  const setFileViewed = useCallback(
-    (path: string, viewed: boolean) => {
-      setViewed(path, viewed);
-      setFoldChoices((current) =>
-        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
-      );
-    },
-    [effectiveFoldOverride, setViewed],
-  );
-
-  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
+  const requestFileReveal = useCodeViewFileReveal(viewer, scopeKey);
   const revealFile = useCallback(
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
       if (item.collapsed === true) setFileFolded(path, false);
-      requestTreeReveal(item.id);
+      requestFileReveal(item.id);
     },
-    [items, requestTreeReveal, setFileFolded],
+    [items, requestFileReveal, setFileFolded],
+  );
+
+  // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
+  // back. Folding is still held apart from what has been ticked, so folding everything ticks
+  // nothing off.
+  const setFileViewed = useCallback(
+    (path: string, viewed: boolean, headerPinned: boolean) => {
+      setViewed(path, viewed);
+      setFoldChoices((current) =>
+        foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
+      );
+      // Ticked from the pinned header, the reader is part way through the file. Left to itself
+      // the viewer holds the next file where it was on screen and fills the gap from above with
+      // code already read; putting the folded header at the top brings the next file up instead.
+      if (!viewed || !headerPinned) return;
+      const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
+      if (item !== undefined) requestFileReveal(item.id);
+    },
+    [effectiveFoldOverride, items, requestFileReveal, setViewed],
   );
 
   const toggleAllFiles = () => {
@@ -780,15 +827,21 @@ function PullRequestCodeTab({
     () =>
       // Only while something is still owed. A finished diff whose query fails on a later
       // refresh — a reconnect re-runs every one of them — is whole on screen already, and
-      // saying otherwise sends the reader looking for files that are all there.
-      nextCursor === null ? null : (
+      // saying otherwise sends the reader looking for files that are all there. A check for
+      // new changes that stopped on a failed page is owed, though: the pages after it are
+      // unchecked until it is retried.
+      nextCursor === null && !(revalidating && diffQuery.error !== null) ? null : (
         <div
           ref={setSentinel}
           className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
         >
           {diffQuery.error !== null ? (
             <>
-              <span>The rest of this diff could not be loaded.</span>
+              <span>
+                {revalidating
+                  ? "This diff could not be checked for new changes."
+                  : "The rest of this diff could not be loaded."}
+              </span>
               <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
                 Retry
               </Button>
@@ -798,7 +851,7 @@ function PullRequestCodeTab({
           ) : null}
         </div>
       ),
-    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
+    [nextCursor, revalidating, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -834,6 +887,7 @@ function PullRequestCodeTab({
   // Read through refs rather than closed over. The viewer memoizes each visible file's header
   // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
   // host's answer, would rebuild every header on screen.
+  const codeViewFrameRef = useRef<HTMLDivElement>(null);
   const filesViewedRef = useRef(filesViewed);
   filesViewedRef.current = filesViewed;
   const setFileViewedRef = useRef(setFileViewed);
@@ -877,7 +931,13 @@ function PullRequestCodeTab({
             <Checkbox
               aria-label={stale ? "Changed" : "Viewed"}
               checked={viewed}
-              onCheckedChange={(next) => setFileViewedRef.current(path, next === true)}
+              onCheckedChange={(next, { event }) =>
+                setFileViewedRef.current(
+                  path,
+                  next === true,
+                  isPinnedHeaderEvent(event, codeViewFrameRef.current),
+                )
+              }
             />
             {stale ? (
               <Tooltip>
@@ -1353,9 +1413,19 @@ function PullRequestCodeTab({
   );
   // The toolbar rides above every branch below, not just the one with a patch in it: a commit
   // whose diff is empty or unreadable still needs the scope dropdown that got the reader there.
+  // The viewer's footer says this where there is a viewer. The empty and raw-text bodies below
+  // have none, and without it a failed check would leave their old answer standing unannounced.
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {revalidating && diffQuery.error !== null ? (
+        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-border/60 py-2 text-xs text-muted-foreground">
+          <span>This diff could not be checked for new changes.</span>
+          <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-auto">{body}</div>
     </div>
   );
@@ -1521,6 +1591,7 @@ function PullRequestCodeTab({
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
             up; the viewer inside still owns its own scrolling. */}
         <div
+          ref={codeViewFrameRef}
           className="relative min-h-0 min-w-0 flex-1"
           // The chevron answers this too, but the whole header row is the target a reader
           // actually aims for. The header lives in the viewer's shadow tree, so the capture
@@ -1590,7 +1661,7 @@ function PullRequestCodeTab({
                       size="xs"
                       variant="outline"
                       className="w-full"
-                      disabled={diffQuery.isPending}
+                      disabled={diffQuery.isPending || (revalidating && diffQuery.error === null)}
                       onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
                     >
                       {diffQuery.error !== null

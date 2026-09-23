@@ -1,5 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide } from "@t3tools/contracts";
+import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
 
 /**
  * Whether a conversation's line is really in this file's hunks.
@@ -72,4 +72,85 @@ export function foldChoicesAfterViewed(
   if (followsDefault) next.delete(path);
   else next.set(path, viewed);
   return next;
+}
+
+/** One answer from the host: a whole number of files, and where the next one carries on. */
+export interface DiffSlice {
+  /** What was asked for, null being the first slice. Identifies the slice among the loaded ones. */
+  readonly cursor: string | null;
+  readonly patch: string;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+/**
+ * The slices on screen, the scope they belong to, and the one being read. Which pull request the
+ * slices belong to travels with them, so a render taken before a reset cannot read the previous
+ * one's slices — or send its cursor to the host.
+ */
+export interface DiffSliceState {
+  readonly key: string;
+  readonly cursor: string | null;
+  readonly slices: ReadonlyArray<DiffSlice>;
+  /**
+   * The loaded slices are being read again, from the first, after the pull request reported a
+   * new revision. Held until the last of them is confirmed, so a failed read along the way —
+   * the last slice's included — is still owed a retry.
+   */
+  readonly revalidating: boolean;
+}
+
+function isSameSlice(existing: DiffSlice, next: DiffSlice): boolean {
+  return (
+    existing.patch === next.patch &&
+    existing.truncated === next.truncated &&
+    existing.nextCursor === next.nextCursor &&
+    existing.omittedFileStats.length === next.omittedFileStats.length &&
+    existing.omittedFileStats.every((file, index) => {
+      const refreshed = next.omittedFileStats[index];
+      return (
+        refreshed !== undefined &&
+        refreshed.path === file.path &&
+        refreshed.additions === file.additions &&
+        refreshed.deletions === file.deletions
+      );
+    })
+  );
+}
+
+/**
+ * Folds one answer for the slice at `slice.cursor` into what is on screen.
+ *
+ * A new slice is appended. One that came back different means the diff moved under the review,
+ * so it replaces the old one and the slices after it go too: their cursors were positions in the
+ * old diff. One that came back the same leaves the state alone — unless the loaded slices are
+ * being read again, in which case a settled answer hands the cursor to the next one, and ends
+ * the walk at the last. The cached answer a read shows while it is still out, or a failed read
+ * still carries, confirms nothing, so it does not move the walk.
+ */
+export function applyDiffSlice(
+  previous: DiffSliceState,
+  answer: { readonly key: string; readonly slice: DiffSlice; readonly settled: boolean },
+): DiffSliceState {
+  const { key, slice, settled } = answer;
+  const slices = previous.key === key ? previous.slices : [];
+  const index = slices.findIndex((candidate) => candidate.cursor === slice.cursor);
+  const existing = slices[index];
+  if (existing === undefined) {
+    return { key, cursor: slice.cursor, slices: [...slices, slice], revalidating: false };
+  }
+  if (isSameSlice(existing, slice)) {
+    if (!settled || !previous.revalidating) return previous;
+    const following = slices[index + 1];
+    return following === undefined
+      ? { ...previous, revalidating: false }
+      : { ...previous, cursor: following.cursor };
+  }
+  return {
+    key,
+    cursor: slice.cursor,
+    slices: [...slices.slice(0, index), slice],
+    revalidating: false,
+  };
 }
