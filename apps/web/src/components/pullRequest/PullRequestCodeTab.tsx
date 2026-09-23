@@ -229,8 +229,8 @@ function PullRequestCodeTab({
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   /** Set once the reader has asked for every file at once, until they pick a file apart again. */
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  // An expanded default still folds what has been ticked off; only the toolbar opens everything.
+  const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
@@ -590,11 +590,12 @@ function PullRequestCodeTab({
   const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
     () =>
       annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-        const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+        const viewed = filesViewedEnabled && isFileViewed(path);
+        const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles, viewed);
         // Ticking a file that is already folded changes no fold, so without this the box on
         // screen would keep saying the opposite of what the count says.
         const viewedMark = filesViewedEnabled
-          ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+          ? `e${viewed ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
           : "";
         return {
           id: fileKey,

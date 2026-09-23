@@ -21,7 +21,10 @@ export function isLineInFileDiff(
   );
 }
 
-/** What the toolbar last asked of every file at once, null being the reader asking nothing yet. */
+/**
+ * What the toolbar last asked of every file at once. Null is the reader asking nothing yet, which
+ * opens what is left to review and keeps what has been ticked off out of the way.
+ */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
 /**
@@ -37,17 +40,18 @@ export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
   toggledFileKeys: ReadonlySet<string>,
+  viewed: boolean,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
+  const foldedByDefault = foldOverride === "folded" || (foldOverride === null && viewed);
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
 
 /**
  * The reader's fold choices after a file was ticked off, or put back.
  *
- * Clearing a file puts it away and un-clearing brings it back, so the tick moves the fold as if
- * the reader had pressed the chevron themselves, which keeps folding a difference from what the
- * toolbar last asked, and so keeps "collapse all" from ticking anything off.
+ * Clearing a file puts it away and un-clearing brings it back, whatever the default or an earlier
+ * toggle said, which keeps folding a difference from what the toolbar last asked, and so keeps
+ * "collapse all" from ticking anything off.
  */
 export function toggleFileDiffFoldForViewed(
   fileKey: string,
@@ -55,7 +59,7 @@ export function toggleFileDiffFoldForViewed(
   foldOverride: DiffFoldOverride,
   toggledFileKeys: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
+  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys, viewed) === viewed)
     return toggledFileKeys;
   const next = new Set(toggledFileKeys);
   if (next.has(fileKey)) next.delete(fileKey);
