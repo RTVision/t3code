@@ -1413,9 +1413,19 @@ function PullRequestCodeTab({
   );
   // The toolbar rides above every branch below, not just the one with a patch in it: a commit
   // whose diff is empty or unreadable still needs the scope dropdown that got the reader there.
+  // The viewer's footer says this where there is a viewer. The empty and raw-text bodies below
+  // have none, and without it a failed check would leave their old answer standing unannounced.
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {revalidating && diffQuery.error !== null ? (
+        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-border/60 py-2 text-xs text-muted-foreground">
+          <span>This diff could not be checked for new changes.</span>
+          <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-auto">{body}</div>
     </div>
   );
