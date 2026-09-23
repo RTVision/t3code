@@ -162,8 +162,7 @@ import {
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
-  pullRequestCodeRevision,
-  pullRequestRevisionChanged,
+  shouldRefreshPullRequestActivity,
   stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
@@ -834,33 +833,27 @@ export function PullRequestDetailPanel({
   ]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
-  const activityRevision = useRef<{ readonly key: string; readonly revision: string } | null>(null);
+  // Softer than the token above: the diff is read again in place, and only a page that came back
+  // different replaces what is on screen.
+  const [diffRevalidateToken, setDiffRevalidateToken] = useState(0);
+  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (!coreDetail) return;
-    const next = { key: tabScopeKey, revision: coreDetail.updatedAt };
-    if (pullRequestRevisionChanged(activityRevision.current, next)) {
+    const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
+    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
       // Let an existing read settle before revalidating the new revision. Interrupting a
       // mutation's activity refresh can leave SWR displaying its previous value.
       if (activityQuery.isPending) return;
       activityQuery.refresh();
+      // A resolved conversation or a reaction moves this revision as surely as a push does, so
+      // the diff is checked rather than started over: starting over throws away the reader's
+      // place for a change that usually left the code alone.
+      setDiffRevalidateToken((token) => token + 1);
     }
     activityRevision.current = next;
   }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
-  // The diff starts over only when the code moved. Read from the activity the revision above
-  // refreshes, so a push lands here once its commits do.
-  const codeRevision =
-    coreDetail === null || activity === null
-      ? null
-      : pullRequestCodeRevision({ baseBranch: coreDetail.baseBranch, commits: activity.commits });
-  const seenCodeRevision = useRef<{ readonly key: string; readonly revision: string } | null>(null);
-  useEffect(() => {
-    if (codeRevision === null) return;
-    const next = { key: tabScopeKey, revision: codeRevision };
-    if (pullRequestRevisionChanged(seenCodeRevision.current, next)) {
-      setRefreshToken((token) => token + 1);
-    }
-    seenCodeRevision.current = next;
-  }, [codeRevision, tabScopeKey]);
   // Reuse activity and diff until core detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
@@ -2788,6 +2781,7 @@ export function PullRequestDetailPanel({
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
+                    revalidateToken={diffRevalidateToken}
                   />
                 </Suspense>
               </div>

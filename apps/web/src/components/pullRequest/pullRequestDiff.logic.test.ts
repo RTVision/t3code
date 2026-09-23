@@ -2,10 +2,13 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyDiffSlice,
   foldChoicesAfterViewed,
   isFileDiffCollapsed,
   isLineInFileDiff,
   type DiffFoldChoices,
+  type DiffSlice,
+  type DiffSliceState,
 } from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
@@ -130,5 +133,74 @@ describe("foldChoicesAfterViewed", () => {
       ["b.ts", true],
     ]);
     expect([...foldChoicesAfterViewed("a.ts", true, null, choices)]).toEqual([["b.ts", true]]);
+  });
+});
+
+describe("diff slices", () => {
+  const slice = (cursor: string | null, patch: string, nextCursor: string | null): DiffSlice => ({
+    cursor,
+    patch,
+    truncated: false,
+    nextCursor,
+    omittedFileStats: [],
+  });
+  const loaded: DiffSliceState = {
+    key: "pr-1",
+    cursor: "b",
+    slices: [slice(null, "one", "a"), slice("a", "two", "b"), slice("b", "three", null)],
+  };
+
+  it("appends a new slice and moves the cursor onto it", () => {
+    const first = applyDiffSlice(
+      { key: "", cursor: null, slices: [] },
+      { key: "pr-1", slice: slice(null, "one", "a"), settled: true },
+    );
+    expect(first).toEqual({ key: "pr-1", cursor: null, slices: [slice(null, "one", "a")] });
+  });
+
+  it("keeps the same state when the last slice comes back unchanged", () => {
+    expect(
+      applyDiffSlice(loaded, { key: "pr-1", slice: slice("b", "three", null), settled: true }),
+    ).toBe(loaded);
+  });
+
+  it("walks the loaded slices again, one settled answer at a time", () => {
+    const walking = { ...loaded, cursor: null };
+    // The cached answer shown while the read is out does not advance the walk.
+    expect(
+      applyDiffSlice(walking, { key: "pr-1", slice: slice(null, "one", "a"), settled: false }),
+    ).toBe(walking);
+    const second = applyDiffSlice(walking, {
+      key: "pr-1",
+      slice: slice(null, "one", "a"),
+      settled: true,
+    });
+    expect(second).toEqual({ ...loaded, cursor: "a" });
+    expect(second.slices).toBe(loaded.slices);
+    const last = applyDiffSlice(second, {
+      key: "pr-1",
+      slice: slice("a", "two", "b"),
+      settled: true,
+    });
+    expect(last).toEqual(loaded);
+  });
+
+  it("replaces a slice that changed and drops the ones read after it", () => {
+    expect(
+      applyDiffSlice(
+        { ...loaded, cursor: "a" },
+        { key: "pr-1", slice: slice("a", "two, pushed", "c"), settled: true },
+      ),
+    ).toEqual({
+      key: "pr-1",
+      cursor: "a",
+      slices: [slice(null, "one", "a"), slice("a", "two, pushed", "c")],
+    });
+  });
+
+  it("starts over when the answer belongs to another scope", () => {
+    expect(
+      applyDiffSlice(loaded, { key: "pr-2", slice: slice(null, "other", null), settled: true }),
+    ).toEqual({ key: "pr-2", cursor: null, slices: [slice(null, "other", null)] });
   });
 });
