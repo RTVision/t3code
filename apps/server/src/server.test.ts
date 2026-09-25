@@ -117,6 +117,7 @@ import {
 } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as DiskSpace from "./diskSpace.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -172,6 +173,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -520,6 +522,7 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
+    diskSpace?: Partial<DiskSpace.DiskSpace["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     modelManifest?: Partial<ModelManifest.ModelManifest["Service"]>;
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
@@ -787,6 +790,11 @@ const buildAppUnderTest = (options?: {
             current: Effect.succeed([]),
             streamChanges: Stream.empty,
             ...options?.layers?.environmentTheme,
+          }),
+          Layer.mock(DiskSpace.DiskSpace)({
+            current: Effect.succeed(null),
+            streamChanges: Stream.make(null),
+            ...options?.layers?.diskSpace,
           }),
           Layer.mock(UsageLimitSources.UsageLimitSources)({
             current: Effect.succeed([]),
@@ -1228,13 +1236,17 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.none() })),
       Layer.provideMerge(
         options?.layers?.httpClient === undefined
           ? FetchHttpClient.layer
           : Layer.succeed(HttpClient.HttpClient, options.layers.httpClient),
       ),
-      Layer.provide(GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer))),
-      Layer.provide(layerConfig),
+      // Folded into one step: `pipe` accepts at most twenty operators and the
+      // merged layer list reached twenty-one. Same wiring as two provides.
+      Layer.provide(
+        GitHubCli.layer.pipe(Layer.provideMerge(VcsProcess.layer), Layer.provideMerge(layerConfig)),
+      ),
     );
 
     yield* Layer.build(appLayer);
@@ -6821,6 +6833,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (first?.type === "snapshot") assert.equal(first.config.environmentThemes, undefined);
       assert.equal(second?.type, "environmentThemesUpdated");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "subscribeServerConfig reports low disk space and streams changes to opt-in subscribers",
+    () =>
+      Effect.gen(function* () {
+        const report = (level: "warning" | "critical", availableBytes: number) => ({
+          level,
+          path: "/home/t3",
+          availableBytes,
+          totalBytes: 100_000_000_000,
+        });
+
+        yield* buildAppUnderTest({
+          layers: {
+            diskSpace: {
+              current: Effect.succeed(report("warning", 3_000_000_000)),
+              // Replays the snapshot's report first, like the live service.
+              streamChanges: Stream.make(
+                report("warning", 3_000_000_000),
+                report("critical", 500_000_000),
+                null,
+              ),
+            },
+            providerRegistry: { streamChanges: Stream.empty },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const events = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig]({ lowDiskSpace: true }).pipe(
+              Stream.filter(
+                (event) => event.type === "snapshot" || event.type === "lowDiskSpaceUpdated",
+              ),
+              Stream.take(3),
+              Stream.runCollect,
+            ),
+          ),
+        );
+
+        const [first, second, third] = Array.from(events);
+        assert.equal(first?.type, "snapshot");
+        if (first?.type === "snapshot") assert.equal(first.config.lowDiskSpace?.level, "warning");
+        // The replayed report duplicates the snapshot, so it is not resent.
+        assert.equal(second?.type, "lowDiskSpaceUpdated");
+        if (second?.type === "lowDiskSpaceUpdated") {
+          assert.equal(second.payload.lowDiskSpace?.level, "critical");
+        }
+        assert.equal(third?.type, "lowDiskSpaceUpdated");
+        if (third?.type === "lowDiskSpaceUpdated") assert.isNull(third.payload.lowDiskSpace);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("subscribeServerConfig withholds published themes from other subscribers", () =>

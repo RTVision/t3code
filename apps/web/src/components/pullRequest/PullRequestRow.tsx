@@ -204,7 +204,7 @@ function PullRequestRowImpl({
         meta={
           <>
             {showReviewRequest && entry.viewerReviewRequested && entry.state === "open" ? (
-              <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 text-amber-700 dark:text-amber-400">
+              <span className="shrink-0 rounded-full bg-warning/10 px-1.5 text-warning-foreground">
                 Your review requested
               </span>
             ) : null}

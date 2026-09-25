@@ -5,88 +5,54 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
+The `@rtvision/t3` npm package runs on Node.js 22.16+ in the 22.x line,
+23.11+ in the 23.x line, or 24.10 and later. Install Node.js and npm on the
+server and connect to RTVision's network to reach its npm registry. The desktop
+app includes its server runtime.
+
+SSH hosts use a standalone archive when it is available and compatible. Hosts
+such as Alpine need Node.js and npm for the fallback installation.
+
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.
 
 ## Command line
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest
 ```
 
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
-
-| Task                                             | Command                                                   |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                      |
-| Start the server without a browser               | `t3 serve`                                                |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
-| Move to the newest release                       | `t3 update`                                               |
-| Remove it again                                  | `t3 uninstall`                                            |
-
-Run `t3 --help` for the full reference.
-
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
-
-### Intel Macs
-
-There is no `t3` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with Node.js 24 and `vp`
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
-
-```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
-node apps/server/dist/bin.mjs
-```
-
-`t3 update` and the background service do not apply to a server run this way;
-update it with `git pull` and a rebuild.
+This starts the server and opens the local web app. Run
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest --help` for command-line options.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
-or use a package manager:
-
-| Platform           | Install                            |
-| ------------------ | ---------------------------------- |
-| Windows            | `winget install T3Tools.T3Code`    |
-| macOS              | `brew install --cask t3-code`      |
-| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb` |
-| Arch Linux         | `yay -S t3code-bin`                |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`        |
-
-The `.deb` updates itself like the other desktop builds. It asks for your
-password to install each update. If your desktop has no password prompt, the
-update fails. Download the new `.deb` and install it the same way.
+Download the Windows x64 or Linux x64 installer from
+[RTVision GitHub Releases](https://github.com/RTVision/t3code/releases).
+Desktop installers are unsigned.
 
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install the provider CLIs inside that distro. T3 Code installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
+there. Install and authenticate provider CLIs inside that distro. T3 Code installs its
+matching server runtime there automatically; the first launch after an app
+update can take longer.
+
+The bundled Linux runtime needs `libatomic.so.1`. On Debian or Ubuntu, install
+it inside the WSL distro with `sudo apt-get update && sudo apt-get install libatomic1`.
+If a startup failure switched the app to Windows, re-enable the WSL backend in
+**Settings → Connections** after installing the library.
 
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:
 
 ```bash
-t3 app
+npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
