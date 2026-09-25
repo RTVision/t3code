@@ -1,5 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -2589,6 +2591,25 @@ layer("GiteaPullRequestApi", (it) => {
         expect(reactions.pullRequest).toEqual([]);
         expect(mockedRequest).toHaveBeenCalledTimes(hasEvidence ? 5 : 2);
       }),
+  );
+
+  it.effect("keeps a shared feature read for the callers still waiting on it", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      mockedRequest.mockImplementation(() =>
+        Deferred.await(released).pipe(Effect.as(response({ features: ["pull-revert"] }))),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const cancelled = yield* api.getFeatures().pipe(Effect.forkChild({ startImmediately: true }));
+      const waiting = yield* api.getFeatures().pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Fiber.interrupt(cancelled);
+      yield* Deferred.succeed(released, undefined);
+
+      expect(yield* Fiber.join(waiting)).toEqual(["pull-revert"]);
+      expect(yield* api.getFeatures()).toEqual(["pull-revert"]);
+      expect(mockedRequest).toHaveBeenCalledTimes(1);
+    }),
   );
 
   it.effect("reports Gitea's missing review-summary reaction route", () =>

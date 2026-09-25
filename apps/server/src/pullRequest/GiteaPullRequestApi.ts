@@ -1,4 +1,5 @@
 import type { PullRequestViewedFiles } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1042,25 +1043,31 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const getFeatures = yield* Effect.cachedWithTTL(
-    Effect.suspend(() =>
-      gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }),
-    ).pipe(
-      Effect.mapError((error) => failure("getFeatures", error)),
-      Effect.flatMap((response) =>
-        decode(
-          "getFeatures",
-          Schema.Struct({ features: Schema.optional(Schema.Array(Schema.String)) }),
-          response,
+  // A Cache rather than Effect.cachedWithTTL: that replays an interrupted caller's exit to every
+  // concurrent waiter and keeps it for the TTL, so a cancelled detail read failed the PR activity
+  // read beside it. A Cache lookup runs in its own fiber and drops interrupted entries.
+  const featuresCache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: "1 minute",
+    lookup: () =>
+      gitea.request({ operation: "getFeatures", method: "GET", path: "/settings/api" }).pipe(
+        Effect.mapError((error) => failure("getFeatures", error)),
+        Effect.flatMap((response) =>
+          decode(
+            "getFeatures",
+            Schema.Struct({ features: Schema.optional(Schema.Array(Schema.String)) }),
+            response,
+          ),
         ),
+        Effect.map((settings) => settings.features ?? []),
       ),
-      Effect.map((settings) => settings.features ?? []),
-    ),
-    "1 minute",
-  );
+  });
+  const getFeatures = Cache.get(featuresCache, undefined);
 
-  const getViewerTeams = yield* Effect.cachedWithTTL(
-    Effect.suspend(() =>
+  const viewerTeamsCache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: "1 minute",
+    lookup: () =>
       Effect.gen(function* () {
         const teamIDs = new Set<number>();
         let path = query("/user/teams", { page: 1, limit: PAGE_SIZE });
@@ -1087,14 +1094,13 @@ export const make = Effect.gen(function* () {
           reason: "failed",
           detail: "Gitea viewer team pagination exceeded the safe page limit.",
         });
-      }),
-    ).pipe(
-      // Public-only tokens can read pull requests while Gitea rejects their team lookup.
-      // Team membership enriches individual review requests and must not hide those matches.
-      Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
-    ),
-    "1 minute",
-  );
+      }).pipe(
+        // Public-only tokens can read pull requests while Gitea rejects their team lookup.
+        // Team membership enriches individual review requests and must not hide those matches.
+        Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
+      ),
+  });
+  const getViewerTeams = Cache.get(viewerTeamsCache, undefined);
 
   const readUnknownSlice = Effect.fn("GiteaPullRequestApi.readUnknownSlice")(function* (input: {
     operation: string;
