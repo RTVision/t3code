@@ -7287,6 +7287,40 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
+  // Vim: a queued send that lands while the empty composer still holds the
+  // focus it had when the send began returns to Normal, like a direct send.
+  const queuedVimSendRef = useRef<{
+    threadKey: string | null;
+    id: string;
+    dispatched: boolean;
+    focusAtSend: Element | null;
+  } | null>(null);
+  useEffect(() => {
+    const sending = queuedMessages.find((message) => message.sending);
+    const tracked = queuedVimSendRef.current;
+    if (sending) {
+      queuedVimSendRef.current = {
+        threadKey: activeThreadKey,
+        id: sending.id,
+        dispatched: sending.sending === "dispatching",
+        focusAtSend:
+          tracked?.threadKey === activeThreadKey && tracked.id === sending.id
+            ? tracked.focusAtSend
+            : document.activeElement,
+      };
+      return;
+    }
+    queuedVimSendRef.current = null;
+    if (
+      tracked?.dispatched &&
+      tracked.threadKey === activeThreadKey &&
+      !queuedMessages.some((message) => message.id === tracked.id) &&
+      vimEnabled() &&
+      document.activeElement === tracked.focusAtSend &&
+      promptRef.current.length === 0
+    )
+      focusVimNormal();
+  }, [activeThreadKey, queuedMessages]);
   // The composer's model and modes, as a queued message keeps them for its send.
   const readComposerSendSettings = (
     sendCtx: ReturnType<ChatComposerHandle["getSendContext"]>,
