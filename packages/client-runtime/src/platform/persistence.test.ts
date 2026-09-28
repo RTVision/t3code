@@ -29,7 +29,9 @@ const sampleDecoded = <S extends Schema.Constraint>(schema: S) =>
   });
 const encodeSnapshot = Schema.encodeEffect(OrchestrationShellSnapshot);
 
-describe("encodeShellSnapshotForCache", () => {
+// Sampling 1000 values at size 30 takes about 5.5s on the fork's stock GitHub
+// runners, just over the 5s default.
+describe("encodeShellSnapshotForCache", { timeout: 20_000 }, () => {
   it.effect("matches the Schema encoding of a generated snapshot", () =>
     Effect.gen(function* () {
       const threads = yield* sampleDecoded(OrchestrationThreadShell);
