@@ -89,6 +89,7 @@ function readInitialThreadSidebarWidth(): number {
 
 function SidebarControl() {
   useVimSidebar();
+  const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
@@ -103,7 +104,9 @@ function SidebarControl() {
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
-  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
+    context: { usagePageOpen },
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
@@ -124,7 +127,11 @@ function SidebarControl() {
         // available everywhere else, including the plain-text composer.
         return;
       }
-      if ((requestedCommand ?? resolveShortcutCommand(event, keybindings)) !== "sidebar.toggle")
+      if (
+        (requestedCommand ??
+          resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } })) !==
+        "sidebar.toggle"
+      )
         return;
 
       event.preventDefault();
@@ -139,7 +146,7 @@ function SidebarControl() {
       unsubscribeCommand();
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [keybindings, toggleSidebar]);
+  }, [keybindings, toggleSidebar, usagePageOpen]);
 
   return (
     // The right-side layout controls carry mr-px (border compensation inside
@@ -323,6 +330,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           data-app-sidebar=""
           data-vim-pane="sidebar"
           tabIndex={-1}
+          role="navigation"
+          aria-label={isOnSettings ? "Settings" : "Threads"}
           resizable={{
             maxWidth: sidebarMaximumWidth,
             minWidth: THREAD_SIDEBAR_MIN_WIDTH,
