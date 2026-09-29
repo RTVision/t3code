@@ -71,8 +71,10 @@ export function DiffSearchBar({ search }: { search: DiffSearch }) {
           value={search.query}
           onChange={(event) => search.setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            // Enter also commits an IME composition; that one belongs to the input.
-            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            // Enter also commits an IME composition; that one belongs to the input. Safari sends
+            // it after compositionend, flagged only by keyCode 229.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Enter") {
               event.preventDefault();
               if (event.shiftKey) search.previous();
               // In a Vim diff pane, Enter confirms and returns to Normal mode, where n and N step.

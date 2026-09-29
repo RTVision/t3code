@@ -65,6 +65,12 @@ describe("findOccurrences", () => {
     expect(findOccurrences("call(x) (c)", "(c)")).toEqual([[8, 11]]);
   });
 
+  it("falls back to exact text when the engine rejects the pattern", () => {
+    const query = "a".repeat(40_000);
+    expect(findOccurrences(`x${query}`, query)).toEqual([[1, 40_001]]);
+    expect(findOccurrences("x", query)).toEqual([]);
+  });
+
   it("keeps spans inside the original text when case folding changes length", () => {
     for (const [text, query] of [
       ["İi", "i\u0307"],

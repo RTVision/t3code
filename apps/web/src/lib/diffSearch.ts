@@ -26,12 +26,21 @@ export interface DiffSearchResult {
 const DIFF_SEARCH_MATCH_LIMIT = 5000;
 const EMPTY_RESULT: DiffSearchResult = { matches: [], truncated: false };
 
-let cachedPattern: { query: string; pattern: RegExp } | null = null;
-function queryPattern(query: string): RegExp {
+let cachedPattern: { query: string; pattern: RegExp | null } | null = null;
+/** Null when the engine rejects the pattern, e.g. a pasted query past V8's regex size limit. */
+function queryPattern(query: string): RegExp | null {
   if (cachedPattern?.query !== query) {
     const caseSensitive = query !== query.toLowerCase();
     const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    cachedPattern = { query, pattern: new RegExp(literal, caseSensitive ? "gu" : "giu") };
+    let pattern: RegExp | null = null;
+    try {
+      pattern = new RegExp(literal, caseSensitive ? "gu" : "giu");
+      // V8 compiles lazily and throws "too large" on first use, so compile it here.
+      pattern.test("");
+    } catch {
+      pattern = null;
+    }
+    cachedPattern = { query, pattern };
   }
   return cachedPattern.pattern;
 }
@@ -47,9 +56,17 @@ export function findOccurrences(
   limit = Infinity,
 ): Array<[start: number, end: number]> {
   if (!query || limit <= 0) return [];
-  const pattern = queryPattern(query);
-  pattern.lastIndex = 0;
   const spans: Array<[number, number]> = [];
+  const pattern = queryPattern(query);
+  if (!pattern) {
+    // Exact text only; still spans in `text` itself.
+    for (let at = text.indexOf(query); at !== -1 && spans.length < limit;) {
+      spans.push([at, at + query.length]);
+      at = text.indexOf(query, at + query.length);
+    }
+    return spans;
+  }
+  pattern.lastIndex = 0;
   for (let match = pattern.exec(text); match && spans.length < limit; match = pattern.exec(text)) {
     spans.push([match.index, match.index + match[0].length]);
   }
