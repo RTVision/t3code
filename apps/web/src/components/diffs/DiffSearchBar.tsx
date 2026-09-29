@@ -53,8 +53,11 @@ export function DiffSearchBar({ search }: { search: DiffSearch }) {
       data-vim-search
       className="flex shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 py-1"
       // Escape from any control in the bar closes the search and nothing else, such as a sheet.
+      // An IME can also use Escape to cancel a candidate; that one stays with the input.
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229) {
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         search.close();
