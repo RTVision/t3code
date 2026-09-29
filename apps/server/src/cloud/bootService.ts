@@ -2,6 +2,7 @@ import {
   HostProcessArchitecture,
   HostProcessExecutablePath,
   HostProcessIsExecutable,
+  HostProcessLinuxLibc,
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
@@ -564,6 +565,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const distribution = (yield* HostProcessIsExecutable) ? "archive" : "npm";
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
+  const linuxLibc = yield* HostProcessLinuxLibc;
   const uid = yield* HostProcessUserId;
   const httpClient = yield* HttpClient.HttpClient;
   const releaseBaseUrl = Option.getOrUndefined(
@@ -784,6 +786,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       httpClient,
       platform,
       arch,
+      linuxLibc,
       releaseBaseUrl,
       validate: (runtime) =>
         runner

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
+  HostProcessLinuxLibc,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
@@ -60,7 +61,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HostProcessArchitecture, "x64"),
-        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
+        Effect.provideService(HostProcessLinuxLibc, "musl"),
         Effect.provideService(HostProcessEnvironment, {
           T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
         }),
@@ -107,7 +108,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HostProcessArchitecture, "x64"),
-        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "gnu"),
+        Effect.provideService(HostProcessLinuxLibc, "gnu"),
         Effect.provideService(HostProcessEnvironment, {
           T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
         }),
@@ -147,7 +148,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HostProcessArchitecture, "x64"),
-        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
+        Effect.provideService(HostProcessLinuxLibc, "musl"),
         Effect.provideService(HostProcessEnvironment, {}),
       );
       const error = yield* Effect.flip(service.resolve);

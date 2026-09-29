@@ -18,6 +18,7 @@ import {
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
 
+import type { HostLinuxLibc } from "@t3tools/shared/hostProcess";
 import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -135,6 +136,7 @@ interface PinnedRuntimeInstallInput {
   ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
   readonly platform: NodeJS.Platform;
   readonly arch: string;
+  readonly linuxLibc: HostLinuxLibc;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
@@ -360,6 +362,14 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
             T3_NPM_REGISTRY,
             `t3@npm:${T3_NPM_PACKAGE}@${input.version}`,
           ],
+          // node-pty ships glibc-only Linux prebuilds and selects them without
+          // checking libc. On musl they load (under gcompat) and then segfault
+          // on the first spawn; this makes its install script compile instead.
+          // The other native dependencies ship musl packages and ignore it.
+          env:
+            input.platform === "linux" && input.linuxLibc === "musl"
+              ? { npm_config_build_from_source: "true" }
+              : undefined,
           timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
           maxOutputBytes: 64 * 1024,
           outputMode: "truncate",

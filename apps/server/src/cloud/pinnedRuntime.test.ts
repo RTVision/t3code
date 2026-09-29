@@ -77,6 +77,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         releaseBaseUrl: "https://releases.example/download",
         runner: extractingRunner(fs, path, commands),
@@ -134,6 +135,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           path,
           platform: "linux",
           arch: "x64",
+          linuxLibc: "gnu",
           httpClient: client,
           runner: extractingRunner(fs, path),
           validate: () => Effect.void,
@@ -200,6 +202,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: client,
         runner: extractingRunner(fs, path),
         validate: () => Effect.die("must not validate an interrupted archive"),
@@ -236,6 +239,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           path,
           platform: "linux",
           arch: "x64",
+          linuxLibc: "gnu",
           httpClient: releaseHttpClient("", requests),
           runner: ProcessRunner.ProcessRunner.of({
             run: (input) =>
@@ -306,6 +310,69 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       }),
   );
 
+  // node-pty's Linux prebuilds are glibc-only and segfault on musl, so musl
+  // installs must compile it. Everywhere else the prebuilds are correct.
+  it.effect.each([
+    { platform: "linux", linuxLibc: "musl", buildFromSource: true },
+    { platform: "linux", linuxLibc: "gnu", buildFromSource: false },
+    { platform: "darwin", linuxLibc: "musl", buildFromSource: false },
+    { platform: "win32", linuxLibc: "musl", buildFromSource: false },
+  ] as const)(
+    "builds native npm dependencies from source only on musl: $platform/$linuxLibc",
+    ({ platform, linuxLibc, buildFromSource }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-libc-" });
+        const envs: Array<NodeJS.ProcessEnv | undefined> = [];
+        yield* ensurePinnedRuntimeInstalled({
+          distribution: "npm",
+          baseDir,
+          version,
+          fs,
+          path,
+          platform,
+          arch: "x64",
+          linuxLibc,
+          httpClient: releaseHttpClient(""),
+          runner: ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.gen(function* () {
+                envs.push(input.env);
+                const staging = input.args[input.args.indexOf("--prefix") + 1]!;
+                const packageDir = path.join(staging, "node_modules/t3");
+                yield* fs
+                  .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
+                  .pipe(Effect.orDie);
+                yield* fs
+                  .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
+                  .pipe(Effect.orDie);
+                yield* fs
+                  .writeFileString(
+                    path.join(packageDir, "package.json"),
+                    '{"name":"@rtvision/t3","version":"1.2.3"}',
+                  )
+                  .pipe(Effect.orDie);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+          validate: () => Effect.void,
+        });
+        assert.deepEqual(envs, [
+          buildFromSource ? { npm_config_build_from_source: "true" } : undefined,
+        ]);
+      }),
+  );
+
   it.effect("refuses an archive whose checksum does not match the release", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -319,6 +386,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(`${"0".repeat(64)}  ${archiveName}\n`),
         runner: extractingRunner(fs, path, commands),
         validate: () => Effect.die("must not validate an unverified archive"),
@@ -345,6 +413,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: (staging) =>
@@ -376,6 +445,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () =>
@@ -409,6 +479,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(""),
         runner: ProcessRunner.ProcessRunner.of({
           run: (input) =>
@@ -464,6 +535,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () => Effect.void,
@@ -493,6 +565,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         runner: extractingRunner(fs, path),
         validate: (paths) =>
@@ -527,6 +600,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         path,
         platform: "linux",
         arch: "x64",
+        linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner,
         validate: () => Effect.void,
