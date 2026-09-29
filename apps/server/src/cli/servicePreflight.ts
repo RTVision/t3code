@@ -1,6 +1,7 @@
 import { HostProcessEnvironment, isHostWindows } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { Command, Flag } from "effect/unstable/cli";
 
@@ -27,7 +28,17 @@ export const checkPtySpawns = Effect.gen(function* () {
     env: yield* HostProcessEnvironment,
   });
   child.onExit(() => Deferred.doneUnsafe(exited, Effect.void));
-  yield* Deferred.await(exited);
+  // Stays under the self-update caller's 30s limit so a stalled PTY fails here,
+  // with the child cleaned up, rather than by the caller killing this process.
+  yield* Deferred.await(exited).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(10),
+      orElse: () =>
+        Effect.sync(() => child.kill()).pipe(
+          Effect.andThen(Effect.die(new Error("The preflight PTY did not exit within 10s."))),
+        ),
+    }),
+  );
 }).pipe(
   // A host that cannot open PTYs at all fails the same way on every version;
   // blocking on it would only stop that host from ever updating.
