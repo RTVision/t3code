@@ -71,7 +71,8 @@ export function DiffSearchBar({ search }: { search: DiffSearch }) {
           value={search.query}
           onChange={(event) => search.setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            // Enter also commits an IME composition; that one belongs to the input.
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
               event.preventDefault();
               if (event.shiftKey) search.previous();
               // In a Vim diff pane, Enter confirms and returns to Normal mode, where n and N step.

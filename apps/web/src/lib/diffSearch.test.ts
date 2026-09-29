@@ -37,16 +37,46 @@ const readme = file("readme", [
 
 describe("findOccurrences", () => {
   it("is case-insensitive for lowercase queries and does not overlap", () => {
-    expect(findOccurrences("Value value VALUE", "value")).toEqual([0, 6, 12]);
-    expect(findOccurrences("aaaa", "aa")).toEqual([0, 2]);
+    expect(findOccurrences("Value value VALUE", "value")).toEqual([
+      [0, 5],
+      [6, 11],
+      [12, 17],
+    ]);
+    expect(findOccurrences("aaaa", "aa")).toEqual([
+      [0, 2],
+      [2, 4],
+    ]);
   });
 
   it("becomes case-sensitive once the query has a capital letter", () => {
-    expect(findOccurrences("Value value VALUE", "Value")).toEqual([0]);
+    expect(findOccurrences("Value value VALUE", "Value")).toEqual([[0, 5]]);
   });
 
   it("stops scanning at the limit", () => {
-    expect(findOccurrences("a".repeat(200_000), "a", 3)).toEqual([0, 1, 2]);
+    expect(findOccurrences("a".repeat(200_000), "a", 3)).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 3],
+    ]);
+  });
+
+  it("treats the query literally", () => {
+    expect(findOccurrences("a.b axb (c)", "a.b")).toEqual([[0, 3]]);
+    expect(findOccurrences("call(x) (c)", "(c)")).toEqual([[8, 11]]);
+  });
+
+  it("keeps spans inside the original text when case folding changes length", () => {
+    for (const [text, query] of [
+      ["İi", "i\u0307"],
+      ["İ", "i"],
+      ["STRASSE straße", "straße"],
+    ] as const) {
+      for (const [start, end] of findOccurrences(text, query)) {
+        expect(start).toBeGreaterThanOrEqual(0);
+        expect(end).toBeLessThanOrEqual(text.length);
+        expect(text.slice(start, end).toLowerCase()).toBe(query.toLowerCase());
+      }
+    }
   });
 });
 

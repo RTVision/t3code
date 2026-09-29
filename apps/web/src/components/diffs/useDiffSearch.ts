@@ -60,8 +60,8 @@ function occurrenceRanges(
   extra = -1,
 ): Map<number, Range> {
   const ranges = new Map<number, Range>();
-  const offsets = findOccurrences(line.textContent ?? "", query, Math.max(limit, extra + 1));
-  if (offsets.length === 0) return ranges;
+  const spans = findOccurrences(line.textContent ?? "", query, Math.max(limit, extra + 1));
+  if (spans.length === 0) return ranges;
   const nodes: Text[] = [];
   const starts: number[] = [];
   const walker = line.ownerDocument.createTreeWalker(line, NodeFilter.SHOW_TEXT);
@@ -76,11 +76,11 @@ function occurrenceRanges(
     while (index > 0 && starts[index]! > offset) index--;
     return [nodes[index]!, offset - starts[index]!];
   };
-  offsets.forEach((offset, occurrence) => {
+  spans.forEach(([start, end], occurrence) => {
     if (occurrence >= limit && occurrence !== extra) return;
     const range = line.ownerDocument.createRange();
-    range.setStart(...locate(offset));
-    range.setEnd(...locate(offset + query.length));
+    range.setStart(...locate(start));
+    range.setEnd(...locate(end));
     ranges.set(occurrence, range);
   });
   return ranges;
@@ -224,6 +224,16 @@ export function useDiffSearch({
       if (event.defaultPrevented || files.length === 0) return;
       if (event.key.toLowerCase() !== "f" || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
+      // Other fields in the surface, such as the base-ref picker or a review comment, keep it.
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        !target.closest("[data-diff-search]") &&
+        (target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target.isContentEditable)
+      )
+        return;
       // Claimed only inside the diff: the viewer virtualizes its lines, so browser find would
       // miss most of them, and the desktop shell has no find-in-page at all.
       event.preventDefault();

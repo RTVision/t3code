@@ -23,22 +23,37 @@ export interface DiffSearchResult {
   truncated: boolean;
 }
 
-export const DIFF_SEARCH_MATCH_LIMIT = 5000;
+const DIFF_SEARCH_MATCH_LIMIT = 5000;
 const EMPTY_RESULT: DiffSearchResult = { matches: [], truncated: false };
 
-/** Literal, case-insensitive unless the query has a capital letter (Vim's smartcase). */
-export function findOccurrences(text: string, query: string, limit = Infinity): number[] {
-  if (!query || limit <= 0) return [];
-  const caseSensitive = query !== query.toLowerCase();
-  const haystack = caseSensitive ? text : text.toLowerCase();
-  const needle = caseSensitive ? query : query.toLowerCase();
-  const offsets: number[] = [];
-  let offset = haystack.indexOf(needle);
-  while (offset !== -1 && offsets.length < limit) {
-    offsets.push(offset);
-    offset = haystack.indexOf(needle, offset + needle.length);
+let cachedPattern: { query: string; pattern: RegExp } | null = null;
+function queryPattern(query: string): RegExp {
+  if (cachedPattern?.query !== query) {
+    const caseSensitive = query !== query.toLowerCase();
+    const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    cachedPattern = { query, pattern: new RegExp(literal, caseSensitive ? "gu" : "giu") };
   }
-  return offsets;
+  return cachedPattern.pattern;
+}
+
+/**
+ * Literal, case-insensitive unless the query has a capital letter (Vim's smartcase). Spans are
+ * `[start, end)` in `text` itself: case folding can change a string's length, so a match's
+ * length is not always the query's.
+ */
+export function findOccurrences(
+  text: string,
+  query: string,
+  limit = Infinity,
+): Array<[start: number, end: number]> {
+  if (!query || limit <= 0) return [];
+  const pattern = queryPattern(query);
+  pattern.lastIndex = 0;
+  const spans: Array<[number, number]> = [];
+  for (let match = pattern.exec(text); match && spans.length < limit; match = pattern.exec(text)) {
+    spans.push([match.index, match.index + match[0].length]);
+  }
+  return spans;
 }
 
 /**
