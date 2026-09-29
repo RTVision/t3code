@@ -10,6 +10,7 @@ import {
   HostProcessArchitecture,
   HostProcessPlatform,
   HostProcessIsExecutable,
+  HostProcessLinuxLibc,
   HostProcessExecutablePath,
 } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
@@ -183,6 +184,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
+  const linuxLibc = yield* HostProcessLinuxLibc;
   const nodeExecutable = yield* HostProcessExecutablePath;
   const distribution = (yield* HostProcessIsExecutable) ? "archive" : "npm";
   // Standalone executables download from GitHub; Node daemons keep the npm layout.
@@ -239,6 +241,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         httpClient,
         platform,
         arch,
+        linuxLibc,
         releaseBaseUrl,
         validate: (runtime) =>
           runner

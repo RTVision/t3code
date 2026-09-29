@@ -1,6 +1,8 @@
 import {
+  type HostLinuxLibc,
   HostProcessArchitecture,
   HostProcessEnvironment,
+  HostProcessLinuxLibc,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
@@ -66,30 +68,6 @@ function binaryName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
 }
 
-export type ResourceMonitorLinuxLibc = "gnu" | "musl";
-
-function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
-  try {
-    const report = process.report?.getReport() as
-      | {
-          readonly header?: {
-            readonly glibcVersionRuntime?: unknown;
-          };
-        }
-      | undefined;
-    return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
-  } catch {
-    return "musl";
-  }
-}
-
-export const ResourceMonitorHostLinuxLibc = Context.Reference<ResourceMonitorLinuxLibc>(
-  "t3/resourceTelemetry/ResourceMonitorHostLinuxLibc",
-  {
-    defaultValue: detectResourceMonitorLinuxLibc,
-  },
-);
-
 function resourceMonitorPlatformKey(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
@@ -106,7 +84,7 @@ function resourceMonitorPlatformKey(
 function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
-  linuxLibc?: ResourceMonitorLinuxLibc,
+  linuxLibc?: HostLinuxLibc,
 ): string | undefined {
   if (platform === "darwin") {
     return architecture === "arm64"
@@ -142,7 +120,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const environment = yield* HostProcessEnvironment;
-  const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
+  const linuxLibc = platform === "linux" ? yield* HostProcessLinuxLibc : undefined;
   const executableName = binaryName(platform);
   const platformKey = resourceMonitorPlatformKey(platform, architecture);
   const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);

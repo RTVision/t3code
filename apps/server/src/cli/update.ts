@@ -4,6 +4,7 @@ import {
   HostProcessExecutablePath,
   HostProcessInvokedAs,
   HostProcessIsExecutable,
+  HostProcessLinuxLibc,
   HostProcessPlatform,
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
@@ -348,6 +349,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const runner = yield* ProcessRunner.ProcessRunner;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
+  const linuxLibc = yield* HostProcessLinuxLibc;
   const environment = yield* HostProcessEnvironment;
   const httpClient = yield* HttpClient.HttpClient;
   const service = yield* BootService.BootService;
@@ -500,6 +502,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     httpClient,
     platform,
     arch,
+    linuxLibc,
     releaseBaseUrl: environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined,
     validate: (paths) =>
       runner
