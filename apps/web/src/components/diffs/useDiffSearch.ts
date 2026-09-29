@@ -86,6 +86,35 @@ function occurrenceRanges(
   return ranges;
 }
 
+/**
+ * The viewer scrolls lines into view only vertically. With wrapping off, a match past the edge
+ * of a long line stays hidden, so centre it in the nearest horizontal scroller.
+ */
+function revealHorizontally(range: Range) {
+  const rect = range.getBoundingClientRect();
+  let node: Node | null = range.startContainer;
+  while (node) {
+    if (node instanceof HTMLElement && node.scrollWidth > node.clientWidth) {
+      const overflow = getComputedStyle(node).overflowX;
+      if (overflow === "auto" || overflow === "scroll") {
+        const box = node.getBoundingClientRect();
+        // The left margin keeps the match clear of a pinned line-number gutter.
+        if (rect.left < box.left + 64 || rect.right > box.right) {
+          node.scrollLeft += rect.left + rect.width / 2 - (box.left + box.width / 2);
+        }
+        return;
+      }
+    }
+    node = node.parentNode ?? (node instanceof ShadowRoot ? node.host : null);
+  }
+}
+
+const sameMatch = (a: DiffSearchMatch, b: DiffSearchMatch) =>
+  a.fileKey === b.fileKey &&
+  a.side === b.side &&
+  a.lineNumber === b.lineNumber &&
+  a.occurrence === b.occurrence;
+
 interface DiffSearchViewer {
   getInstance(): object | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
@@ -138,6 +167,9 @@ export function useDiffSearch({
 
   // The match to scroll to once its file is unfolded and the viewer is mounted.
   const pendingTarget = useRef<DiffSearchMatch | null>(null);
+  // Horizontal reveal happens once per navigation, when the match is painted, so it never
+  // pulls back a reader who scrolls sideways afterwards.
+  const pendingReveal = useRef<DiffSearchMatch | null>(null);
   const scrollToPending = useCallback(() => {
     const target = pendingTarget.current;
     if (!target || !viewer?.getInstance()) return;
@@ -157,6 +189,7 @@ export function useDiffSearch({
   const goTo = useCallback(
     (match: DiffSearchMatch) => {
       pendingTarget.current = match;
+      pendingReveal.current = match;
       if (files.find((file) => file.fileKey === match.fileKey)?.collapsed) expand(match.fileKey);
       else scrollToPending();
     },
@@ -276,13 +309,22 @@ export function useDiffSearch({
         const budget = Math.max(0, MAX_PAINTED_RANGES - ranges.length);
         const currentOccurrence = currentLine ? paintCurrent.occurrence : -1;
         if (budget === 0 && currentOccurrence < 0) continue;
+        const reveal =
+          currentLine &&
+          pendingReveal.current !== null &&
+          sameMatch(pendingReveal.current, paintCurrent);
         for (const [occurrence, range] of occurrenceRanges(
           line,
           paintQuery,
           budget,
           currentOccurrence,
         )) {
-          (occurrence === currentOccurrence ? registry.current : registry.match).add(range);
+          const isCurrent = occurrence === currentOccurrence;
+          (isCurrent ? registry.current : registry.match).add(range);
+          if (isCurrent && reveal) {
+            pendingReveal.current = null;
+            revealHorizontally(range);
+          }
           ranges.push(range);
         }
       }

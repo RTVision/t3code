@@ -27,7 +27,7 @@ const DIFF_SEARCH_MATCH_LIMIT = 5000;
 const EMPTY_RESULT: DiffSearchResult = { matches: [], truncated: false };
 
 let cachedPattern: { query: string; pattern: RegExp | null } | null = null;
-/** Null when the engine rejects the pattern, e.g. a pasted query past V8's regex size limit. */
+/** Null once the engine has rejected the pattern, e.g. a pasted query past V8's size limit. */
 function queryPattern(query: string): RegExp | null {
   if (cachedPattern?.query !== query) {
     const caseSensitive = query !== query.toLowerCase();
@@ -35,11 +35,7 @@ function queryPattern(query: string): RegExp | null {
     let pattern: RegExp | null = null;
     try {
       pattern = new RegExp(literal, caseSensitive ? "gu" : "giu");
-      // V8 compiles lazily and throws "too large" on first use, so compile it here.
-      pattern.test("");
-    } catch {
-      pattern = null;
-    }
+    } catch {}
     cachedPattern = { query, pattern };
   }
   return cachedPattern.pattern;
@@ -56,19 +52,30 @@ export function findOccurrences(
   limit = Infinity,
 ): Array<[start: number, end: number]> {
   if (!query || limit <= 0) return [];
-  const spans: Array<[number, number]> = [];
   const pattern = queryPattern(query);
-  if (!pattern) {
-    // Exact text only; still spans in `text` itself.
-    for (let at = text.indexOf(query); at !== -1 && spans.length < limit;) {
-      spans.push([at, at + query.length]);
-      at = text.indexOf(query, at + query.length);
+  if (pattern) {
+    try {
+      const spans: Array<[number, number]> = [];
+      pattern.lastIndex = 0;
+      for (
+        let match = pattern.exec(text);
+        match && spans.length < limit;
+        match = pattern.exec(text)
+      ) {
+        spans.push([match.index, match.index + match[0].length]);
+      }
+      return spans;
+    } catch {
+      // V8 compiles lazily, per one- or two-byte subject, and can throw "too large" on any
+      // text. Stop using the pattern for this query.
+      cachedPattern = { query, pattern: null };
     }
-    return spans;
   }
-  pattern.lastIndex = 0;
-  for (let match = pattern.exec(text); match && spans.length < limit; match = pattern.exec(text)) {
-    spans.push([match.index, match.index + match[0].length]);
+  // Exact text only; still spans in `text` itself.
+  const spans: Array<[number, number]> = [];
+  for (let at = text.indexOf(query); at !== -1 && spans.length < limit;) {
+    spans.push([at, at + query.length]);
+    at = text.indexOf(query, at + query.length);
   }
   return spans;
 }

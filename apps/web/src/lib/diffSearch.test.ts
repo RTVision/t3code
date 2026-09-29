@@ -69,6 +69,9 @@ describe("findOccurrences", () => {
     const query = "a".repeat(40_000);
     expect(findOccurrences(`x${query}`, query)).toEqual([[1, 40_001]]);
     expect(findOccurrences("x", query)).toEqual([]);
+    const wide = "中".repeat(40_000);
+    expect(findOccurrences("中", wide)).toEqual([]);
+    expect(findOccurrences(`a${wide}`, wide)).toEqual([[1, 40_001]]);
   });
 
   it("keeps spans inside the original text when case folding changes length", () => {
