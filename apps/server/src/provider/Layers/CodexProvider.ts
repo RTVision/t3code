@@ -1,7 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -42,7 +38,7 @@ import {
   COMPACT_SLASH_COMMAND,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { expandHomePath, expandHomePathWith } from "../../pathExpansion.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   codexRateLimitsFailureMessage,
@@ -75,7 +71,6 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
-  readonly accountId?: string;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -348,8 +343,8 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
+      name: "T3 Code",
+      title: "T3 Code",
       version: packageJson.version,
     },
     capabilities: {
@@ -414,64 +409,6 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   return { client, initialize };
 });
 
-const decodeCodexAccountIdentity = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      tokens: Schema.Struct({
-        account_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
-        id_token: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      }),
-    }),
-  ),
-);
-
-const decodeCodexIdTokenIdentity = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      "https://api.openai.com/auth": Schema.Struct({
-        chatgpt_account_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      }),
-    }),
-  ),
-);
-
-export const resolveCodexAuthHome = Effect.fn("resolveCodexAuthHome")(function* (
-  input: {
-    readonly homePath?: string;
-    readonly environment?: NodeJS.ProcessEnv;
-  },
-  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
-) {
-  const path = yield* Path.Path;
-  return expandHomePathWith(
-    input.homePath?.trim() ||
-      input.environment?.CODEX_HOME ||
-      inheritedEnvironment.CODEX_HOME ||
-      path.join(input.environment?.HOME || inheritedEnvironment.HOME || NodeOS.homedir(), ".codex"),
-    path,
-  );
-});
-
-export const readCodexAccountId = Effect.fn("readCodexAccountId")(function* (homePath: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(homePath, "auth.json")).pipe(
-    Effect.flatMap(decodeCodexAccountIdentity),
-    Effect.flatMap((auth) => {
-      const accountId = auth.tokens.account_id?.trim();
-      if (accountId) return Effect.succeed(accountId);
-      const payload = auth.tokens.id_token?.split(".")[1];
-      if (!payload) return Effect.succeed(undefined);
-      return decodeCodexIdTokenIdentity(Buffer.from(payload, "base64url").toString("utf8")).pipe(
-        Effect.map(
-          (claims) => claims["https://api.openai.com/auth"].chatgpt_account_id?.trim() || undefined,
-        ),
-      );
-    }),
-    Effect.orElseSucceed(() => undefined),
-  );
-});
-
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
@@ -479,6 +416,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<CustomModelSetting>;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly skipNativeUsage?: boolean;
 }) {
   const { client, initialize } = yield* withCodexAppServerClient(input);
 
@@ -487,15 +425,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const version = versionMatch ? versionMatch[1] : undefined;
 
   const accountResponse = yield* client.request("account/read", {});
-  // account/read omits workspace identity. File-backed logins keep it beside
-  // the credentials in the same home used by this app-server instance.
-  const accountId =
-    accountResponse.account?.type === "chatgpt"
-      ? yield* resolveCodexAuthHome(input).pipe(
-          Effect.flatMap(readCodexAccountId),
-          Effect.provide(NodeServices.layer),
-        )
-      : undefined;
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,
@@ -513,32 +442,33 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      client.request("account/rateLimits/read", null).pipe(
-        Effect.map((response): CodexRateLimitsProbe => ({
-          snapshot: response.rateLimits,
-          rateLimitsByLimitId: response.rateLimitsByLimitId,
-          resetCredits: response.rateLimitResetCredits,
-        })),
-        Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
-        Effect.map(
-          Option.getOrElse((): CodexRateLimitsProbe => ({
-            failure: "Codex did not answer the usage request.",
-          })),
-        ),
-        Effect.catch((error) =>
-          Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
-            Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+      input.skipNativeUsage
+        ? Effect.succeed(undefined)
+        : client.request("account/rateLimits/read", null).pipe(
+            Effect.map((response): CodexRateLimitsProbe => ({
+              snapshot: response.rateLimits,
+              rateLimitsByLimitId: response.rateLimitsByLimitId,
+              resetCredits: response.rateLimitResetCredits,
+            })),
+            Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+            Effect.map(
+              Option.getOrElse((): CodexRateLimitsProbe => ({
+                failure: "Codex did not answer the usage request.",
+              })),
+            ),
+            Effect.catch((error) =>
+              Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
+                Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+              ),
+            ),
           ),
-        ),
-      ),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
-    ...(accountId ? { accountId } : {}),
-    rateLimits,
+    ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -602,10 +532,7 @@ const makePendingCodexProvider = (
     });
   });
 
-function accountProbeStatus(
-  account: CodexAppServerProviderSnapshot["account"],
-  accountId?: string,
-): {
+function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -617,7 +544,6 @@ function accountProbeStatus(
     ...(account.account?.type ? { type: account.account?.type } : {}),
     ...(authLabel ? { label: authLabel } : {}),
     ...(authEmail ? { email: authEmail } : {}),
-    ...(accountId ? { accountId } : {}),
   } satisfies ServerProvider["auth"];
 
   if (account.account) {
@@ -644,12 +570,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly cwd: string;
     readonly customModels: ReadonlyArray<CustomModelSetting>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly skipNativeUsage?: boolean;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
+  managedAuth?: ServerProvider["auth"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -683,6 +611,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
+    ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
@@ -731,9 +660,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
-  const accountStatus = accountProbeStatus(snapshot.account, snapshot.accountId);
+  const accountStatus = managedAuth
+    ? { status: "ready" as const, auth: managedAuth, message: undefined }
+    : accountProbeStatus(snapshot.account);
   const usageLimits =
-    snapshot.account.account?.type === "apiKey" || !snapshot.account.requiresOpenaiAuth
+    snapshot.account.account?.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
@@ -768,7 +699,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
-      usageLimits,
+      ...(managedAuth ? {} : { usageLimits }),
     },
   });
 });

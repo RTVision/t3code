@@ -63,7 +63,8 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
-  accountId: Schema.optional(TrimmedNonEmptyString),
+  subscriptionSharing: Schema.optional(Schema.Boolean),
+  profileId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -225,6 +226,12 @@ export const ServerProvider = Schema.Struct({
     Schema.Struct({
       canAuthenticate: Schema.Boolean,
       canInstall: Schema.Boolean,
+    }),
+  ),
+  runtimePaths: Schema.optionalKey(
+    Schema.Struct({
+      homePath: TrimmedNonEmptyString,
+      shadowHomePath: Schema.NullOr(TrimmedNonEmptyString),
     }),
   ),
   enabled: Schema.Boolean,
@@ -568,19 +575,6 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
-/**
- * Free space on the volume holding the T3 home, reported only while it is low.
- * A full disk crashes the server at startup, so clients warn before it fills.
- */
-export const ServerLowDiskSpace = Schema.Struct({
-  /** `warning` below 5% free, `critical` below 1%. */
-  level: Schema.Literals(["warning", "critical"]),
-  path: TrimmedNonEmptyString,
-  availableBytes: NonNegativeInt,
-  totalBytes: NonNegativeInt,
-});
-export type ServerLowDiskSpace = typeof ServerLowDiskSpace.Type;
-
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -589,8 +583,6 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviders,
-  /** Absent while disk space is fine and on servers that predate the check. */
-  lowDiskSpace: Schema.optionalKey(ServerLowDiskSpace),
   // Editor ids grow over time; drop ones this build does not know rather than
   // failing the whole config decode.
   availableEditors: ForwardCompatibleArray(EditorId),
@@ -764,20 +756,6 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
-export const ServerConfigLowDiskSpaceUpdatedPayload = Schema.Struct({
-  lowDiskSpace: Schema.NullOr(ServerLowDiskSpace),
-});
-export type ServerConfigLowDiskSpaceUpdatedPayload =
-  typeof ServerConfigLowDiskSpaceUpdatedPayload.Type;
-
-export const ServerConfigStreamLowDiskSpaceUpdatedEvent = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("lowDiskSpaceUpdated"),
-  payload: ServerConfigLowDiskSpaceUpdatedPayload,
-});
-export type ServerConfigStreamLowDiskSpaceUpdatedEvent =
-  typeof ServerConfigStreamLowDiskSpaceUpdatedEvent.Type;
-
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -785,7 +763,6 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
-  ServerConfigStreamLowDiskSpaceUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

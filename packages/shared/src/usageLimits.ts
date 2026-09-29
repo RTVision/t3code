@@ -13,6 +13,7 @@ import {
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
+  type OrchestrationThreadActivity,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -23,6 +24,35 @@ import * as DateTime from "effect/DateTime";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
+const CHATGPT_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
+
+export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
+  return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
+}
+
+/** A historical limit must not turn an unrelated current failure into a usage notice. */
+export function isChatGptUsageLimitError(
+  activities: readonly OrchestrationThreadActivity[],
+  error: string | null | undefined,
+): boolean {
+  if (!error) return false;
+  for (let index = activities.length - 1; index >= 0; index--) {
+    const activity = activities[index]!;
+    if (activity.kind !== "runtime.error") continue;
+    const payload = activity.payload;
+    return (
+      typeof payload === "object" &&
+      payload !== null &&
+      "code" in payload &&
+      payload.code === CHATGPT_USAGE_LIMIT_CODE &&
+      "message" in payload &&
+      payload.message === error
+    );
+  }
+  return false;
+}
 
 export const CURSOR_USAGE_WINDOWS = [
   {
@@ -79,47 +109,43 @@ export type LimitPresentations = ReadonlyMap<
   }
 >;
 
-function makeAccountKey(
-  configs: Iterable<{
-    readonly providers?: readonly ServerProvider[] | undefined;
-    readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
-  } | null>,
-) {
-  const idsByEmail = new Map<string, Set<string>>();
-  const emailKey = (driver: ServerProvider["driver"], email: string | undefined) => {
-    const normalized = email?.trim().toLowerCase();
-    return normalized ? `${driver}:${normalized}` : null;
-  };
-  for (const config of configs) {
-    const identities = [
-      ...(config?.providers ?? []).map((provider) => ({
-        driver: provider.driver,
-        ...provider.auth,
-      })),
-      ...(config?.usageLimitSources ?? []).flatMap((source) => source.accounts),
-    ];
-    for (const identity of identities) {
-      const key = emailKey(identity.driver, identity.email);
-      const id = identity.accountId?.trim();
-      if (!key || !id) continue;
-      const ids = idsByEmail.get(key) ?? new Set<string>();
-      ids.add(id);
-      idsByEmail.set(key, ids);
+/** One destination per service, even when several accounts or environments use it. */
+export function collectExternalUsageLinks(presentations: LimitPresentations) {
+  const links = new Map<
+    string,
+    {
+      readonly label: string;
+      readonly url: string;
+      readonly message: string | undefined;
+      readonly accounts: readonly string[];
+    }
+  >();
+  for (const presentation of presentations.values()) {
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      const external = provider.usageLimits?.externalUsage;
+      if (external && provider.auth.status === "authenticated") {
+        const account = `${provider.displayName ?? provider.instanceId} on ${presentation.entry.target.label}`;
+        links.set(external.url, {
+          ...external,
+          message: provider.usageLimits?.unavailable?.message,
+          accounts: [...new Set([...(links.get(external.url)?.accounts ?? []), account])],
+        });
+      }
     }
   }
-  return (driver: ServerProvider["driver"], email: string | undefined, accountId?: string) => {
-    const key = emailKey(driver, email);
-    const ids = key ? idsByEmail.get(key) : undefined;
-    // Legacy reports can join a known workspace only when the email is unambiguous.
-    const id = accountId?.trim() || (ids?.size === 1 ? ids.values().next().value : undefined);
-    return id ? `${driver}:account:${id}:${email?.trim().toLowerCase() ?? ""}` : key;
-  };
+  return [...links.values()];
+}
+
+function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
 }
 
 /**
  * One subscription account as the pooled views see it, whichever way it was
- * reported. Workspace ID and email identify a Codex member's quota bucket.
- * Email alone is a fallback for providers and older servers without an ID.
+ * reported. The same email signed in natively on two environments, or reported
+ * by a hub as well as natively, is one account: its quota is one bucket, so
+ * counting it twice would misstate what is left.
  */
 export interface LimitAccount {
   readonly key: string;
@@ -150,7 +176,6 @@ export interface LimitAccount {
  * native instances supply names and environment labels.
  */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
-  const accountKey = makeAccountKey(Array.from(presentations.values(), (p) => p.serverConfig));
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -218,7 +243,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
       merge(
-        accountKey(provider.driver, provider.auth.email, provider.auth.accountId) ??
+        accountKey(provider.driver, provider.auth.email) ??
           `${environmentId}:${provider.instanceId}`,
         {
           key: `${environmentId}:${provider.instanceId}`,
@@ -246,31 +271,27 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        merge(
-          accountKey(account.driver, account.email, account.accountId) ??
-            `${source.id}:${account.id}`,
-          {
-            key: `${source.id}:${account.id}`,
-            driver: account.driver,
-            displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
-            email: account.email,
-            plan: account.plan,
-            accentColor: undefined,
-            environments: [],
-            sourceLabel,
-            redeem: account.usageLimits.resetCredits?.nextCreditId
-              ? {
-                  environmentId,
-                  input: {
-                    sourceId: source.id,
-                    accountId: account.id,
-                    creditId: account.usageLimits.resetCredits.nextCreditId,
-                  },
-                }
-              : null,
-            limits: account.usageLimits,
-          },
-        );
+        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
+          key: `${source.id}:${account.id}`,
+          driver: account.driver,
+          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          email: account.email,
+          plan: account.plan,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel,
+          redeem: account.usageLimits.resetCredits?.nextCreditId
+            ? {
+                environmentId,
+                input: {
+                  sourceId: source.id,
+                  accountId: account.id,
+                  creditId: account.usageLimits.resetCredits.nextCreditId,
+                },
+              }
+            : null,
+          limits: account.usageLimits,
+        });
       }
     }
   }
@@ -619,7 +640,6 @@ export function collectProviderUsageLimits(
   sources: UsageLimitSourceSnapshots,
   now: number,
 ): UsageLimitsReport | null {
-  const accountKey = makeAccountKey([{ providers, usageLimitSources: sources }]);
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
   const native = providersWithLimits(providers).filter(
@@ -627,7 +647,7 @@ export function collectProviderUsageLimits(
   );
   const nativeAccounts = new Set(
     native.flatMap((provider) => {
-      const key = accountKey(provider.driver, provider.auth.email, provider.auth.accountId);
+      const key = accountKey(provider.driver, provider.auth.email);
       return key && provider.usageLimits?.windows.length && !provider.usageLimits.unavailable
         ? [key]
         : [];
@@ -637,13 +657,13 @@ export function collectProviderUsageLimits(
   const notices: string[] = [];
   for (const provider of native) {
     if (!provider.usageLimits) continue;
-    const key = accountKey(provider.driver, provider.auth.email, provider.auth.accountId);
+    const key = accountKey(provider.driver, provider.auth.email);
     const hubCredits = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
           key !== null &&
-          accountKey(account.driver, account.email, account.accountId) === key &&
+          accountKey(account.driver, account.email) === key &&
           account.usageLimits.resetCredits &&
           !limitsNotice(account.usageLimits),
       )
@@ -690,7 +710,7 @@ export function collectProviderUsageLimits(
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
-      const key = accountKey(account.driver, account.email, account.accountId);
+      const key = accountKey(account.driver, account.email);
       if (key && nativeAccounts.has(key)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,

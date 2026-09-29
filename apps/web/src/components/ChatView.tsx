@@ -1,6 +1,4 @@
-import { focusVimNormal, getVimMode, setVimMode, useVimAction, vimEnabled } from "../vim/runtime";
-import { onAppCommand } from "../vim/commandBus";
-import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
+import { isChatGptUsageLimitError } from "@t3tools/shared/usageLimits";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -12,7 +10,6 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { describeLowDiskSpace } from "@t3tools/client-runtime/low-disk-space";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -241,7 +238,6 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
-  HardDriveIcon,
   Minimize2Icon,
   PaperclipIcon,
   WifiOffIcon,
@@ -2688,32 +2684,8 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
-  const lowDiskSpace = serverConfig?.lowDiskSpace ?? null;
-  // Only a warning can be dismissed, and only until the page reloads; a
-  // critical report always shows because the server is about to fail.
-  const lowDiskSpaceKey =
-    lowDiskSpace === null
-      ? null
-      : `${serverConfig?.environment.environmentId}:${lowDiskSpace.level}`;
-  const [dismissedLowDiskSpaceKey, setDismissedLowDiskSpaceKey] = useState<string | null>(null);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
-    if (lowDiskSpace !== null && lowDiskSpaceKey !== dismissedLowDiskSpaceKey) {
-      const critical = lowDiskSpace.level === "critical";
-      items.push({
-        id: `low-disk-space:${lowDiskSpaceKey}`,
-        variant: critical ? "error" : "warning",
-        icon: <HardDriveIcon />,
-        title: `${critical ? "Disk almost full" : "Low disk space"} on ${versionMismatchServerLabel}`,
-        description: describeLowDiskSpace(lowDiskSpace),
-        ...(critical
-          ? {}
-          : {
-              dismissLabel: "Dismiss disk space warning",
-              onDismiss: () => setDismissedLowDiskSpaceKey(lowDiskSpaceKey),
-            }),
-      });
-    }
     const updateRunning = serverUpdateState.status === "running";
     const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
     const disconnectAction =
@@ -2866,9 +2838,6 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchDesktopAppUpdate,
     versionMismatchThreadContinuation,
     versionMismatchServerLabel,
-    lowDiskSpace,
-    lowDiskSpaceKey,
-    dismissedLowDiskSpaceKey,
   ]);
   const providerInstanceEntries = useMemo(
     () =>
@@ -4014,12 +3983,6 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  useVimAction(({ command, scope }) => {
-    if (command !== "input.enter" || scope !== "chat") return;
-    setVimMode("insert");
-    focusComposer();
-    return true;
-  });
   useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -5780,24 +5743,13 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
-    if (vimEnabled() && !isLocalDraftThread) {
-      const frame = requestAnimationFrame(() => focusVimNormal());
-      return () => cancelAnimationFrame(frame);
-    }
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, isLocalDraftThread, terminalUiState.terminalOpen]);
-
-  useEffect(() => {
-    if (!vimEnabled() || isLocalDraftThread) return;
-    // Restored terminals must not take input focus when entering an existing thread.
-    const frame = requestAnimationFrame(() => focusVimNormal());
-    return () => cancelAnimationFrame(frame);
-  }, [routeThreadKey, isLocalDraftThread]);
+  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
@@ -5815,11 +5767,7 @@ export default function ChatView(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          if (
-            (!vimEnabled() || getVimMode() === "insert") &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
-          )
-            focusComposer();
+          if (shouldRefocusComposerOnWindowFocus(document.activeElement)) focusComposer();
         });
       });
     };
@@ -6713,8 +6661,7 @@ export default function ChatView(props: ChatViewProps) {
     } else if (previous && !current) {
       terminalUiOpenByThreadRef.current[activeThreadKey] = current;
       const frame = window.requestAnimationFrame(() => {
-        if (vimEnabled()) focusVimNormal();
-        else focusComposer();
+        focusComposer();
       });
       return () => {
         window.cancelAnimationFrame(frame);
@@ -6739,7 +6686,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+    const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -6754,19 +6701,13 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
-      const terminalFocusOwner = requestedCommand
-        ? (document.activeElement
-            ?.closest("[data-terminal-owner]")
-            ?.getAttribute("data-terminal-owner") as "drawer" | "right-panel" | null)
-        : getTerminalFocusOwner();
-      if (event.defaultPrevented && !requestedCommand && terminalFocusOwner === null) {
+      const terminalFocusOwner = getTerminalFocusOwner();
+      if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
       }
       const shortcutContext = getShortcutContext(event.target);
 
       if (
-        !vimEnabled() &&
-        !requestedCommand &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -6778,11 +6719,9 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
 
-      const command =
-        requestedCommand ??
-        resolveShortcutCommand(event, keybindings, {
-          context: shortcutContext,
-        });
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: shortcutContext,
+      });
       if (!command) return;
 
       if (command === "thread.copyReference") {
@@ -6990,12 +6929,8 @@ export default function ChatView(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    const unsubscribeCommand = onAppCommand(handler);
     window.addEventListener("keydown", handler, true);
-    return () => {
-      unsubscribeCommand();
-      window.removeEventListener("keydown", handler, true);
-    };
+    return () => window.removeEventListener("keydown", handler, true);
   }, [
     activeProject,
     activeRightPanelSurface,
@@ -7287,40 +7222,6 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
-  // Vim: a queued send that lands while the empty composer still holds the
-  // focus it had when the send began returns to Normal, like a direct send.
-  const queuedVimSendRef = useRef<{
-    threadKey: string | null;
-    id: string;
-    dispatched: boolean;
-    focusAtSend: Element | null;
-  } | null>(null);
-  useEffect(() => {
-    const sending = queuedMessages.find((message) => message.sending);
-    const tracked = queuedVimSendRef.current;
-    if (sending) {
-      queuedVimSendRef.current = {
-        threadKey: activeThreadKey,
-        id: sending.id,
-        dispatched: sending.sending === "dispatching",
-        focusAtSend:
-          tracked?.threadKey === activeThreadKey && tracked.id === sending.id
-            ? tracked.focusAtSend
-            : document.activeElement,
-      };
-      return;
-    }
-    queuedVimSendRef.current = null;
-    if (
-      tracked?.dispatched &&
-      tracked.threadKey === activeThreadKey &&
-      !queuedMessages.some((message) => message.id === tracked.id) &&
-      vimEnabled() &&
-      document.activeElement === tracked.focusAtSend &&
-      promptRef.current.length === 0
-    )
-      focusVimNormal();
-  }, [activeThreadKey, queuedMessages]);
   // The composer's model and modes, as a queued message keeps them for its send.
   const readComposerSendSettings = (
     sendCtx: ReturnType<ChatComposerHandle["getSendContext"]>,
@@ -7423,7 +7324,6 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
-    const focusAtSend = document.activeElement;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -8673,15 +8573,6 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     sendInFlightRef.current = false;
-    if (
-      turnStartSucceeded &&
-      vimEnabled() &&
-      resolvedSubmissionIntent !== "background" &&
-      currentRouteThreadKeyRef.current === routeThreadKey &&
-      document.activeElement === focusAtSend &&
-      promptRef.current.length === 0
-    )
-      focusVimNormal();
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -9839,8 +9730,6 @@ export default function ChatView(props: ChatViewProps) {
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
-        data-vim-pane="chat"
-        tabIndex={-1}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
       >
         {/* Top bar */}
@@ -9921,6 +9810,7 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={visibleThreadError}
+                chatGptUsageLimit={isChatGptUsageLimitError(threadActivities, visibleThreadError)}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
@@ -9932,10 +9822,6 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
-                onVimBottom={() => scrollToEnd(false)}
-                vimHistoryError={
-                  routeThreadState.error._tag === "Some" ? routeThreadState.error.value : null
-                }
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
