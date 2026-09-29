@@ -42,7 +42,7 @@ const VIM_COMMANDS = [
   ["message.previous", "Previous message", ["[ m"], ["normal"]],
   ["hunk.next", "Next diff hunk", ["] c"], ["normal"]],
   ["hunk.previous", "Previous diff hunk", ["[ c"], ["normal"]],
-  ["search.open", "Search conversation", ["/"], ["normal"]],
+  ["search.open", "Search conversation or diff", ["/"], ["normal"]],
   ["search.next", "Next search match", ["n"], ["normal"]],
   ["search.previous", "Previous search match", ["N"], ["normal"]],
   ["list.collapse", "Collapse project", ["h"], ["normal"]],
@@ -108,7 +108,8 @@ export function resolveVimBindings(settings: VimSettings): VimBinding[] {
   });
 }
 function commandAvailable(command: VimCommand, scope: VimScope): boolean {
-  if (command.startsWith("message.") || command.startsWith("search.")) return scope === "chat";
+  if (command.startsWith("message.")) return scope === "chat";
+  if (command.startsWith("search.")) return scope === "chat" || scope === "diff";
   if (command.startsWith("hunk.")) return scope === "diff";
   if (command === "pane.close") return scope === "terminal" || scope === "diff";
   if (command.startsWith("list.")) return scope === "sidebar" || scope === "diff";
