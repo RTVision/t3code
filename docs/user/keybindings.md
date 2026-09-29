@@ -37,6 +37,13 @@ to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
 Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
 
+## Search a diff
+
+With focus in the diff panel or a pull request's code view, press `mod+F` or
+choose the search icon to find text in the changed lines, including files that
+are collapsed. Enter and `Shift+Enter` move between matches; `Esc` closes the
+search. On large diffs that load in parts, only loaded files are searched.
+
 ## iPad
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
@@ -86,7 +93,8 @@ choose **Load more history** to continue searching earlier messages. `gg` uses
 the same batches when loading the start of a thread. Close search to stop loading
 further history. Tool output and reasoning are excluded.
 
-`Space gd` opens the diff, where `]c/[c` moves between hunks. `Space ?` shows
+`Space gd` opens the diff, where `]c/[c` moves between hunks and `/` searches
+the diff. Enter confirms the search and `n/N` moves between matches. `Space ?` shows
 the active shortcuts. The pending-key guide reflects your custom mappings.
 
 ## Edit the configuration file

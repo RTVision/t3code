@@ -68,6 +68,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
+import { DiffSearchBar, DiffSearchToggle } from "../diffs/DiffSearchBar";
+import { useDiffSearch } from "../diffs/useDiffSearch";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -725,6 +727,31 @@ function PullRequestCodeTab({
     [items, requestFileReveal, setFileFolded],
   );
 
+  const searchFiles = useMemo(
+    () =>
+      items.map((item) => ({
+        fileKey: item.id,
+        filePath: resolveFileDiffPath(item.fileDiff),
+        fileDiff: item.fileDiff,
+        collapsed: item.collapsed === true,
+      })),
+    [items],
+  );
+  const expandSearchFile = useCallback(
+    (fileKey: string) => {
+      const file = searchFiles.find((candidate) => candidate.fileKey === fileKey);
+      if (file) setFileFolded(file.filePath, false);
+    },
+    [searchFiles, setFileFolded],
+  );
+  const diffSearch = useDiffSearch({
+    files: searchFiles,
+    viewer,
+    expand: expandSearchFile,
+    // Slices past the loaded ones have not arrived, so they cannot be searched yet.
+    incomplete: nextCursor !== null,
+  });
+
   // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
   // back. Folding is still held apart from what has been ticked, so folding everything ticks
   // nothing off.
@@ -976,8 +1003,18 @@ function PullRequestCodeTab({
       // wired.
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
+      onPostRender: diffSearch.onPostRender,
     }),
-    [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canCommentOnLines, draft, beginComment],
+    [
+      diffLayout,
+      wordWrap,
+      resolvedTheme,
+      loadDiffFiles,
+      canCommentOnLines,
+      draft,
+      beginComment,
+      diffSearch.onPostRender,
+    ],
   );
 
   const runThreadCommand = useCallback(
@@ -1388,6 +1425,7 @@ function PullRequestCodeTab({
             {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
           </TooltipPopup>
         </Tooltip>
+        {fileKeys.length > 0 ? <DiffSearchToggle search={diffSearch} /> : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1510,8 +1548,14 @@ function PullRequestCodeTab({
     );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      data-diff-search-root
+      tabIndex={-1}
+      className="flex h-full min-h-0 flex-col outline-none"
+      onKeyDown={diffSearch.onKeyDown}
+    >
       {toolbar}
+      <DiffSearchBar search={diffSearch} />
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (

@@ -92,6 +92,8 @@ import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
+import { DiffSearchBar, DiffSearchToggle } from "./diffs/DiffSearchBar";
+import { useDiffSearch } from "./diffs/useDiffSearch";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -535,6 +537,18 @@ export default function DiffPanel({
     treeRevealScope,
     codeViewFiles.map((file) => file.fileKey),
   );
+  const expandDiffFile = useCallback(
+    (fileKey: string) => {
+      setCollapsedDiffFiles((current) => {
+        const next = new Set(
+          current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
+        );
+        next.delete(fileKey);
+        return { scopeKey: collapseScopeKey, fileKeys: next };
+      });
+    },
+    [collapseScopeKey, defaultCollapsedDiffFileKeys],
+  );
   const revealDiffFile = useCallback(
     (filePath: string) => {
       const index = renderableFileEntries.findIndex(
@@ -542,13 +556,7 @@ export default function DiffPanel({
       );
       const file = renderableFileEntries[index];
       if (!file) return;
-      setCollapsedDiffFiles((current) => {
-        const next = new Set(
-          current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
-        );
-        next.delete(file.fileKey);
-        return { scopeKey: collapseScopeKey, fileKeys: next };
-      });
+      expandDiffFile(file.fileKey);
       if (lazySource && index >= settledFileCount) {
         requestFile(index);
       }
@@ -556,8 +564,7 @@ export default function DiffPanel({
     },
     [
       renderableFileEntries,
-      collapseScopeKey,
-      defaultCollapsedDiffFileKeys,
+      expandDiffFile,
       requestTreeReveal,
       lazySource,
       settledFileCount,
@@ -577,7 +584,18 @@ export default function DiffPanel({
     externalRevealRef.current = { cache: filePatchScope, key };
     revealDiffFile(selectedFilePath);
   }, [lazySource, selectedFilePath, selectedFileRevealRequestId, filePatchScope, revealDiffFile]);
-  useVimDiff({ files: codeViewFiles, viewer: codeView, reveal: revealDiffFile });
+  const diffSearch = useDiffSearch({
+    files: codeViewFiles,
+    viewer: codeView,
+    expand: expandDiffFile,
+    incomplete: lazySource !== null && settledFileCount < renderableFiles.length,
+  });
+  useVimDiff({
+    files: codeViewFiles,
+    viewer: codeView,
+    reveal: revealDiffFile,
+    search: diffSearch,
+  });
 
   const openDiffFile = useCallback(
     (filePath: string) => {
@@ -953,6 +971,7 @@ export default function DiffPanel({
             {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
           </TooltipPopup>
         </Tooltip>
+        {diffFileKeys.length > 0 && <DiffSearchToggle search={diffSearch} />}
         {diffFileKeys.length > 0 && (
           <Tooltip>
             <TooltipTrigger
@@ -978,7 +997,7 @@ export default function DiffPanel({
   );
 
   return (
-    <DiffPanelShell mode={mode} header={headerRow}>
+    <DiffPanelShell mode={mode} header={headerRow} onKeyDown={diffSearch.onKeyDown}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
@@ -994,6 +1013,7 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            <DiffSearchBar search={diffSearch} />
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
@@ -1165,6 +1185,7 @@ export default function DiffPanel({
                       preferredHighlighter: PREFERRED_HIGHLIGHTER,
                       themeType: resolvedTheme as DiffThemeType,
                       stickyHeaders: true,
+                      onPostRender: diffSearch.onPostRender,
                       ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                     }}
                   />
