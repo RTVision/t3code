@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -591,6 +592,60 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         );
         assert.deepEqual(yield* fs.readDirectory(path.dirname(finalPaths.versionDir)), [version]);
       }),
+  );
+
+  it.effect("restores the previous runtime when publishing its replacement fails", () =>
+    Effect.gen(function* () {
+      const realFs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* realFs.makeTempDirectoryScoped({ prefix: "t3-pinned-publish-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* realFs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* realFs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* realFs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
+      const fs: FileSystem.FileSystem = {
+        ...realFs,
+        rename: (from, to) =>
+          path.basename(from).startsWith(".staging-") &&
+          !from.endsWith("-previous") &&
+          to === finalPaths.versionDir
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: from,
+                }),
+              )
+            : realFs.rename(from, to),
+      };
+
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        linuxLibc: "gnu",
+        httpClient: releaseHttpClient(yield* validChecksums),
+        runner: extractingRunner(realFs, path),
+        validate: (paths) =>
+          realFs.readFileString(paths.entryPath).pipe(
+            Effect.orDie,
+            Effect.flatMap((source) =>
+              source === "broken\n"
+                ? Effect.fail(new PinnedRuntimeInstallError({ step: "validating the runtime" }))
+                : Effect.void,
+            ),
+          ),
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.equal(error.step, "publishing the pinned runtime");
+      assert.equal(yield* realFs.readFileString(finalPaths.entryPath), "broken\n");
+      assert.deepEqual(yield* realFs.readDirectory(path.dirname(finalPaths.versionDir)), [version]);
+    }),
   );
 
   it.effect("does not reinstall a completed runtime whose preflight is blocked", () =>

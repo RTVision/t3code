@@ -419,46 +419,57 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
             new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
         ),
       );
-    if (versionDirExists) {
-      yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PinnedRuntimeInstallError({
-              step: "replacing the previous pinned runtime",
-              cause,
-            }),
-        ),
-      );
-    }
-    const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
-      Effect.as(true),
-      Effect.catch((cause) =>
-        Effect.all([
-          fs.exists(paths.entryPath),
-          fs.readFileString(paths.sentinelPath).pipe(Effect.option),
-        ]).pipe(
+    // Move the previous copy aside rather than deleting it, so a failed
+    // publication restores the runtime this install found.
+    const previousDir = `${stagingDir}-previous`;
+    const published = yield* Effect.gen(function* () {
+      if (versionDirExists) {
+        yield* fs.rename(paths.versionDir, previousDir).pipe(
           Effect.mapError(
-            (checkCause) =>
+            (cause) =>
               new PinnedRuntimeInstallError({
-                step: "checking a concurrently published pinned runtime",
-                cause: checkCause,
+                step: "replacing the previous pinned runtime",
+                cause,
               }),
           ),
-          Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
-            publishedEntryExists &&
-            Option.isSome(publishedSentinel) &&
-            publishedSentinel.value.trim() === input.version
-              ? Effect.succeed(false)
-              : Effect.fail(
-                  new PinnedRuntimeInstallError({
-                    step: "publishing the pinned runtime",
-                    cause,
-                  }),
-                ),
+        );
+      }
+      return yield* fs.rename(stagingDir, paths.versionDir).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.all([
+            fs.exists(paths.entryPath),
+            fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+          ]).pipe(
+            Effect.mapError(
+              (checkCause) =>
+                new PinnedRuntimeInstallError({
+                  step: "checking a concurrently published pinned runtime",
+                  cause: checkCause,
+                }),
+            ),
+            Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
+              publishedEntryExists &&
+              Option.isSome(publishedSentinel) &&
+              publishedSentinel.value.trim() === input.version
+                ? Effect.succeed(false)
+                : Effect.fail(
+                    new PinnedRuntimeInstallError({
+                      step: "publishing the pinned runtime",
+                      cause,
+                    }),
+                  ),
+            ),
           ),
         ),
-      ),
-    );
+        Effect.tapError(() =>
+          versionDirExists
+            ? fs.rename(previousDir, paths.versionDir).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+      );
+    }).pipe(Effect.uninterruptible);
+    yield* fs.remove(previousDir, { recursive: true, force: true }).pipe(Effect.ignore);
     if (!published) {
       if (input.distribution === "npm" && !(yield* matchesNpmPackage(paths))) {
         return yield* new PinnedRuntimeInstallError({
