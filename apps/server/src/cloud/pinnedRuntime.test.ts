@@ -14,6 +14,7 @@ import {
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  PinnedRuntimePreflightBlockedError,
   type PinnedRuntimeProgress,
 } from "./pinnedRuntime.ts";
 
@@ -546,19 +547,64 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect("preserves a completed runtime when validation fails", () =>
+  it.effect.each([true, false])(
+    "reinstalls a completed runtime that fails validation (reinstall valid: %s)",
+    (reinstallValid) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
+        const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+        yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
+        yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
+        yield* fs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
+
+        let validations = 0;
+        const requests: string[] = [];
+        const result = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          linuxLibc: "gnu",
+          httpClient: releaseHttpClient(yield* validChecksums, requests),
+          runner: extractingRunner(fs, path),
+          validate: (paths) =>
+            Effect.gen(function* () {
+              validations += 1;
+              const source = yield* fs.readFileString(paths.entryPath).pipe(Effect.orDie);
+              if (source === "broken\n" || !reinstallValid) {
+                return yield* new PinnedRuntimeInstallError({ step: "validating the runtime" });
+              }
+            }),
+        }).pipe(Effect.result);
+
+        assert.equal(validations, 2);
+        assert.equal(requests.length, 2);
+        assert.equal(result._tag, reinstallValid ? "Success" : "Failure");
+        // A failed reinstall leaves the existing copy in place.
+        assert.equal(
+          yield* fs.readFileString(finalPaths.entryPath),
+          reinstallValid ? "#!/bin/sh\n" : "broken\n",
+        );
+        assert.deepEqual(yield* fs.readDirectory(path.dirname(finalPaths.versionDir)), [version]);
+      }),
+  );
+
+  it.effect("does not reinstall a completed runtime whose preflight is blocked", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-repair-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-blocked-" });
       const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
       yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
-      yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* fs.writeFileString(finalPaths.entryPath, "installed\n");
       yield* fs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
 
-      let validations = 0;
       const requests: string[] = [];
-      yield* ensurePinnedRuntimeInstalled({
+      const error = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
         fs,
@@ -568,19 +614,13 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         linuxLibc: "gnu",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         runner: extractingRunner(fs, path),
-        validate: (paths) =>
-          Effect.gen(function* () {
-            validations += 1;
-            const source = yield* fs.readFileString(paths.entryPath).pipe(Effect.orDie);
-            if (source === "broken\n") {
-              return yield* new PinnedRuntimeInstallError({ step: "validating the runtime" });
-            }
-          }),
+        validate: () =>
+          Effect.fail(new PinnedRuntimePreflightBlockedError({ version, reason: "blocked" })),
       }).pipe(Effect.flip);
 
-      assert.equal(validations, 1);
+      assert.instanceOf(error, PinnedRuntimePreflightBlockedError);
       assert.deepEqual(requests, []);
-      assert.equal(yield* fs.readFileString(finalPaths.entryPath), "broken\n");
+      assert.equal(yield* fs.readFileString(finalPaths.entryPath), "installed\n");
     }),
   );
 

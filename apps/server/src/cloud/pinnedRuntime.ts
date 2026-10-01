@@ -312,9 +312,22 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     sentinel.value.trim() === input.version &&
     (input.distribution !== "npm" || (yield* matchesNpmPackage(paths)));
   if (alreadyPinned) {
-    input.onProgress?.({ stage: "cached" });
-    yield* input.validate(paths);
-    return paths;
+    // A completed install can still be unusable, e.g. a musl install that kept
+    // node-pty's glibc prebuild. Reinstall it rather than fail every update;
+    // the existing copy is replaced only after a fresh one validates.
+    const cachedIsValid = yield* input.validate(paths).pipe(
+      Effect.as(true),
+      Effect.catchTag("PinnedRuntimeInstallError", (error) =>
+        Effect.logWarning("Pinned runtime failed validation; reinstalling it.", {
+          version: input.version,
+          step: error.step,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (cachedIsValid) {
+      input.onProgress?.({ stage: "cached" });
+      return paths;
+    }
   }
 
   const versionsDir = input.path.dirname(paths.versionDir);
