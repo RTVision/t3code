@@ -289,8 +289,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     input.platform,
     input.distribution,
   );
-  const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
-    fs.exists(paths.versionDir),
+  const [entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.entryPath),
     fs.readFileString(paths.sentinelPath).pipe(Effect.option),
   ]).pipe(
@@ -312,9 +311,22 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     sentinel.value.trim() === input.version &&
     (input.distribution !== "npm" || (yield* matchesNpmPackage(paths)));
   if (alreadyPinned) {
-    input.onProgress?.({ stage: "cached" });
-    yield* input.validate(paths);
-    return paths;
+    // A completed install can still be unusable, e.g. a musl install that kept
+    // node-pty's glibc prebuild. Reinstall it rather than fail every update;
+    // the existing copy is replaced only after a fresh one validates.
+    const cachedIsValid = yield* input.validate(paths).pipe(
+      Effect.as(true),
+      Effect.catchTag("PinnedRuntimeInstallError", (error) =>
+        Effect.logWarning("Pinned runtime failed validation; reinstalling it.", {
+          version: input.version,
+          step: error.step,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (cachedIsValid) {
+      input.onProgress?.({ stage: "cached" });
+      return paths;
+    }
   }
 
   const versionsDir = input.path.dirname(paths.versionDir);
@@ -406,46 +418,59 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
             new PinnedRuntimeInstallError({ step: "recording the completed install", cause }),
         ),
       );
-    if (versionDirExists) {
-      yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new PinnedRuntimeInstallError({
-              step: "replacing the previous pinned runtime",
-              cause,
-            }),
+    // Move the previous copy aside rather than deleting it, so a failed
+    // publication restores the runtime this install found. Another installer
+    // may have moved it since the check above, so a missing copy is fine.
+    const previousDir = `${stagingDir}-previous`;
+    const published = yield* Effect.gen(function* () {
+      const movedAside = yield* fs.rename(paths.versionDir, previousDir).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(false)
+            : Effect.fail(
+                new PinnedRuntimeInstallError({
+                  step: "replacing the previous pinned runtime",
+                  cause,
+                }),
+              ),
         ),
       );
-    }
-    const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
-      Effect.as(true),
-      Effect.catch((cause) =>
-        Effect.all([
-          fs.exists(paths.entryPath),
-          fs.readFileString(paths.sentinelPath).pipe(Effect.option),
-        ]).pipe(
-          Effect.mapError(
-            (checkCause) =>
-              new PinnedRuntimeInstallError({
-                step: "checking a concurrently published pinned runtime",
-                cause: checkCause,
-              }),
-          ),
-          Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
-            publishedEntryExists &&
-            Option.isSome(publishedSentinel) &&
-            publishedSentinel.value.trim() === input.version
-              ? Effect.succeed(false)
-              : Effect.fail(
-                  new PinnedRuntimeInstallError({
-                    step: "publishing the pinned runtime",
-                    cause,
-                  }),
-                ),
+      const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.all([
+            fs.exists(paths.entryPath),
+            fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+          ]).pipe(
+            Effect.mapError(
+              (checkCause) =>
+                new PinnedRuntimeInstallError({
+                  step: "checking a concurrently published pinned runtime",
+                  cause: checkCause,
+                }),
+            ),
+            Effect.flatMap(([publishedEntryExists, publishedSentinel]) =>
+              publishedEntryExists &&
+              Option.isSome(publishedSentinel) &&
+              publishedSentinel.value.trim() === input.version
+                ? Effect.succeed(false)
+                : Effect.fail(
+                    new PinnedRuntimeInstallError({
+                      step: "publishing the pinned runtime",
+                      cause,
+                    }),
+                  ),
+            ),
           ),
         ),
-      ),
-    );
+        Effect.tapError(() =>
+          movedAside ? fs.rename(previousDir, paths.versionDir).pipe(Effect.ignore) : Effect.void,
+        ),
+      );
+      yield* fs.remove(previousDir, { recursive: true, force: true }).pipe(Effect.ignore);
+      return published;
+    }).pipe(Effect.uninterruptible);
     if (!published) {
       if (input.distribution === "npm" && !(yield* matchesNpmPackage(paths))) {
         return yield* new PinnedRuntimeInstallError({
