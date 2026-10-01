@@ -1,5 +1,6 @@
 reviews:
   request_changes_workflow: true
+  high_level_summary: false
   review_status: false
   auto_review:
     enabled: true
