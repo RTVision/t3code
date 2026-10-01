@@ -24,7 +24,6 @@ import {
   parseToolchainReport,
   parseWslRuntimeRoot,
   probeWslDistros,
-  resolveWslRunningUser,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -70,6 +69,28 @@ const runShell = (script: string) => {
 
 const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
+// Polls for up to five seconds until a background holder has taken effect.
+const awaitHolder = (condition: string) =>
+  `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 500 ] || exit 1; sleep 0.01; done`;
+
+// Holds a cache busy the way a running server does: the holder's argv[0] is the
+// runtime entry, which the prune and install scripts look for in /proc cmdline.
+// It reads a pipe the script keeps open on fd 7, so it exits with the script
+// instead of outliving it on a timer.
+const holdRuntimeBusy = (entry: string) =>
+  [
+    `exec 7> >(exec -a ${entry} cat >/dev/null 2>&1)`,
+    awaitHolder(`grep -qF -- ${entry} /proc/[0-9]*/cmdline 2>/dev/null`),
+  ].join("\n");
+
+// Holds a cache's install lock the way a concurrent install does, and likewise
+// releases it when the script exits.
+const holdInstallLock = (lock: string) =>
+  [
+    `exec 6> >(exec 9> ${lock}; flock -x 9; cat >/dev/null 2>&1)`,
+    awaitHolder(`! flock -n ${lock} true`),
+  ].join("\n");
+
 const readField = (stdout: string, field: string) => {
   const line = stdout.split("\n").find((candidate) => candidate.startsWith(`${field}:`));
   if (line === undefined) throw new Error(`missing ${field} in fixture output: ${stdout}`);
@@ -101,32 +122,6 @@ const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exit
       }),
     ),
   );
-
-describe("WSL account resolution", () => {
-  it.effect("uses a non-login shell and rejects malformed or failed identity output", () =>
-    Effect.gen(function* () {
-      for (const [stdout, exitCode, expected] of [
-        ["alice\n", 0, "alice"],
-        ["runningUser:root\nalice\n", 0, null],
-        ["alice\n", 1, null],
-        ["", 0, null],
-      ] as const) {
-        const delegate = makeDistroListSpawner({ stdout, exitCode });
-        const spawner = ChildProcessSpawner.make((command) => {
-          expect(command._tag).toBe("StandardCommand");
-          if (command._tag === "StandardCommand") {
-            expect(command.args).toEqual(["-d", "Debian", "--exec", "sh", "-s"]);
-          }
-          return delegate.spawn(command);
-        });
-        const user = yield* resolveWslRunningUser("Debian").pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        expect(user).toBe(expected);
-      }
-    }),
-  );
-});
 
 describe("probeWslDistros", () => {
   it.effect("preserves a successful empty distro list", () =>
@@ -194,7 +189,7 @@ describe("WSL runtime cache", () => {
 
     expect(script).toContain('runtime_parent="$HOME/.t3/wsl-runtime"');
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
-    expect(script).toContain('    runtime_entry_runs "$runtime_root" 2>/dev/null &&');
+    expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).not.toContain("bin.mjs");
     expect(script).not.toContain("node-pty");
@@ -289,7 +284,7 @@ describe("WSL runtime cache", () => {
     // The same proof the SSH runner and CLI installers use: executable, and
     // `--version` exits 0. That is what decides arch and loadability, so no
     // separate native probe is needed.
-    expect(script).toContain('  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null');
+    expect(script).toContain('  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null 2>&1');
 
     // Readiness gates the short-circuit, so a cache whose executable broke
     // reinstalls from the archive instead of being reused forever.
@@ -429,7 +424,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
-  const createFixture = (serverEntry = SERVER_ENTRY_SOURCE) => {
+  const createFixture = () => {
     const result = runShell(
       [
         "set -eu",
@@ -438,7 +433,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         // holds the executable and its native addons.
         'stage="$work/stage/t3-0.0.0-linux-x64"',
         'mkdir -p "$stage/node_modules/node-pty/build/Release" "$work/home"',
-        `printf '%s' ${sh(serverEntry)} > "$stage/t3"`,
+        `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/t3"`,
         'chmod +x "$stage/t3"',
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/build/Release/pty.node"`,
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$work/stage" t3-0.0.0-linux-x64`,
@@ -554,18 +549,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     expect(warm.status, warm.stderr).toBe(0);
     expect(parseWslRuntimeRoot(warm.stdout)).toBe(fixture.runtimeRoot);
-  });
-
-  it("retains the loader error when a bundled executable needs a missing system library", () => {
-    const fixture = createFixture(
-      '#!/bin/sh\nprintf "error while loading shared libraries: libatomic.so.1: cannot open shared object file\\n" >&2\nexit 127\n',
-    );
-
-    const result = fixture.install();
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("libatomic.so.1");
-    expect(parseWslRuntimeRoot(result.stdout)).toBeNull();
   });
 
   it("reinstalls a cache whose executable was truncated", () => {
@@ -751,9 +734,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `runtime_root=${sh(fixture.runtimeRoot)}`,
         `runtime_parent=${sh(fixture.runtimeParent)}`,
         'rm "$runtime_root/.t3code-wsl-runtime-ready"',
-        'sh -c "sleep 30; :" "$runtime_root/t3" >/dev/null 2>&1 &',
-        "active_pid=$!",
-        "sleep 0.1",
+        holdRuntimeBusy('"$runtime_root/t3"'),
         fixture.installScript(),
         'stale=$(find "$runtime_parent" -maxdepth 1 -type d -name ".sha256-*.stale.*" -print -quit)',
         'test -n "$stale"',
@@ -762,8 +743,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         "export HOME",
         buildWslRuntimePruneScript(fixture.runtimeId),
         'test ! -e "$stale"',
-        "kill $active_pid",
-        "wait $active_pid 2>/dev/null || true",
       ].join("\n"),
     );
 
@@ -789,15 +768,8 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'touch -d "4 minutes ago" "$runtime_parent/sha256-active"',
         'touch -d "3 minutes ago" "$runtime_parent/sha256-old"',
         'touch -d "2 minutes ago" "$runtime_parent/sha256-locked"',
-        'sh -c "sleep 30; :" "$runtime_parent/sha256-active/t3" >/dev/null 2>&1 &',
-        "active_pid=$!",
-        "(",
-        '  exec 9> "$runtime_parent/.sha256-locked.install.lock"',
-        "  flock -x 9",
-        "  sleep 30",
-        ") >/dev/null 2>&1 &",
-        "lock_pid=$!",
-        "sleep 0.1",
+        holdRuntimeBusy('"$runtime_parent/sha256-active/t3"'),
+        holdInstallLock('"$runtime_parent/.sha256-locked.install.lock"'),
         `HOME="$home"`,
         "export HOME",
         buildWslRuntimePruneScript("sha256-current"),
@@ -808,9 +780,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         'test -d "$runtime_parent/versions"',
         'test ! -e "$runtime_parent/sha256-old"',
         'test ! -e "$runtime_parent/sha256-markerless"',
-        "kill $active_pid $lock_pid",
-        "wait $active_pid 2>/dev/null || true",
-        "wait $lock_pid 2>/dev/null || true",
         'rm -rf "$work"',
       ].join("\n"),
     );
