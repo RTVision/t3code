@@ -648,6 +648,94 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("finishes replacing a runtime when interrupted during publication", () =>
+    Effect.gen(function* () {
+      const realFs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* realFs.makeTempDirectoryScoped({ prefix: "t3-pinned-publish-int-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* realFs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* realFs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* realFs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
+      const publishing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const fs: FileSystem.FileSystem = {
+        ...realFs,
+        rename: (from, to) =>
+          !from.endsWith("-previous") && to === finalPaths.versionDir
+            ? Deferred.succeed(publishing, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(realFs.rename(from, to)),
+              )
+            : realFs.rename(from, to),
+      };
+
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        linuxLibc: "gnu",
+        httpClient: releaseHttpClient(yield* validChecksums),
+        runner: extractingRunner(realFs, path),
+        validate: (paths) =>
+          realFs.readFileString(paths.entryPath).pipe(
+            Effect.orDie,
+            Effect.flatMap((source) =>
+              source === "broken\n"
+                ? Effect.fail(new PinnedRuntimeInstallError({ step: "validating the runtime" }))
+                : Effect.void,
+            ),
+          ),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(publishing);
+      const interrupting = yield* Fiber.interrupt(install).pipe(Effect.forkScoped);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(interrupting);
+
+      assert.equal(yield* realFs.readFileString(finalPaths.entryPath), "#!/bin/sh\n");
+      assert.deepEqual(yield* realFs.readDirectory(path.dirname(finalPaths.versionDir)), [version]);
+    }),
+  );
+
+  it.effect("publishes when another installer moved the previous runtime away", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-publish-gone-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
+      yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
+      yield* fs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
+
+      const installed = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        linuxLibc: "gnu",
+        httpClient: releaseHttpClient(yield* validChecksums),
+        runner: extractingRunner(fs, path),
+        validate: (paths) =>
+          Effect.gen(function* () {
+            const source = yield* fs.readFileString(paths.entryPath).pipe(Effect.orDie);
+            if (source === "broken\n") {
+              return yield* new PinnedRuntimeInstallError({ step: "validating the runtime" });
+            }
+            // The staged copy is valid; meanwhile another installer took the old one.
+            yield* fs.remove(finalPaths.versionDir, { recursive: true }).pipe(Effect.orDie);
+          }),
+      });
+
+      assert.equal(yield* fs.readFileString(installed.entryPath), "#!/bin/sh\n");
+      assert.deepEqual(yield* fs.readDirectory(path.dirname(finalPaths.versionDir)), [version]);
+    }),
+  );
+
   it.effect("does not reinstall a completed runtime whose preflight is blocked", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
