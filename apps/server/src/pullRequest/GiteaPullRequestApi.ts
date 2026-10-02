@@ -211,6 +211,7 @@ const RawCombinedStatus = Schema.Struct({
   total_count: Schema.optional(Schema.Int),
 });
 const RawContents = Schema.Struct({
+  sha: Schema.optional(Schema.String),
   content: Schema.optional(Schema.NullOr(Schema.String)),
   encoding: Schema.optional(Schema.NullOr(Schema.String)),
   type: Schema.optional(Schema.String),
@@ -619,6 +620,8 @@ export class GiteaPullRequestApi extends Context.Service<
       commit?: string;
       oldPath: string;
       newPath: string;
+      oldObjectId?: string;
+      newObjectId?: string;
       changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
     }) => Effect.Effect<{ oldContents: string; newContents: string }, GiteaPullRequestApiError>;
     readonly runAction: (input: {
@@ -788,6 +791,38 @@ export const make = Effect.gen(function* () {
     );
 
   const basePath = (repository: string) => repositoryPath(unmounted(repository))!;
+
+  const pullRequestHead = Effect.fn("GiteaPullRequestApi.pullRequestHead")(function* (input: {
+    host: string;
+    repository: string;
+    number: number;
+    operation?: "getDiff" | "getDiffFileContents";
+  }) {
+    const operation = input.operation ?? "getDiff";
+    const ref = `refs/pull/${input.number}/head`;
+    const response = yield* request({
+      ...input,
+      operation,
+      method: "GET",
+      path: `${basePath(input.repository)}/git/refs/pull/${input.number}/head`,
+    });
+    const refs = yield* decode(
+      operation,
+      Schema.Array(
+        Schema.Struct({ ref: Schema.String, object: Schema.Struct({ sha: Schema.String }) }),
+      ),
+      response,
+    );
+    const sha = refs.find((entry) => entry.ref === ref)?.object.sha.trim();
+    if (!sha) {
+      return yield* new GiteaPullRequestApiError({
+        operation,
+        reason: "failed",
+        detail: "Gitea did not report the immutable pull request head.",
+      });
+    }
+    return sha;
+  });
 
   const getPullRequest = Effect.fn("GiteaPullRequestApi.getPullRequest")(function* (input: {
     host: string;
@@ -1686,6 +1721,8 @@ export const make = Effect.gen(function* () {
     repository: string;
     path: string;
     ref: string;
+    objectId?: string;
+    alternateRef?: string;
   }) {
     const operation = "getDiffFileContents";
     const path = encodedFilePath(input.path);
@@ -1696,23 +1733,47 @@ export const make = Effect.gen(function* () {
         detail: "Gitea file paths must be repository-relative paths without traversal segments.",
       });
     }
-    const response = yield* request({
-      operation,
-      host: input.host,
-      repository: input.repository,
-      method: "GET",
-      path: query(`${basePath(input.repository)}/contents/${path}`, {
-        ref: input.ref,
-      }),
-    });
-    const contents = yield* decode(operation, RawContents, response);
-    if (contents.type !== "file" || contents.encoding !== "base64" || contents.content == null)
-      return yield* new GiteaPullRequestApiError({
+    const refs = [input.ref];
+    if (input.objectId && input.alternateRef && input.alternateRef !== input.ref) {
+      refs.push(input.alternateRef);
+    }
+    for (const ref of refs) {
+      const response = yield* request({
         operation,
-        reason: "failed",
-        detail: "Gitea did not return base64 file contents.",
-      });
-    return Buffer.from(contents.content.replaceAll("\n", ""), "base64").toString("utf8");
+        host: input.host,
+        repository: input.repository,
+        method: "GET",
+        path: query(`${basePath(input.repository)}/contents/${path}`, { ref }),
+      }).pipe(
+        Effect.catch((error) =>
+          input.objectId &&
+          refs.length > 1 &&
+          isGiteaCliError(error.cause) &&
+          error.cause.status === 404
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+        ),
+      );
+      if (response === null) continue;
+      const contents = yield* decode(operation, RawContents, response);
+      if (contents.type !== "file" || contents.encoding !== "base64" || contents.content == null) {
+        return yield* new GiteaPullRequestApiError({
+          operation,
+          reason: "failed",
+          detail: "Gitea did not return base64 file contents.",
+        });
+      }
+      if (input.objectId && !contents.sha?.toLowerCase().startsWith(input.objectId.toLowerCase())) {
+        continue;
+      }
+      return Buffer.from(contents.content.replaceAll("\n", ""), "base64").toString("utf8");
+    }
+    return yield* new GiteaPullRequestApiError({
+      operation,
+      reason: "failed",
+      detail:
+        "The file revisions no longer match this diff. Refresh the pull request before expanding context.",
+    });
   });
 
   const write = (input: {
@@ -1978,23 +2039,44 @@ export const make = Effect.gen(function* () {
     listConversationReactions,
     listCommits,
     listChecks,
-    getDiff: (input) =>
-      request({
+    getDiff: Effect.fn("GiteaPullRequestApi.getDiff")(function* (input) {
+      yield* validateHost(input.host);
+      let path =
+        input.commit === undefined
+          ? `${basePath(input.repository)}/pulls/${input.number}.diff`
+          : `${basePath(input.repository)}/git/commits/${encodeURIComponent(input.commit)}.diff`;
+      if (input.commit === undefined) {
+        const features = yield* getFeatures.pipe(Effect.option);
+        // The fork's pull-revert API ships raw comparisons too. A PR's saved merge base can
+        // lag a branch update, while viewed-file validation already uses the current one.
+        if (Option.isSome(features) && features.value.includes("pull-revert")) {
+          const pull = yield* getPullRequest(input);
+          if (pull.state === "open") {
+            if (pull.baseSha === "") {
+              return yield* new GiteaPullRequestApiError({
+                operation: "getDiff",
+                reason: "failed",
+                detail: "Gitea did not report the immutable revisions for this comparison.",
+              });
+            }
+            const headSha = yield* pullRequestHead(input);
+            path = query(
+              `${basePath(input.repository)}/compare/${encodeURIComponent(pull.baseSha)}...${encodeURIComponent(headSha)}`,
+              { output: "diff" },
+            );
+          }
+        }
+      }
+      const response = yield* request({
         operation: "getDiff",
         host: input.host,
         repository: input.repository,
         method: "GET",
-        path:
-          input.commit === undefined
-            ? `${basePath(input.repository)}/pulls/${input.number}.diff`
-            : `${basePath(input.repository)}/git/commits/${encodeURIComponent(input.commit)}.diff`,
+        path,
         maxBytes: DIFF_MAX_BYTES,
-      }).pipe(
-        Effect.map((response) => ({
-          patch: response.body,
-          truncated: response.truncated,
-        })),
-      ),
+      });
+      return { patch: response.body, truncated: response.truncated };
+    }),
     getDiffFileContents: (input) =>
       Effect.gen(function* () {
         if (encodedFilePath(input.oldPath) === null || encodedFilePath(input.newPath) === null) {
@@ -2006,7 +2088,7 @@ export const make = Effect.gen(function* () {
           });
         }
         const pr = yield* getPullRequest(input);
-        let oldRef = pr.mergeBaseSha;
+        let oldRef = pr.mergeBaseSha || (input.oldObjectId ? pr.baseSha : "");
         let newRef = pr.headSha;
         if (input.commit !== undefined) {
           const operation = "getDiffFileContents";
@@ -2035,6 +2117,25 @@ export const make = Effect.gen(function* () {
             detail: "Gitea did not report the immutable revision before this change.",
           });
         }
+        if (input.commit === undefined && pr.state === "open") {
+          const features = yield* getFeatures.pipe(Effect.option);
+          const freshComparison = Option.isNone(features) || features.value.includes("pull-revert");
+          if (
+            freshComparison &&
+            ((input.changeType !== "new" && input.oldObjectId === undefined) ||
+              (input.changeType !== "deleted" && input.newObjectId === undefined))
+          ) {
+            return yield* new GiteaPullRequestApiError({
+              operation: "getDiffFileContents",
+              reason: "failed",
+              detail:
+                "This diff does not identify the file revisions needed to expand context safely.",
+            });
+          }
+        }
+        if (input.commit === undefined && input.changeType !== "deleted" && input.newObjectId) {
+          newRef = yield* pullRequestHead({ ...input, operation: "getDiffFileContents" });
+        }
         if (input.changeType !== "deleted" && newRef === "") {
           return yield* new GiteaPullRequestApiError({
             operation: "getDiffFileContents",
@@ -2051,6 +2152,10 @@ export const make = Effect.gen(function* () {
                     ...input,
                     path: input.oldPath,
                     ref: oldRef,
+                    ...(input.oldObjectId === undefined ? {} : { objectId: input.oldObjectId }),
+                    ...(input.commit !== undefined || input.oldObjectId === undefined
+                      ? {}
+                      : { alternateRef: pr.baseSha }),
                   }),
             newContents:
               input.changeType === "deleted"
@@ -2059,6 +2164,7 @@ export const make = Effect.gen(function* () {
                     ...input,
                     path: input.newPath,
                     ref: newRef,
+                    ...(input.newObjectId === undefined ? {} : { objectId: input.newObjectId }),
                   }),
           },
           { concurrency: 2 },

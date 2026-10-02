@@ -2110,6 +2110,8 @@ export const make = Effect.gen(function* () {
               changeType: input.changeType,
               oldPath: input.oldPath,
               newPath: input.newPath,
+              ...(input.oldObjectId === undefined ? {} : { oldObjectId: input.oldObjectId }),
+              ...(input.newObjectId === undefined ? {} : { newObjectId: input.newObjectId }),
             }).pipe(Effect.mapError(toPullRequestError("diffFileContents")))
           : Effect.fail(
               new PullRequestOperationError({

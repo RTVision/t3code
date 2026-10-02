@@ -147,6 +147,165 @@ it.effect("keeps a search hydration transport failure fatal", () =>
 );
 
 layer("GiteaPullRequestApi", (it) => {
+  it.effect("keeps incoming base-branch changes out of an updated pull request diff", () =>
+    Effect.gen(function* () {
+      const patch =
+        "diff --git a/feature.ts b/feature.ts\n--- a/feature.ts\n+++ b/feature.ts\n@@ -1 +1 @@\n-old\n+new\n";
+      mockedRequest.mockImplementation((input) => {
+        switch (input.path) {
+          case "/settings/api":
+            return Effect.succeed(response({ features: ["pull-revert"] }));
+          case "/repos/acme/web/pulls/7":
+            return Effect.succeed(
+              response(
+                rawPullRequest(7, {
+                  merge_base: "before-branch-update",
+                  base: { ref: "main", sha: "updated-base", repo: { full_name: "acme/web" } },
+                  head: {
+                    ref: "feature",
+                    sha: "source-head-ahead-of-the-pull-request",
+                    repo: { full_name: "fork/web" },
+                  },
+                }),
+              ),
+            );
+          case "/repos/acme/web/git/refs/pull/7/head":
+            return Effect.succeed(
+              response([{ ref: "refs/pull/7/head", object: { sha: "updated-head" } }]),
+            );
+          case "/repos/acme/web/compare/updated-base...updated-head?output=diff":
+            return Effect.succeed({ body: patch, truncated: false, headers: {} });
+          case "/repos/acme/web/pulls/7.diff":
+            return Effect.succeed({
+              body: `${patch}diff --git a/base-only.ts b/base-only.ts\n`,
+              truncated: false,
+              headers: {},
+            });
+          default:
+            return Effect.die(`unexpected request: ${input.path}`);
+        }
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const diff = yield* api.getDiff({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(diff.patch).toBe(patch);
+      expect(diff.patch).not.toContain("base-only.ts");
+    }),
+  );
+
+  it.effect("preserves historical diffs for merged and closed pull requests", () =>
+    Effect.gen(function* () {
+      for (const merged of [true, false]) {
+        mockedRequest.mockReset();
+        mockedRequest
+          .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-revert"] })))
+          .mockReturnValueOnce(
+            Effect.succeed(response(rawPullRequest(7, { state: "closed", merged }))),
+          )
+          .mockReturnValueOnce(
+            Effect.succeed({ body: "historical diff", truncated: false, headers: {} }),
+          );
+        const api = yield* GiteaPullRequestApi.make;
+        const diff = yield* api.getDiff({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(diff.patch).toBe("historical diff");
+        expect(callAt(2).path).toBe("/repos/acme/web/pulls/7.diff");
+      }
+    }),
+  );
+
+  it.effect("keeps the existing diff endpoint on hosts without raw comparisons", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-viewed-files"] })))
+        .mockReturnValueOnce(
+          Effect.succeed({ body: "standard diff", truncated: true, headers: {} }),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const diff = yield* api.getDiff({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(diff).toEqual({ patch: "standard diff", truncated: true });
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7.diff");
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("still reads a diff when feature discovery is unavailable", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GiteaCli.GiteaCliError({
+              operation: "getFeatures",
+              reason: "failed",
+              detail: "settings are unavailable",
+            }),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed({ body: "standard diff", truncated: false, headers: {} }),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const diff = yield* api.getDiff({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(diff.patch).toBe("standard diff");
+      expect(callAt(1).path).toBe("/repos/acme/web/pulls/7.diff");
+    }),
+  );
+
+  it.effect("keeps individual commit diffs independent of branch updates", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed({ body: "commit diff", truncated: false, headers: {} }),
+      );
+      const api = yield* GiteaPullRequestApi.make;
+      const diff = yield* api.getDiff({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        commit: "selected-commit",
+      });
+
+      expect(diff.patch).toBe("commit diff");
+      expect(callAt(0).path).toBe("/repos/acme/web/git/commits/selected-commit.diff");
+      expect(mockedRequest).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("rejects missing immutable revisions instead of showing a stale comparison", () =>
+    Effect.gen(function* () {
+      mockedRequest
+        .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-revert"] })))
+        .mockReturnValueOnce(
+          Effect.succeed(response(rawPullRequest(7, { base: { ref: "main", sha: "" } }))),
+        );
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .getDiff({ host: "forge.example.test", repository: "acme/web", number: 7 })
+        .pipe(Effect.flip);
+
+      expect(error.operation).toBe("getDiff");
+      expect(error.detail).toContain("immutable revisions");
+      expect(mockedRequest).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   it.effect("adapts batched viewed-file updates to the native head-guarded API", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -2227,6 +2386,200 @@ layer("GiteaPullRequestApi", (it) => {
         ]),
       );
     }),
+  );
+
+  it.effect(
+    "expands the rendered blobs when a branch update leaves the saved merge base behind",
+    () =>
+      Effect.gen(function* () {
+        const oldContents = "base-added\none\ntwo\n";
+        const newContents = "base-added\none\nfeature-change\n";
+        mockedRequest.mockImplementation((input) => {
+          if (input.path.endsWith("/pulls/7")) return Effect.succeed(response(rawPullRequest(7)));
+          if (input.path === "/settings/api") {
+            return Effect.succeed(response({ features: ["pull-revert"] }));
+          }
+          if (input.path.endsWith("/git/refs/pull/7/head")) {
+            return Effect.succeed(
+              response([{ ref: "refs/pull/7/head", object: { sha: "mirrored-head" } }]),
+            );
+          }
+          const contents = input.path.includes("ref=merge-base-sha")
+            ? { sha: "1111111111111111111111111111111111111111", content: "one\ntwo\n" }
+            : input.path.includes("ref=base-sha")
+              ? { sha: "2222222222222222222222222222222222222222", content: oldContents }
+              : input.path.includes("ref=mirrored-head")
+                ? { sha: "3333333333333333333333333333333333333333", content: newContents }
+                : {
+                    sha: "4444444444444444444444444444444444444444",
+                    content: "later source push\n",
+                  };
+          return Effect.succeed(
+            response({
+              type: "file",
+              encoding: "base64",
+              sha: contents.sha,
+              content: Buffer.from(contents.content).toString("base64"),
+            }),
+          );
+        });
+        const api = yield* GiteaPullRequestApi.make;
+        const files = yield* api.getDiffFileContents({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          oldPath: "src/file.ts",
+          newPath: "src/file.ts",
+          changeType: "change",
+          oldObjectId: "2222222",
+          newObjectId: "3333333",
+        });
+
+        expect(files).toEqual({ oldContents, newContents });
+      }),
+  );
+
+  it.effect("refuses to expand a diff whose blobs are no longer available at its revisions", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path.endsWith("/pulls/7")) return Effect.succeed(response(rawPullRequest(7)));
+        if (input.path === "/settings/api") {
+          return Effect.succeed(response({ features: ["pull-revert"] }));
+        }
+        if (input.path.endsWith("/git/refs/pull/7/head")) {
+          return Effect.succeed(
+            response([{ ref: "refs/pull/7/head", object: { sha: "head-sha" } }]),
+          );
+        }
+        return Effect.succeed(
+          response({
+            type: "file",
+            encoding: "base64",
+            sha: "1111111111111111111111111111111111111111",
+            content: Buffer.from("unrelated revision\n").toString("base64"),
+          }),
+        );
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .getDiffFileContents({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          oldPath: "src/file.ts",
+          newPath: "src/file.ts",
+          changeType: "change",
+          oldObjectId: "2222222",
+          newObjectId: "1111111",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toContain("no longer match this diff");
+    }),
+  );
+
+  it.effect("expands a file first introduced by the base-branch update", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        if (input.path.endsWith("/pulls/7")) return Effect.succeed(response(rawPullRequest(7)));
+        if (input.path === "/settings/api") {
+          return Effect.succeed(response({ features: ["pull-revert"] }));
+        }
+        if (input.path.endsWith("/git/refs/pull/7/head")) {
+          return Effect.succeed(
+            response([{ ref: "refs/pull/7/head", object: { sha: "head-sha" } }]),
+          );
+        }
+        if (input.path.includes("ref=merge-base-sha")) {
+          return Effect.fail(
+            new GiteaCli.GiteaCliError({
+              operation: "getDiffFileContents",
+              reason: "failed",
+              status: 404,
+              detail: "file does not exist at the saved merge base",
+            }),
+          );
+        }
+        const before = input.path.includes("ref=base-sha");
+        return Effect.succeed(
+          response({
+            type: "file",
+            encoding: "base64",
+            sha: (before ? "2" : "3").repeat(40),
+            content: Buffer.from(before ? "base file\n" : "feature edit\n").toString("base64"),
+          }),
+        );
+      });
+      const api = yield* GiteaPullRequestApi.make;
+      const files = yield* api.getDiffFileContents({
+        host: "forge.example.test",
+        repository: "acme/web",
+        number: 7,
+        oldPath: "src/file.ts",
+        newPath: "src/file.ts",
+        changeType: "change",
+        oldObjectId: "2222222",
+        newObjectId: "3333333",
+      });
+
+      expect(files).toEqual({ oldContents: "base file\n", newContents: "feature edit\n" });
+    }),
+  );
+
+  it.effect("refuses fresh comparison context when the rendered patch has no blob IDs", () =>
+    Effect.gen(function* () {
+      for (const changeType of ["change", "rename-pure", "new", "deleted"] as const) {
+        mockedRequest.mockReset();
+        mockedRequest
+          .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+          .mockReturnValueOnce(Effect.succeed(response({ features: ["pull-revert"] })));
+        const api = yield* GiteaPullRequestApi.make;
+        const error = yield* api
+          .getDiffFileContents({
+            host: "forge.example.test",
+            repository: "acme/web",
+            number: 7,
+            oldPath: "src/file.ts",
+            newPath: "src/file.ts",
+            changeType,
+          })
+          .pipe(Effect.flip);
+
+        expect(error.detail).toContain("does not identify the file revisions");
+        expect(mockedRequest).toHaveBeenCalledTimes(2);
+      }
+    }),
+  );
+
+  it.effect(
+    "does not assume missing blob IDs are safe when comparison capabilities are unknown",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest
+          .mockReturnValueOnce(Effect.succeed(response(rawPullRequest(7))))
+          .mockReturnValueOnce(
+            Effect.fail(
+              new GiteaCli.GiteaCliError({
+                operation: "getFeatures",
+                reason: "failed",
+                detail: "settings are unavailable",
+              }),
+            ),
+          );
+        const api = yield* GiteaPullRequestApi.make;
+        const error = yield* api
+          .getDiffFileContents({
+            host: "forge.example.test",
+            repository: "acme/web",
+            number: 7,
+            oldPath: "src/file.ts",
+            newPath: "src/file.ts",
+            changeType: "change",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.detail).toContain("does not identify the file revisions");
+      }),
   );
 
   it.effect("expands a commit diff from that commit and its first parent", () =>

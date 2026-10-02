@@ -420,6 +420,8 @@ export const make = Effect.gen(function* () {
           newPath: input.newPath,
           changeType: input.changeType,
           ...(input.commit === undefined ? {} : { commit: input.commit }),
+          ...(input.oldObjectId === undefined ? {} : { oldObjectId: input.oldObjectId }),
+          ...(input.newObjectId === undefined ? {} : { newObjectId: input.newObjectId }),
         })
         .pipe(Effect.mapError(fail("getDiffFileContents"))),
 

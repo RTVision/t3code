@@ -576,6 +576,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             input.changeType,
             input.oldPath,
             input.newPath,
+            input.oldObjectId ?? null,
+            input.newObjectId ?? null,
           ]),
       },
     }),

@@ -47,6 +47,8 @@ function createDiffFileContentsLoader(
     readonly changeType: PullRequestDiffFileContentsInput["changeType"];
     readonly oldPath: string;
     readonly newPath: string;
+    readonly oldObjectId?: string;
+    readonly newObjectId?: string;
   }) => Promise<{ readonly oldContents: string; readonly newContents: string }>,
   cacheKey: string,
 ): FileDiffContentsLoader {
@@ -55,11 +57,17 @@ function createDiffFileContentsLoader(
     const oldPath = fileDiff.prevName
       ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
       : newPath;
-    const contents = await load({ changeType: fileDiff.type, oldPath, newPath });
+    const contents = await load({
+      changeType: fileDiff.type,
+      oldPath,
+      newPath,
+      ...(fileDiff.prevObjectId === undefined ? {} : { oldObjectId: fileDiff.prevObjectId }),
+      ...(fileDiff.newObjectId === undefined ? {} : { newObjectId: fileDiff.newObjectId }),
+    });
     const newFile = {
       name: newPath,
       contents: contents.newContents,
-      cacheKey: `${cacheKey}:new:${newPath}`,
+      cacheKey: `${cacheKey}:new:${newPath}${fileDiff.newObjectId === undefined ? "" : `:${fileDiff.newObjectId}`}`,
     };
     if (fileDiff.type === "rename-pure") {
       return { oldFile: null, newFile };
@@ -68,7 +76,7 @@ function createDiffFileContentsLoader(
       oldFile: {
         name: oldPath,
         contents: contents.oldContents,
-        cacheKey: `${cacheKey}:old:${oldPath}`,
+        cacheKey: `${cacheKey}:old:${oldPath}${fileDiff.prevObjectId === undefined ? "" : `:${fileDiff.prevObjectId}`}`,
       },
       newFile,
     };
@@ -105,20 +113,25 @@ export function createPullRequestDiffFileContentsLoader<E>(
   getDiffFileContents: GetPullRequestDiffFileContents<E>,
   source: PullRequestDiffFileContentsSource,
 ): FileDiffContentsLoader {
-  return createDiffFileContentsLoader(async ({ changeType, oldPath, newPath }) => {
-    const result = await getDiffFileContents({
-      environmentId: source.environmentId,
-      input: {
-        ...source.reference,
-        ...(source.commit === null ? {} : { commit: source.commit }),
-        changeType,
-        oldPath,
-        newPath,
-      },
-    });
-    if (result._tag !== "Success") {
-      throw squashAtomCommandFailure(result);
-    }
-    return result.value;
-  }, source.cacheKey);
+  return createDiffFileContentsLoader(
+    async ({ changeType, oldPath, newPath, oldObjectId, newObjectId }) => {
+      const result = await getDiffFileContents({
+        environmentId: source.environmentId,
+        input: {
+          ...source.reference,
+          ...(source.commit === null ? {} : { commit: source.commit }),
+          changeType,
+          oldPath,
+          newPath,
+          ...(oldObjectId === undefined ? {} : { oldObjectId }),
+          ...(newObjectId === undefined ? {} : { newObjectId }),
+        },
+      });
+      if (result._tag !== "Success") {
+        throw squashAtomCommandFailure(result);
+      }
+      return result.value;
+    },
+    source.cacheKey,
+  );
 }

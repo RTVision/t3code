@@ -1159,6 +1159,8 @@ export const PullRequestDiffResult = Schema.Struct({
 });
 export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
+const DiffObjectId = Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]{4,64}$/));
+
 /** The complete old and new files Pierre needs to open omitted context in a host-backed patch. */
 export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
@@ -1167,6 +1169,9 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   oldPath: TrimmedNonEmptyString,
   newPath: TrimmedNonEmptyString,
+  /** Blob IDs from the rendered patch, which may abbreviate the full object hash. */
+  oldObjectId: Schema.optional(DiffObjectId),
+  newObjectId: Schema.optional(DiffObjectId),
 });
 export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContentsInput.Type;
 
