@@ -154,7 +154,7 @@ jobs:
         run: |
           mkdir -p release-publish resource-monitor
           shopt -s nullglob
-          for file in release/*.dmg release/*.zip release/*.AppImage release/*.exe release/*.blockmap release/*.yml; do
+          for file in release/*.dmg release/*.zip release/*.AppImage release/*.deb release/*.exe release/*.blockmap release/*.yml; do
             cp "$file" release-publish/
           done
           binary=t3-resource-monitor
