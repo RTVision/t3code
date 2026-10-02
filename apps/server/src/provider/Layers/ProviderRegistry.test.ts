@@ -1581,15 +1581,24 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           );
           const registryChanges = yield* PubSub.unbounded<void>();
           const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>([firstInstance]);
+          const instanceLookupGate = yield* Ref.make<{
+            readonly started: Deferred.Deferred<void>;
+            readonly release: Deferred.Deferred<void>;
+          } | null>(null);
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
             {
               getInstance: (requestedId) =>
-                Ref.get(instancesRef).pipe(
-                  Effect.map((instances) =>
-                    instances.find((instance) => instance.instanceId === requestedId),
-                  ),
-                ),
+                Effect.gen(function* () {
+                  const gate = yield* Ref.getAndSet(instanceLookupGate, null);
+                  if (gate) {
+                    yield* Deferred.succeed(gate.started, undefined);
+                    yield* Deferred.await(gate.release);
+                  }
+                  return (yield* Ref.get(instancesRef)).find(
+                    (instance) => instance.instanceId === requestedId,
+                  );
+                }),
               listInstances: Ref.get(instancesRef),
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.fromPubSub(registryChanges),
@@ -1738,6 +1747,110 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               )?.skills,
               latestSkills,
             );
+
+            // A scan that lands during a fresh request's instance lookup becomes
+            // the baseline when the fresh request takes ownership.
+            const lookupCwd = "/lookup-workspace";
+            const beforeLookupStarted = yield* Deferred.make<void>();
+            const releaseBeforeLookup = yield* Deferred.make<void>();
+            yield* Ref.set(scanGate, {
+              started: beforeLookupStarted,
+              release: releaseBeforeLookup,
+            });
+            yield* Ref.set(scopedResult, scopedProvider);
+            const beforeLookupScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: lookupCwd })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(beforeLookupStarted);
+            const lookupStarted = yield* Deferred.make<void>();
+            const releaseLookup = yield* Deferred.make<void>();
+            yield* Ref.set(instanceLookupGate, { started: lookupStarted, release: releaseLookup });
+            yield* Ref.set(scopedResult, freshProvider);
+            const lookupFreshScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: lookupCwd, fresh: true })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(lookupStarted);
+            yield* Deferred.succeed(releaseBeforeLookup, undefined);
+            yield* Fiber.join(beforeLookupScan);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === lookupCwd,
+              )?.skills,
+              scopedProvider.skills,
+            );
+            yield* Deferred.succeed(releaseLookup, undefined);
+            yield* Fiber.join(lookupFreshScan);
+            const lookupSnapshot = (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (s) => s.cwd === lookupCwd,
+            );
+            assert.deepStrictEqual(lookupSnapshot?.skills, freshProvider.skills);
+            assert.deepStrictEqual(lookupSnapshot?.slashCommands, freshProvider.slashCommands);
+
+            // An ordinary request delayed in its instance lookup must use a
+            // snapshot published before it takes ownership instead of rescanning.
+            const ordinaryLookupCwd = "/ordinary-lookup-workspace";
+            const callsBeforeOrdinaryLookup = yield* Ref.get(snapshotCalls);
+            const ordinaryLookupStarted = yield* Deferred.make<void>();
+            const releaseOrdinaryLookup = yield* Deferred.make<void>();
+            yield* Ref.set(instanceLookupGate, {
+              started: ordinaryLookupStarted,
+              release: releaseOrdinaryLookup,
+            });
+            const ordinaryLookupScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: ordinaryLookupCwd })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(ordinaryLookupStarted);
+            yield* Ref.set(scopedResult, freshProvider);
+            yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: ordinaryLookupCwd,
+              fresh: true,
+            });
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === ordinaryLookupCwd,
+              )?.skills,
+              freshProvider.skills,
+            );
+            assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeOrdinaryLookup + 1);
+            yield* Ref.set(scopedResult, scopedProvider);
+            yield* Deferred.succeed(releaseOrdinaryLookup, undefined);
+            yield* Fiber.join(ordinaryLookupScan);
+            assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeOrdinaryLookup + 1);
+            const ordinaryLookupSnapshot =
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === ordinaryLookupCwd,
+              );
+            assert.deepStrictEqual(ordinaryLookupSnapshot?.skills, freshProvider.skills);
+            assert.deepStrictEqual(
+              ordinaryLookupSnapshot?.slashCommands,
+              freshProvider.slashCommands,
+            );
+
+            const cancelledCwd = "/cancelled-workspace";
+            const callsBeforeCancellation = yield* Ref.get(snapshotCalls);
+            const cancelledStarted = yield* Deferred.make<void>();
+            const releaseCancelled = yield* Deferred.make<void>();
+            yield* Ref.set(scanGate, { started: cancelledStarted, release: releaseCancelled });
+            yield* Ref.set(scopedResult, freshProvider);
+            const cancelledScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: cancelledCwd, fresh: true })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(cancelledStarted);
+            yield* Fiber.interrupt(cancelledScan);
+            assert.strictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === cancelledCwd,
+              ),
+              undefined,
+            );
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: cancelledCwd });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeCancellation + 2);
+            const retriedSnapshot = (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (s) => s.cwd === cancelledCwd,
+            );
+            assert.deepStrictEqual(retriedSnapshot?.skills, freshProvider.skills);
+            assert.deepStrictEqual(retriedSnapshot?.slashCommands, freshProvider.slashCommands);
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);

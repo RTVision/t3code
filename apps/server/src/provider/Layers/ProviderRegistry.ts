@@ -880,67 +880,82 @@ export const ProviderRegistryLive = Layer.effect(
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
-      const scannedFrom = workspaceSnapshotOf(provider);
-      if (!provider || !provider.enabled || (!input.fresh && scannedFrom)) {
+      const existingSnapshot = workspaceSnapshotOf(provider);
+      if (!provider || !provider.enabled || (!input.fresh && existingSnapshot)) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      const snapshotForCwd = instance.snapshotForCwd;
       const scan = Symbol();
-      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-        const current = refreshes.get(instance);
-        if (current?.has(input.cwd) && !input.fresh) return [false, refreshes] as const;
-        const next = new Map(refreshes);
-        next.set(instance, new Map(current).set(input.cwd, scan));
-        return [true, next] as const;
-      });
-      // A fresh scan takes ownership from a running scan that may predate the change.
-      if (!claimed) return yield* Ref.get(providersRef);
-      // Fresh scans also re-read the machine snapshot: Claude's plugin
-      // commands come from it, not from the cwd scan.
-      const refreshMachineSnapshot = input.fresh
-        ? (instance.invalidateCaches ?? Effect.void).pipe(
-            Effect.andThen(refreshInstance(input.instanceId)),
-          )
-        : Effect.void;
-      return yield* refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
-        Effect.flatMap((scopedSnapshot) =>
-          scopedSnapshot.status === "error"
-            ? Ref.get(providersRef)
-            : instanceRegistry.getInstance(input.instanceId).pipe(
-                Effect.flatMap((currentInstance) => {
-                  if (currentInstance !== instance) return Ref.get(providersRef);
-                  // Check ownership inside the update so a newer scan cannot start
-                  // between the check and write. Session metadata must still win.
-                  return updateProviders((currentProviders) => {
-                    if (
-                      Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== scan
-                    ) {
-                      return currentProviders;
-                    }
-                    return currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId &&
-                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                        : candidate,
-                    );
-                  });
-                }),
-              ),
-        ),
-        Effect.ensuring(
-          Ref.update(workspaceRefreshesRef, (refreshes) => {
-            const current = refreshes.get(instance);
-            if (current?.get(input.cwd) !== scan) return refreshes;
-            const nextCwds = new Map(current);
-            nextCwds.delete(input.cwd);
-            const next = new Map(refreshes);
-            if (nextCwds.size) next.set(instance, nextCwds);
-            else next.delete(instance);
-            return next;
-          }),
-        ),
+      return yield* Effect.acquireUseRelease(
+        Ref.modify(workspaceRefreshesRef, (refreshes) => {
+          const current = refreshes.get(instance);
+          // Include any result that landed before this scan took ownership.
+          const scannedFrom = workspaceSnapshotOf(
+            Ref.getUnsafe(providersRef).find(
+              (candidate) => candidate.instanceId === input.instanceId,
+            ),
+          );
+          if (!input.fresh && (current?.has(input.cwd) || scannedFrom)) {
+            return [null, refreshes] as const;
+          }
+          // A fresh scan takes ownership from work that may predate the change.
+          const next = new Map(refreshes);
+          next.set(instance, new Map(current).set(input.cwd, scan));
+          return [{ scannedFrom }, next] as const;
+        }),
+        (claimed) => {
+          if (claimed === null) return Ref.get(providersRef);
+          // Fresh scans also re-read the machine snapshot: Claude's plugin
+          // commands come from it, not from the cwd scan.
+          const refreshMachineSnapshot = input.fresh
+            ? (instance.invalidateCaches ?? Effect.void).pipe(
+                Effect.andThen(refreshInstance(input.instanceId)),
+              )
+            : Effect.void;
+          return refreshMachineSnapshot.pipe(
+            Effect.andThen(snapshotForCwd(input.cwd)),
+            Effect.flatMap((scopedSnapshot) =>
+              scopedSnapshot.status === "error"
+                ? Ref.get(providersRef)
+                : instanceRegistry.getInstance(input.instanceId).pipe(
+                    Effect.flatMap((currentInstance) => {
+                      if (currentInstance !== instance) return Ref.get(providersRef);
+                      // Check ownership inside the update so a newer scan cannot start
+                      // between the check and write. Session metadata must still win.
+                      return updateProviders((currentProviders) => {
+                        if (
+                          Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !==
+                          scan
+                        ) {
+                          return currentProviders;
+                        }
+                        return currentProviders.map((candidate) =>
+                          candidate.instanceId === input.instanceId &&
+                          Equal.equals(workspaceSnapshotOf(candidate), claimed.scannedFrom)
+                            ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
+                            : candidate,
+                        );
+                      });
+                    }),
+                  ),
+            ),
+          );
+        },
+        (claimed) =>
+          claimed === null
+            ? Effect.void
+            : Ref.update(workspaceRefreshesRef, (refreshes) => {
+                const current = refreshes.get(instance);
+                if (current?.get(input.cwd) !== scan) return refreshes;
+                const nextCwds = new Map(current);
+                nextCwds.delete(input.cwd);
+                const next = new Map(refreshes);
+                if (nextCwds.size) next.set(instance, nextCwds);
+                else next.delete(instance);
+                return next;
+              }),
       );
     });
 
