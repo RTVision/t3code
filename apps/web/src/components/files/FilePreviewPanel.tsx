@@ -1120,8 +1120,8 @@ export default function FilePreviewPanel({
               availableEditors={availableEditors}
               openInCwd={absolutePath}
               workspacePath={cwd}
-              compact
               enableShortcut={false}
+              compact
             />
           ) : null}
           {canToggleRendered && renderedMode ? (

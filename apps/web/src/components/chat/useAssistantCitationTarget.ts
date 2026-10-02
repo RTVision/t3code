@@ -1,5 +1,5 @@
 import type { LegendListRef } from "@legendapp/list/react";
-import type { TurnId } from "@t3tools/contracts";
+import type { RunId } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { TimelineEntry } from "../../session-logic";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
@@ -8,6 +8,7 @@ import { toastManager } from "../ui/toast";
 
 export interface CitationHistoryPage {
   readonly loading: boolean;
+  readonly error?: string | null;
   readonly cursor?: string | null;
   readonly onLoadEarlier: () => void;
 }
@@ -31,7 +32,7 @@ export function useAssistantCitationTarget({
   viewport: HTMLElement | null;
   historyLoading: boolean;
   loadEarlier: CitationHistoryPage | null;
-  onExpandTurn: (turnId: TurnId) => void;
+  onExpandTurn: (runId: RunId) => void;
   onManualNavigation: () => void;
 }) {
   const [ready, setReady] = useState<AssistantCitationTarget | null>(null);
@@ -89,6 +90,10 @@ export function useAssistantCitationTarget({
     );
     if (!source) {
       if (loadEarlier) {
+        if (loadEarlier.error) {
+          fail("Could not load the cited response", loadEarlier.error);
+          return;
+        }
         if (loadEarlier.loading) return;
         const cursor = loadEarlier.cursor ?? entries[0]?.id ?? "first";
         if (navigation.requestedPages.has(cursor) || navigation.requestedPages.size >= 20) {
@@ -119,7 +124,7 @@ export function useAssistantCitationTarget({
       (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
     );
     if (index < 0) {
-      if (source.message.turnId) onExpandTurn(source.message.turnId);
+      if (source.message.runId) onExpandTurn(source.message.runId);
       return;
     }
     if (listLoaded && listRef.current) setReady(navigation.target);

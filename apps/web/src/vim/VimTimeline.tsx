@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
-import type { TurnId } from "@t3tools/contracts";
+import type { RunId } from "@t3tools/contracts";
 import type { TimelineEntry } from "../session-logic";
 import type { MessagesTimelineRow } from "../components/chat/MessagesTimeline.logic";
 import type { CitationHistoryPage } from "../components/chat/useAssistantCitationTarget";
@@ -14,7 +14,7 @@ export function VimTimeline({
   rows,
   listRef,
   loadEarlier,
-  expandTurn,
+  expandRun,
   onManualNavigation,
   onBottom,
   historyError,
@@ -23,7 +23,7 @@ export function VimTimeline({
   rows: readonly MessagesTimelineRow[];
   listRef: RefObject<LegendListRef | null>;
   loadEarlier: CitationHistoryPage | null;
-  expandTurn: (turnId: TurnId) => void;
+  expandRun: (runId: RunId) => void;
   onManualNavigation: () => void;
   onBottom: () => void;
   historyError: string | null;
@@ -80,13 +80,13 @@ export function VimTimeline({
     const message = messages.find((item) => item.id === target);
     const index = rows.findIndex((row) => row.kind === "message" && row.message.id === target);
     if (index < 0) {
-      if (message?.turnId) expandTurn(message.turnId);
+      if (message?.runId) expandRun(message.runId);
       return;
     }
     onManualNavigation();
     void listRef.current?.scrollToIndex({ index, animated: false, viewOffset: 24 });
     setTarget(null);
-  }, [expandTurn, listRef, messages, onManualNavigation, rows, target]);
+  }, [expandRun, listRef, messages, onManualNavigation, rows, target]);
 
   function choose(index: number) {
     const next = matches[index];
