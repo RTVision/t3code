@@ -77,6 +77,7 @@ import {
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerLifecycleStreamEvent,
+  type ServerLowDiskSpace,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -108,6 +109,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import * as DiskSpace from "./diskSpace.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -222,6 +224,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
@@ -256,6 +259,24 @@ const resolveDiscoveryForConfig = <A, E, R>(
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => []);
+
+/** Stream only opted-in disk reports that differ from the config snapshot. */
+export const lowDiskSpaceConfigUpdates = (
+  enabled: boolean,
+  snapshot: ServerLowDiskSpace | null,
+  changes: Stream.Stream<ServerLowDiskSpace | null>,
+) =>
+  enabled
+    ? Stream.concat(Stream.make(snapshot), changes).pipe(
+        Stream.changesWith(DiskSpace.sameDiskSpaceReport),
+        Stream.drop(1),
+        Stream.map((lowDiskSpace) => ({
+          version: 1 as const,
+          type: "lowDiskSpaceUpdated" as const,
+          payload: { lowDiskSpace },
+        })),
+      )
+    : Stream.empty;
 
 const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
@@ -1135,6 +1156,7 @@ const makeWsRpcLayer = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+      const diskSpace = yield* DiskSpace.DiskSpace;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
@@ -1600,6 +1622,7 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
+          const lowDiskSpace = yield* diskSpace.current;
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
@@ -1618,6 +1641,7 @@ const makeWsRpcLayer = (
             keybindings: keybindingsConfig.keybindings,
             issues: keybindingsConfig.issues,
             providers,
+            ...(lowDiskSpace === null ? {} : { lowDiskSpace }),
             availableEditors,
             // Same discovery-with-timeout treatment as editors: a slow probe
             // must not stall server.getConfig, so it degrades to no targets.
@@ -2669,6 +2693,30 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsCiRuns]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsCiRuns,
+            withPullRequestViewer(input, pullRequests.ciRuns(input)),
+            {
+              projectId: input.projectId,
+            },
+          ),
+        [WS_METHODS.pullRequestsCiJobs]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsCiJobs,
+            withPullRequestViewer(input, pullRequests.ciJobs(input)),
+            {
+              projectId: input.projectId,
+            },
+          ),
+        [WS_METHODS.pullRequestsRerunCi]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRerunCi,
+            withPullRequestViewer(input, pullRequests.rerunCi(input)),
+            {
+              projectId: input.projectId,
+            },
+          ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsDetail,
@@ -2676,6 +2724,11 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "pull-requests",
             },
+          ),
+        [WS_METHODS.pullRequestsDependencyContext]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDependencyContext,
+            withPullRequestViewer(input, pullRequests.dependencyContext(input)),
           ),
         [WS_METHODS.pullRequestsPreview]: (input) =>
           observeRpcEffect(
@@ -2775,6 +2828,22 @@ const makeWsRpcLayer = (
             withPullRequestViewer(input, pullRequests.replyToThread(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.pullRequestsViewedFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsViewedFiles,
+            withPullRequestViewer(input, pullRequests.viewedFiles(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
+        [WS_METHODS.pullRequestsSetFileViewed]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetFileViewed,
+            withPullRequestViewer(input, pullRequests.setFileViewed(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsSetThreadResolution,
@@ -2807,10 +2876,12 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "pull-requests" },
           ),
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () =>
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: (input) =>
           observeRpcStream(
             WS_METHODS.pullRequestsSubscribeRefreshes,
-            pullRequests.subscribeRefreshes,
+            pullRequests.subscribeRefreshes.pipe(
+              Stream.map((event) => (input.scoped ? event : event.revision)),
+            ),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
@@ -3091,6 +3162,7 @@ const makeWsRpcLayer = (
               const path = yield* Path.Path;
               // An absolute media path can be linked from a thread on another environment.
               if (
+                input.resource._tag === "source-control-image" ||
                 input.resource._tag === "attachment" ||
                 input.resource._tag === "native-app-icon" ||
                 // GitHub media names the repository it authenticates through itself.
@@ -3591,6 +3663,13 @@ const makeWsRpcLayer = (
                       })),
                     )
                   : Stream.empty;
+              // Same gate again. The snapshot already carries the current
+              // report, so only changes after it go out.
+              const lowDiskSpaceUpdates = lowDiskSpaceConfigUpdates(
+                input.lowDiskSpace === true,
+                config.lowDiskSpace ?? null,
+                diskSpace.streamChanges,
+              );
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -3606,7 +3685,10 @@ const makeWsRpcLayer = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, lowDiskSpaceUpdates),
+                    ),
                   ),
                 ),
               );
@@ -3771,6 +3853,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                         Layer.mergeAll(
                           AzureDevOpsCli.layer,
                           BitbucketApi.layer,
+                          GiteaCli.layer,
                           GitHubCli.layer,
                           GitLabCli.layer,
                           ForgejoCli.layer,

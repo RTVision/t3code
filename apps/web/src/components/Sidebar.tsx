@@ -1,3 +1,5 @@
+import { onAppCommand } from "../vim/commandBus";
+import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { setThreadChangeRequestSnapshot } from "./ThreadStatusIndicators";
@@ -4561,20 +4563,27 @@ export default function Sidebar() {
       : false,
   );
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
+    const onWindowKeyDown = (event: KeyboardEvent, requestedCommand?: AppKeybindingCommand) => {
+      if (
+        (event.defaultPrevented && !requestedCommand) ||
+        event.repeat ||
+        isCommandPaletteOpen() ||
+        isModelPickerOpen()
+      ) {
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform: navigator.platform,
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen: routeTerminalOpen,
-          modelPickerOpen: isModelPickerOpen(),
-          isWeb: !isElectron,
-          isDesktop: isElectron,
-        },
-      });
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          platform: navigator.platform,
+          context: {
+            terminalFocus: isTerminalFocused(),
+            terminalOpen: routeTerminalOpen,
+            modelPickerOpen: isModelPickerOpen(),
+            isWeb: !isElectron,
+            isDesktop: isElectron,
+          },
+        });
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -4599,8 +4608,12 @@ export default function Sidebar() {
       if (jumpIndex === null) return;
       navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
     };
+    const unsubscribeCommand = onAppCommand(onWindowKeyDown);
     window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    return () => {
+      unsubscribeCommand();
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
   }, [
     keybindings,
     navigateToThread,

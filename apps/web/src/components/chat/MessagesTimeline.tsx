@@ -1,3 +1,4 @@
+import { VimTimeline } from "../../vim/VimTimeline";
 import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
@@ -393,6 +394,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
+  readonly cursor?: string | null;
   readonly loading: boolean;
   readonly error: string | null;
   readonly onLoadEarlier: () => void;
@@ -474,6 +476,8 @@ interface MessagesTimelineProps {
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
+  onVimBottom?: () => void;
+  vimHistoryError?: string | null;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls;
@@ -537,11 +541,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  onVimBottom,
+  vimHistoryError = null,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const vimEnabled = useClientSettings((settings) => settings.vim.enabled);
+  const earlierHistory = useMemo<CitationHistoryPage | null>(() => {
+    if (loadEarlier !== null) return loadEarlier;
+    if (!historyControls?.hasMoreHistory) return null;
+    return {
+      loading: historyControls.loading,
+      cursor: historyControls.cursor ?? null,
+      error: historyControls.error,
+      onLoadEarlier: historyControls.onLoadEarlier,
+    };
+  }, [historyControls, loadEarlier]);
+  const historyError = historyControls?.error ?? loadEarlier?.error ?? vimHistoryError;
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
@@ -924,7 +942,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
-    loadEarlier,
+    loadEarlier: earlierHistory,
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
@@ -1308,6 +1326,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
+          {vimEnabled && (
+            <VimTimeline
+              key={routeThreadKey}
+              entries={timelineEntries}
+              rows={rows}
+              listRef={listRef}
+              loadEarlier={earlierHistory}
+              historyError={historyError}
+              expandRun={expandCitedRun}
+              onManualNavigation={onManualNavigation}
+              onBottom={
+                onVimBottom ??
+                (() => {
+                  void listRef.current?.scrollToEnd({ animated: false });
+                })
+              }
+            />
+          )}
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar
               viewport={timelineViewportElement}
