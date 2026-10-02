@@ -524,6 +524,8 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
       readonly changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
       readonly oldPath: string;
       readonly newPath: string;
+      readonly oldObjectId?: string | undefined;
+      readonly newObjectId?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffFileContents, PullRequestProviderError>;
 

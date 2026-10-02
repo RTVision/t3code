@@ -926,6 +926,51 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
+it.effect("keeps concurrent expansions of different patch blobs separate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const release = yield* Latch.make();
+      const started = yield* Latch.make();
+      const client = {
+        [WS_METHODS.pullRequestsDiffFileContents]: (input: {
+          readonly oldObjectId: string;
+          readonly newObjectId: string;
+        }) =>
+          Effect.gen(function* () {
+            yield* started.open;
+            yield* release.await;
+            return { oldContents: input.oldObjectId, newContents: input.newObjectId };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const input = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        changeType: "change",
+        oldPath: "src/app.ts",
+        newPath: "src/app.ts",
+      } as const;
+      const first = atoms.diffFileContents.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, oldObjectId: "aaaaaaa", newObjectId: "bbbbbbb" },
+      });
+      yield* started.await;
+      const second = atoms.diffFileContents.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, oldObjectId: "ccccccc", newObjectId: "ddddddd" },
+      });
+      yield* release.open;
+
+      const results = yield* Effect.promise(() => Promise.all([first, second]));
+      expect(results).toMatchObject([
+        { _tag: "Success", value: { oldContents: "aaaaaaa", newContents: "bbbbbbb" } },
+        { _tag: "Success", value: { oldContents: "ccccccc", newContents: "ddddddd" } },
+      ]);
+    }),
+  ),
+);
+
 it.effect("keeps hover previews fresh after edits and turns", () =>
   Effect.scoped(
     Effect.gen(function* () {
