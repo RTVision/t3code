@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { completeV2DatabaseTrial } from "./persistence/initializeV2Database.ts";
 import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -594,7 +595,10 @@ const make = (options?: StartupOptions) =>
         options?.awaitAuxiliaryParked ?? Effect.void,
       );
 
-      const updateOutcome = yield* launcher.prepareTrial;
+      const updateOutcome = yield* completeV2DatabaseTrial(
+        serverConfig.dbPath,
+        launcher.prepareTrial,
+      );
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {
         environmentId: environment.environmentId,
