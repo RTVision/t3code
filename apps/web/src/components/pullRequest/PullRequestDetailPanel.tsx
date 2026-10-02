@@ -1551,6 +1551,8 @@ export function PullRequestDetailPanel({
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;
+  const showsApproveWorkflows =
+    workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows");
   const checksSummary = checksStale
     ? checksState === null
       ? "No checks reported"
@@ -2561,8 +2563,13 @@ export function PullRequestDetailPanel({
               ))}
             </ToggleGroup>
             {tab === "summary" ? (
-              <span className="ml-auto inline-flex shrink-0 items-center gap-2">
-                {workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows") ? (
+              <span
+                className={cn(
+                  "ml-auto flex items-center justify-end",
+                  showsApproveWorkflows ? "shrink-0" : "min-w-0 flex-1",
+                )}
+              >
+                {showsApproveWorkflows ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -2596,22 +2603,23 @@ export function PullRequestDetailPanel({
                         : "Approve workflows to run"}
                     </TooltipPopup>
                   </Tooltip>
-                ) : null}
-                <span
-                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-                >
-                  <PullRequestChecksPopover
-                    checks={detail.checks}
-                    stale={checksStale}
-                    checksState={checksState}
-                    ciRuns={detail.capabilities.ciRuns === true}
-                    environmentId={environmentId}
-                    reference={reference}
-                    threadRef={threadRef}
-                  />
-                  {checksSummary}
-                </span>
+                ) : (
+                  <span
+                    className="flex h-4 min-w-0 flex-wrap content-start items-center justify-end gap-x-1.5 overflow-hidden text-xs text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  >
+                    <PullRequestChecksPopover
+                      checks={detail.checks}
+                      stale={checksStale}
+                      checksState={checksState}
+                      ciRuns={detail.capabilities.ciRuns === true}
+                      environmentId={environmentId}
+                      reference={reference}
+                      threadRef={threadRef}
+                    />
+                    <span className="whitespace-nowrap">{checksSummary}</span>
+                  </span>
+                )}
               </span>
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
