@@ -383,7 +383,7 @@ export const ProviderRegistryLive = Layer.effect(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -886,15 +886,16 @@ export const ProviderRegistryLive = Layer.effect(
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      const scan = Symbol();
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        if (current?.has(input.cwd) && !input.fresh) return [false, refreshes] as const;
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
+        next.set(instance, new Map(current).set(input.cwd, scan));
         return [true, next] as const;
       });
-      // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      // A fresh scan takes ownership from a running scan that may predate the change.
+      if (!claimed) return yield* Ref.get(providersRef);
       // Fresh scans also re-read the machine snapshot: Claude's plugin
       // commands come from it, not from the cwd scan.
       const refreshMachineSnapshot = input.fresh
@@ -910,30 +911,35 @@ export const ProviderRegistryLive = Layer.effect(
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
                   if (currentInstance !== instance) return Ref.get(providersRef);
-                  // Write only if the cwd's snapshot did not change during the
-                  // scan. A session event or another scan that landed first is newer.
-                  return updateProviders((currentProviders) =>
-                    currentProviders.map((candidate) =>
+                  // Check ownership inside the update so a newer scan cannot start
+                  // between the check and write. Session metadata must still win.
+                  return updateProviders((currentProviders) => {
+                    if (
+                      Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== scan
+                    ) {
+                      return currentProviders;
+                    }
+                    return currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
                       Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
-                    ),
-                  );
+                    );
+                  });
                 }),
               ),
         ),
         Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
+          Ref.update(workspaceRefreshesRef, (refreshes) => {
+            const current = refreshes.get(instance);
+            if (current?.get(input.cwd) !== scan) return refreshes;
+            const nextCwds = new Map(current);
+            nextCwds.delete(input.cwd);
+            const next = new Map(refreshes);
+            if (nextCwds.size) next.set(instance, nextCwds);
+            else next.delete(instance);
+            return next;
+          }),
         ),
       );
     });

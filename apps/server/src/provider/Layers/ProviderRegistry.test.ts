@@ -1679,11 +1679,64 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               cwd: "/workspace",
               fresh: true,
             });
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+              [latestSkills],
+            );
             yield* Deferred.succeed(releaseSlow, undefined);
             yield* Fiber.join(slowScan);
             assert.deepStrictEqual(
               (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
               [latestSkills],
+            );
+
+            // A fresh scan supersedes an ordinary scan even when the older
+            // scan finishes first, without releasing the fresh scan's claim.
+            const freshCwd = "/fresh-workspace";
+            const callsBeforeRace = yield* Ref.get(snapshotCalls);
+            const olderStarted = yield* Deferred.make<void>();
+            const releaseOlder = yield* Deferred.make<void>();
+            yield* Ref.set(scanGate, { started: olderStarted, release: releaseOlder });
+            yield* Ref.set(scopedResult, scopedProvider);
+            const olderScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: freshCwd })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(olderStarted);
+            const freshStarted = yield* Deferred.make<void>();
+            const releaseFresh = yield* Deferred.make<void>();
+            const freshProvider = {
+              ...scopedProvider,
+              skills: latestSkills,
+              slashCommands: [{ name: "latest" }],
+            } satisfies ServerProvider;
+            yield* Ref.set(scanGate, { started: freshStarted, release: releaseFresh });
+            yield* Ref.set(scopedResult, freshProvider);
+            const freshScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: freshCwd, fresh: true })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(freshStarted);
+            yield* Deferred.succeed(releaseOlder, undefined);
+            yield* Fiber.join(olderScan);
+            assert.strictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === freshCwd,
+              ),
+              undefined,
+            );
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: freshCwd });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeRace + 2);
+            yield* Deferred.succeed(releaseFresh, undefined);
+            yield* Fiber.join(freshScan);
+            const freshSnapshot = (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (s) => s.cwd === freshCwd,
+            );
+            assert.deepStrictEqual(freshSnapshot?.skills, freshProvider.skills);
+            assert.deepStrictEqual(freshSnapshot?.slashCommands, freshProvider.slashCommands);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+                (s) => s.cwd === "/workspace",
+              )?.skills,
+              latestSkills,
             );
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
