@@ -104,12 +104,9 @@ export function PullRequestReviewForm({
       toastManager.add({ type: "error", title: "The review could not be submitted" });
       return;
     }
-    // More remarks may have been added while the host was accepting this snapshot. Leave those,
-    // and any summary revised in the meantime, ready for the next review.
-    removeComments(
-      reviewKey,
-      submittedComments.map((comment) => comment.id),
-    );
+    // More remarks may have been added or rewritten while the host was accepting this snapshot.
+    // Leave those, and any summary revised in the meantime, ready for the next review.
+    removeComments(reviewKey, submittedComments);
     clearSummary(reviewKey, submittedBody);
     toastManager.add({ type: "success", title: verdict.sent });
     onSubmitted();

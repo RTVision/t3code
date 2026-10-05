@@ -1167,6 +1167,19 @@ describe("composerDraftStore review comments", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
+  it("keeps an edited review comment in its original position", () => {
+    const store = useComposerDraftStore.getState();
+    const second = { ...comment, id: `${comment.id}-2` };
+    store.addReviewComment(threadRef, comment);
+    store.addReviewComment(threadRef, second);
+    store.addReviewComment(threadRef, { ...comment, text: "Edited." });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([
+      { ...comment, text: "Edited." },
+      second,
+    ]);
+  });
+
   it("persists review comments and clears them with composer content", () => {
     const store = useComposerDraftStore.getState();
     store.addReviewComment(threadRef, comment);

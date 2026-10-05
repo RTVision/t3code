@@ -27,14 +27,10 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
-    environmentId,
-    cwd,
-    source?.kind,
-    source?.diffHash,
-    baseRef,
-    ignoreWhitespace,
-  ]);
+  // The scope names the comparison, not its contents. Leaving the diff hash out lets a refresh
+  // reuse the loaded files and the mounted viewer, so the reader keeps their scroll position;
+  // the revision effect below refetches those files in place.
+  const scope = JSON.stringify([environmentId, cwd, source?.kind, baseRef, ignoreWhitespace]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
   const indices = useMemo(
     () => (requested.scope === scope ? requested.indices : [0, 1, 2, 3]),

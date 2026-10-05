@@ -343,6 +343,7 @@ function PullRequestCodeTab({
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
+  const updatePendingComment = usePullRequestReviewStore((store) => store.updateComment);
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,
   });
@@ -1113,17 +1114,25 @@ function PullRequestCodeTab({
     ],
   );
 
+  const renderPendingCard = useCallback(
+    (comment: PendingReviewComment) => (
+      <PendingReviewCommentCard
+        key={comment.id}
+        comment={comment}
+        workspaceRoot={detail.workspaceRoot}
+        environmentId={environmentId}
+        onEdit={(body) => updatePendingComment(reviewKey, comment.id, body)}
+        onRemove={() => removeComment(reviewKey, comment.id)}
+      />
+    ),
+    [detail.workspaceRoot, environmentId, removeComment, reviewKey, updatePendingComment],
+  );
+
   const renderAnnotation = useCallback(
     (annotation: ReviewAnnotation) => (
       <div className="py-1 font-sans text-foreground">
         {annotation.metadata.threads.map(renderThreadCard)}
-        {annotation.metadata.pending.map((comment) => (
-          <PendingReviewCommentCard
-            key={comment.id}
-            comment={comment}
-            onRemove={() => removeComment(reviewKey, comment.id)}
-          />
-        ))}
+        {annotation.metadata.pending.map(renderPendingCard)}
         {annotation.metadata.draft && draft ? (
           <DiffCommentAnnotation
             kind="draft"
@@ -1165,7 +1174,7 @@ function PullRequestCodeTab({
       draft,
       finishSelection,
       onAddToAgentSelection,
-      removeComment,
+      renderPendingCard,
       renderThreadCard,
       reviewKey,
     ],
@@ -1612,10 +1621,7 @@ function PullRequestCodeTab({
                           <p className="px-3 text-xs text-muted-foreground">
                             Line {getReviewPositionAnchor(comment.position).line}
                           </p>
-                          <PendingReviewCommentCard
-                            comment={comment}
-                            onRemove={() => removeComment(reviewKey, comment.id)}
-                          />
+                          {renderPendingCard(comment)}
                         </div>
                       ))}
                     </div>
