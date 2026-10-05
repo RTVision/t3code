@@ -56,31 +56,60 @@ function submitKeys(input: {
 /** A comment waiting to be sent with the rest of the review. */
 export function PendingReviewCommentCard({
   comment,
+  workspaceRoot,
+  environmentId,
+  onEdit,
   onRemove,
 }: {
   comment: PendingReviewComment;
+  workspaceRoot: string;
+  environmentId: EnvironmentId;
+  onEdit: (body: string) => void;
   onRemove: () => void;
 }) {
+  // Nothing has reached the host yet, so an edit is a local rewrite that saves at once.
+  const [editing, setEditing] = useState(false);
   return (
     <div
-      className={cn(CARD_CLASS, "border-dashed")}
+      className={cn(CARD_CLASS, "group border-dashed")}
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
         <span>Pending — sent when you submit the review</span>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="Discard this comment"
-          onClick={onRemove}
-        >
-          <Trash2Icon className="size-3.5" />
-        </Button>
+        <span className="ml-auto flex items-center">
+          {editing ? null : (
+            <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
+          )}
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Discard this comment"
+            onClick={onRemove}
+          >
+            <Trash2Icon className="size-3.5" />
+          </Button>
+        </span>
       </div>
-      <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      {editing ? (
+        <PullRequestMarkdownEditor
+          className="mt-2"
+          value={comment.body}
+          cwd={workspaceRoot}
+          environmentId={environmentId}
+          label="Edit comment"
+          saving={false}
+          onSave={(draft) => {
+            setEditing(false);
+            const body = draft.trim();
+            if (body !== comment.body) onEdit(body);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      )}
     </div>
   );
 }
