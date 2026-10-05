@@ -143,35 +143,33 @@ describe("Actions CI", () => {
       }),
   );
 
-  for (const attempt of [undefined, 0]) {
-    it.effect(`reruns jobs on legacy Gitea runs with attempt ${attempt}`, () =>
-      Effect.gen(function* () {
-        const legacyRun = {
-          id: run.id,
-          head_sha: run.head_sha,
-          html_url: run.html_url,
-          status: "completed",
-          conclusion: "failure",
-          ...(attempt === undefined ? {} : { run_attempt: attempt }),
-        };
-        const f = fixture({
-          kind: "gitea",
-          runs: [legacyRun],
-          currentRun: {
-            ...legacyRun,
-            run_attempt: attempt,
-            name: undefined,
-            pull_requests: undefined,
-          },
-          currentJob: { run_attempt: 3 },
-        });
-        const result = yield* f.api.getCiRuns(ref);
-        expect(result.runs[0]).toMatchObject({ id: "12", name: "Run 12", attempt: 0 });
-        yield* f.api.rerunCi({ ...runRef, attempt: 0, target: { kind: "job", jobId: "93" } });
-        expect(f.writes()[0]?.path).toBe("/repos/acme/web/actions/runs/12/jobs/93/rerun");
-      }),
-    );
-  }
+  it.effect.each([undefined, 0])(`reruns jobs on legacy Gitea runs with attempt %s`, (attempt) =>
+    Effect.gen(function* () {
+      const legacyRun = {
+        id: run.id,
+        head_sha: run.head_sha,
+        html_url: run.html_url,
+        status: "completed",
+        conclusion: "failure",
+        ...(attempt === undefined ? {} : { run_attempt: attempt }),
+      };
+      const f = fixture({
+        kind: "gitea",
+        runs: [legacyRun],
+        currentRun: {
+          ...legacyRun,
+          run_attempt: attempt,
+          name: undefined,
+          pull_requests: undefined,
+        },
+        currentJob: { run_attempt: 3 },
+      });
+      const result = yield* f.api.getCiRuns(ref);
+      expect(result.runs[0]).toMatchObject({ id: "12", name: "Run 12", attempt: 0 });
+      yield* f.api.rerunCi({ ...runRef, attempt: 0, target: { kind: "job", jobId: "93" } });
+      expect(f.writes()[0]?.path).toBe("/repos/acme/web/actions/runs/12/jobs/93/rerun");
+    }),
+  );
 
   it.effect("uses capped job pages and API IDs instead of job URL numbers", () =>
     Effect.gen(function* () {
@@ -192,8 +190,9 @@ describe("Actions CI", () => {
     }),
   );
 
-  for (const kind of ["github", "gitea"] as const) {
-    it.effect(`${kind} reruns a native job through its own route`, () =>
+  it.effect.each(["github", "gitea"] as const)(
+    `%s reruns a native job through its own route`,
+    (kind) =>
       Effect.gen(function* () {
         const f = fixture({ kind });
         yield* f.api.rerunCi({ ...runRef, target: { kind: "job", jobId: "93" } });
@@ -204,11 +203,11 @@ describe("Actions CI", () => {
             : "/repos/acme/web/actions/runs/12/jobs/93/rerun",
         );
       }),
-    );
-  }
+  );
 
-  for (const target of ["all", "failed"] as const) {
-    it.effect(`reruns ${target} jobs and accepts an empty success body`, () =>
+  it.effect.each(["all", "failed"] as const)(
+    `reruns %s jobs and accepts an empty success body`,
+    (target) =>
       Effect.gen(function* () {
         const f = fixture();
         yield* f.api.rerunCi({ ...runRef, target: { kind: target } });
@@ -216,10 +215,9 @@ describe("Actions CI", () => {
           `/repos/acme/web/actions/runs/12/${target === "all" ? "rerun" : "rerun-failed-jobs"}`,
         );
       }),
-    );
-  }
+  );
 
-  for (const [name, options] of [
+  it.effect.each([
     ["changed PR head", { head: "new-head" }],
     ["newer run attempt", { currentRun: { run_attempt: 3 } }],
     ["unrelated run", { currentRun: { head_sha: "different" } }],
@@ -227,15 +225,13 @@ describe("Actions CI", () => {
     ["read-only viewer", { writable: false }],
     ["job from another run", { currentJob: { run_id: 13 } }],
     ["job from an old attempt", { currentJob: { run_attempt: 1 } }],
-  ] as const) {
-    it.effect(`refuses ${name} before writing`, () =>
-      Effect.gen(function* () {
-        const f = fixture(options);
-        yield* f.api.rerunCi({ ...runRef, target: { kind: "job", jobId: "93" } }).pipe(Effect.flip);
-        expect(f.writes()).toEqual([]);
-      }),
-    );
-  }
+  ] as const)(`refuses %s before writing`, ([_name, options]) =>
+    Effect.gen(function* () {
+      const f = fixture(options);
+      yield* f.api.rerunCi({ ...runRef, target: { kind: "job", jobId: "93" } }).pipe(Effect.flip);
+      expect(f.writes()).toEqual([]);
+    }),
+  );
 
   it.effect("does not offer mutations to a read-only viewer and preserves write failures", () =>
     Effect.gen(function* () {

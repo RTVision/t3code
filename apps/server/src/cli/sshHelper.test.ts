@@ -60,72 +60,68 @@ const cases = [
   })),
 ];
 
-for (const mode of ["packaged", "inline"] as const) {
-  describe(`${mode} SSH runtime discovery`, () => {
-    for (const testCase of cases) {
-      it.effect(testCase.name, () =>
-        Effect.gen(function* () {
-          const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-helper-"));
-          const runtimeFile = NodePath.join(dir, "server-runtime.json");
-          NodeFS.writeFileSync(runtimeFile, encodeJson(testCase.runtime));
-          const previousExitCode = process.exitCode;
-          const probes: number[] = [];
-          let output = "";
-          let exitCode = 0;
-          const kill = (pid: number, signal?: string | number) => {
-            assert.equal(signal, 0);
-            probes.push(pid);
-            if (!testCase.live.includes(pid)) throw new Error("ESRCH");
-            return true as const;
-          };
+describe.each(["packaged", "inline"] as const)(`%s SSH runtime discovery`, (mode) => {
+  it.effect.each(cases)("$name", (testCase) =>
+    Effect.gen(function* () {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-helper-"));
+      const runtimeFile = NodePath.join(dir, "server-runtime.json");
+      NodeFS.writeFileSync(runtimeFile, encodeJson(testCase.runtime));
+      const previousExitCode = process.exitCode;
+      const probes: number[] = [];
+      let output = "";
+      let exitCode = 0;
+      const kill = (pid: number, signal?: string | number) => {
+        assert.equal(signal, 0);
+        probes.push(pid);
+        if (!testCase.live.includes(pid)) throw new Error("ESRCH");
+        return true as const;
+      };
+      try {
+        if (mode === "packaged") {
+          process.exitCode = 0;
+          vi.spyOn(process, "kill").mockImplementation(kill);
+          vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+            output += String(chunk);
+            return true;
+          });
+          yield* Command.runWith(cli, { version: "0.0.0" })([
+            "__ssh-helper",
+            "runtime-port",
+            runtimeFile,
+          ]).pipe(Effect.provide(NodeServices.layer));
+          exitCode = Number(process.exitCode);
+        } else {
+          const exited = new Error("process.exit");
           try {
-            if (mode === "packaged") {
-              process.exitCode = 0;
-              vi.spyOn(process, "kill").mockImplementation(kill);
-              vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-                output += String(chunk);
-                return true;
-              });
-              yield* Command.runWith(cli, { version: "0.0.0" })([
-                "__ssh-helper",
-                "runtime-port",
-                runtimeFile,
-              ]).pipe(Effect.provide(NodeServices.layer));
-              exitCode = Number(process.exitCode);
-            } else {
-              const exited = new Error("process.exit");
-              try {
-                NodeVM.runInNewContext(inlineScript, {
-                  require: () => NodeFS,
-                  URL,
-                  process: {
-                    argv: ["node", "-", runtimeFile],
-                    kill,
-                    stdout: {
-                      write: (chunk: string) => {
-                        output += chunk;
-                      },
-                    },
-                    exit: (code: number) => {
-                      exitCode = code;
-                      throw exited;
-                    },
+            NodeVM.runInNewContext(inlineScript, {
+              require: () => NodeFS,
+              URL,
+              process: {
+                argv: ["node", "-", runtimeFile],
+                kill,
+                stdout: {
+                  write: (chunk: string) => {
+                    output += chunk;
                   },
-                });
-              } catch (error) {
-                if (error !== exited) throw error;
-              }
-            }
-            assert.equal(exitCode, testCase.found ? 0 : 1);
-            assert.equal(output, testCase.found ? `${childPid} 3773` : "");
-            assert.isTrue(probes.every((pid) => Number.isInteger(pid) && pid > 0));
-          } finally {
-            vi.restoreAllMocks();
-            process.exitCode = previousExitCode;
-            NodeFS.rmSync(dir, { recursive: true, force: true });
+                },
+                exit: (code: number) => {
+                  exitCode = code;
+                  throw exited;
+                },
+              },
+            });
+          } catch (error) {
+            if (error !== exited) throw error;
           }
-        }),
-      );
-    }
-  });
-}
+        }
+        assert.equal(exitCode, testCase.found ? 0 : 1);
+        assert.equal(output, testCase.found ? `${childPid} 3773` : "");
+        assert.isTrue(probes.every((pid) => Number.isInteger(pid) && pid > 0));
+      } finally {
+        vi.restoreAllMocks();
+        process.exitCode = previousExitCode;
+        NodeFS.rmSync(dir, { recursive: true, force: true });
+      }
+    }),
+  );
+});

@@ -74,11 +74,12 @@ function route(viewerFails: boolean, reactionsFail: boolean) {
   });
 }
 
-for (const [name, viewerFails, reactionsFail] of [
+it.effect.each([
   ["viewer", true, false],
   ["reactions", false, true],
-] as const) {
-  it.effect(`keeps loaded conversation when ${name} enrichment fails`, () =>
+] as const)(
+  `keeps loaded conversation when %s enrichment fails`,
+  ([_name, viewerFails, reactionsFail]) =>
     Effect.gen(function* () {
       route(viewerFails, reactionsFail);
       const provider = yield* GiteaPullRequestProvider.make.pipe(Effect.provide(apiLayer));
@@ -95,5 +96,4 @@ for (const [name, viewerFails, reactionsFail] of [
       ]);
       assert.strictEqual(activity.reviewThreads[0]?.comments[0]?.body, "inline");
     }),
-  );
-}
+);

@@ -445,111 +445,107 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  for (const repository of ["acme/web", "gitea/acme/web"]) {
-    it.effect(
-      `routes CI reads through configured Gitea auth and rejects another host: ${repository}`,
-      () =>
-        Effect.gen(function* () {
-          mockedRequest.mockImplementation((input) =>
-            Effect.succeed(
-              response(
-                input.path.endsWith("/pulls/1")
-                  ? { head: { sha: "head" } }
-                  : input.path === "/repos/acme/web"
-                    ? { permissions: { push: true } }
-                    : {
-                        total_count: 1,
-                        workflow_runs: [
-                          {
-                            id: 12,
-                            head_sha: "head",
-                            html_url: "acme/web/actions/runs/12",
-                            status: "queued",
-                          },
-                        ],
-                      },
-              ),
-            ),
-          );
-          const api = yield* GiteaPullRequestApi.make;
-          const input = {
-            cwd: "/workspace",
-            host: "forge.example.test",
-            repository,
-            number: 1,
-          };
-          expect((yield* api.getCiRuns(input)).runs[0]?.url).toBe(
-            "https://forge.example.test/gitea/acme/web/actions/runs/12",
-          );
-          const calls = mockedRequest.mock.calls.length;
-          yield* api.getCiRuns({ ...input, host: "another.example.test" }).pipe(Effect.flip);
-          expect(mockedRequest).toHaveBeenCalledTimes(calls);
-        }),
-    );
-  }
-
-  for (const repository of ["acme/web", "gitea/acme/web"]) {
-    it.effect(
-      `preserves tracking rows while keeping dependency reads lightweight: ${repository}`,
-      () =>
-        Effect.gen(function* () {
-          mockedRequest.mockImplementation(() =>
-            Effect.succeed(
-              response(
-                [
-                  rawPullRequest(1, {
-                    head: {
-                      ref: "feature",
-                      label: "feature",
-                      sha: "head-sha",
-                      repo: { full_name: "acme/web", id: 1 },
+  it.effect.each(["acme/web", "gitea/acme/web"])(
+    `routes CI reads through configured Gitea auth and rejects another host: %s`,
+    (repository) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation((input) =>
+          Effect.succeed(
+            response(
+              input.path.endsWith("/pulls/1")
+                ? { head: { sha: "head" } }
+                : input.path === "/repos/acme/web"
+                  ? { permissions: { push: true } }
+                  : {
+                      total_count: 1,
+                      workflow_runs: [
+                        {
+                          id: 12,
+                          head_sha: "head",
+                          html_url: "acme/web/actions/runs/12",
+                          status: "queued",
+                        },
+                      ],
                     },
-                    review_decision: "approved",
-                    checks_state: "failing",
-                  }),
-                ],
-                { "x-total-count": "1" },
-              ),
             ),
-          );
-          const provider = yield* GiteaPullRequestProvider.make.pipe(
-            Effect.provide(GiteaPullRequestApi.layer),
-          );
-          const input = {
-            cwd: "/workspace",
-            host: "forge.example.test",
-            repository,
-            state: "open" as const,
-            involvement: "all" as const,
-            viewer: "",
-            limit: 200,
-          };
-          const dependencies = yield* provider.listChangeRequests({
-            ...input,
-            relationshipOnly: true,
-          });
-          expect(dependencies.items).toHaveLength(1);
-          expect(dependencies.items[0]).toMatchObject({
-            headBranch: "feature",
-            headRepositoryNameWithOwner: "acme/web",
-            headBranchAvailable: true,
-          });
-          expect(dependencies.truncated).toBe(false);
-          expect(callAt(0).path).not.toContain("include_tracking");
-          const listing = yield* provider.listChangeRequests(input);
-          expect(listing.items[0]).toMatchObject({
-            reviewDecision: "approved",
-            checksState: "failing",
-          });
-          expect(callAt(1).path).toContain("include_tracking=true");
-          expect(mockedRequest).toHaveBeenCalledTimes(2);
-          const api = yield* GiteaPullRequestApi.make;
-          yield* api.listPullRequests({ ...input, relationshipOnly: true, includeTracking: true });
-          expect(callAt(2).path).not.toContain("include_tracking");
-          expect(mockedRequest).toHaveBeenCalledTimes(3);
-        }),
-    );
-  }
+          ),
+        );
+        const api = yield* GiteaPullRequestApi.make;
+        const input = {
+          cwd: "/workspace",
+          host: "forge.example.test",
+          repository,
+          number: 1,
+        };
+        expect((yield* api.getCiRuns(input)).runs[0]?.url).toBe(
+          "https://forge.example.test/gitea/acme/web/actions/runs/12",
+        );
+        const calls = mockedRequest.mock.calls.length;
+        yield* api.getCiRuns({ ...input, host: "another.example.test" }).pipe(Effect.flip);
+        expect(mockedRequest).toHaveBeenCalledTimes(calls);
+      }),
+  );
+
+  it.effect.each(["acme/web", "gitea/acme/web"])(
+    `preserves tracking rows while keeping dependency reads lightweight: %s`,
+    (repository) =>
+      Effect.gen(function* () {
+        mockedRequest.mockImplementation(() =>
+          Effect.succeed(
+            response(
+              [
+                rawPullRequest(1, {
+                  head: {
+                    ref: "feature",
+                    label: "feature",
+                    sha: "head-sha",
+                    repo: { full_name: "acme/web", id: 1 },
+                  },
+                  review_decision: "approved",
+                  checks_state: "failing",
+                }),
+              ],
+              { "x-total-count": "1" },
+            ),
+          ),
+        );
+        const provider = yield* GiteaPullRequestProvider.make.pipe(
+          Effect.provide(GiteaPullRequestApi.layer),
+        );
+        const input = {
+          cwd: "/workspace",
+          host: "forge.example.test",
+          repository,
+          state: "open" as const,
+          involvement: "all" as const,
+          viewer: "",
+          limit: 200,
+        };
+        const dependencies = yield* provider.listChangeRequests({
+          ...input,
+          relationshipOnly: true,
+        });
+        expect(dependencies.items).toHaveLength(1);
+        expect(dependencies.items[0]).toMatchObject({
+          headBranch: "feature",
+          headRepositoryNameWithOwner: "acme/web",
+          headBranchAvailable: true,
+        });
+        expect(dependencies.truncated).toBe(false);
+        expect(callAt(0).path).not.toContain("include_tracking");
+        const listing = yield* provider.listChangeRequests(input);
+        expect(listing.items[0]).toMatchObject({
+          reviewDecision: "approved",
+          checksState: "failing",
+        });
+        expect(callAt(1).path).toContain("include_tracking=true");
+        expect(mockedRequest).toHaveBeenCalledTimes(2);
+        const api = yield* GiteaPullRequestApi.make;
+        yield* api.listPullRequests({ ...input, relationshipOnly: true, includeTracking: true });
+        expect(callAt(2).path).not.toContain("include_tracking");
+        expect(mockedRequest).toHaveBeenCalledTimes(3);
+      }),
+  );
   it.effect("reconstructs auto-merge from the timeline when discovery is unavailable", () =>
     Effect.gen(function* () {
       mockedRequest
@@ -607,8 +603,9 @@ layer("GiteaPullRequestApi", (it) => {
     }),
   );
 
-  for (const repository of ["acme/web", "gitea/acme/web"]) {
-    it.effect(`approves only the current pull request's waiting workflow runs: ${repository}`, () =>
+  it.effect.each(["acme/web", "gitea/acme/web"])(
+    `approves only the current pull request's waiting workflow runs: %s`,
+    (repository) =>
       Effect.gen(function* () {
         const pull = rawPullRequest(7);
         mockedRequest
@@ -648,8 +645,7 @@ layer("GiteaPullRequestApi", (it) => {
             .map(([call]) => call.path),
         ).toEqual(["/repos/acme/web/actions/runs/42/approve"]);
       }),
-    );
-  }
+  );
 
   it.effect("rejects workflow approval on servers without native approval metadata", () =>
     Effect.gen(function* () {
