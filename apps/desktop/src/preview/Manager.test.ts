@@ -3857,6 +3857,98 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps the markup when the page reloads during element picking", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        let onDraft: ((event: unknown, value: unknown) => void) | undefined;
+        let currentUrl = "https://example.com/app#section";
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => currentUrl,
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isFocused: () => true,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+            listeners.set(event, listener);
+          }),
+          once: vi.fn(),
+          off: vi.fn(),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof onDraft) => {
+              if (channel === "preview:annotation-draft") onDraft = listener;
+            }),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const draft = {
+          comment: "Tighten this spacing",
+          tool: "marquee",
+          elements: [
+            {
+              id: "element_1",
+              selector: ":root > body:nth-of-type(1) > main:nth-of-type(1)",
+              rect: { x: 1, y: 2, width: 30, height: 40 },
+            },
+          ],
+          regions: [{ id: "region_2", rect: { x: 5, y: 6, width: 20, height: 30 } }],
+          strokes: [],
+          styleChanges: [],
+        };
+        const reload = (url: string) => {
+          listeners.get("did-start-navigation")?.({
+            url,
+            isSameDocument: false,
+            isMainFrame: true,
+            frame: null,
+          });
+        };
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        onDraft?.({}, draft);
+        webviewSend.mockClear();
+
+        // A dev-server refresh reloads the page it is already on.
+        reload("https://example.com/app");
+        yield* Effect.yieldNow;
+        expect(pick.pollUnsafe()).toBeUndefined();
+
+        listeners.get("dom-ready")?.();
+        yield* Effect.yieldNow;
+        expect(pick.pollUnsafe()).toBeUndefined();
+        expect(webviewSend).toHaveBeenCalledWith("preview:start-pick", expect.anything(), draft);
+
+        // A reload that redirects away ends the pick, as other navigations do.
+        reload("https://example.com/app");
+        currentUrl = "https://example.com/login";
+        listeners.get("dom-ready")?.();
+        yield* Effect.yieldNow;
+        expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
   effectIt.effect("settles the pick when the annotation screenshot never arrives", () =>
     withManager((manager) =>
       Effect.gen(function* () {

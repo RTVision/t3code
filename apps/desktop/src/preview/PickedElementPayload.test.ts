@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPickedElementPayload, isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
+import {
+  isPickedElementPayload,
+  isPreviewAnnotationDraft,
+  isPreviewAnnotationPayload,
+} from "./PickedElementPayload.ts";
 
 function validPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -197,5 +201,39 @@ describe("isPreviewAnnotationPayload", () => {
         validAnnotation({ elements: [{ id: "element_1", element: {}, rect: {} }] }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("isPreviewAnnotationDraft", () => {
+  const draft = (overrides?: Record<string, unknown>): Record<string, unknown> => {
+    const { elements: _elements, ...annotation } = validAnnotation();
+    return {
+      regions: annotation["regions"],
+      strokes: annotation["strokes"],
+      styleChanges: annotation["styleChanges"],
+      comment: "Make this clearer",
+      tool: "select",
+      elements: [
+        {
+          id: "element_1",
+          selector: ":root > body:nth-of-type(1) > button:nth-of-type(2)",
+          rect: { x: 10, y: 20, width: 100, height: 40 },
+        },
+      ],
+      ...overrides,
+    };
+  };
+
+  it("accepts the markup a reload carries over", () => {
+    expect(isPreviewAnnotationDraft(draft())).toBe(true);
+  });
+
+  it("rejects drafts the preload could not restore", () => {
+    expect(isPreviewAnnotationDraft(draft({ tool: "lasso" }))).toBe(false);
+    expect(isPreviewAnnotationDraft(draft({ comment: null }))).toBe(false);
+    expect(
+      isPreviewAnnotationDraft(draft({ elements: [{ id: "element_1", rect: { x: 0 } }] })),
+    ).toBe(false);
+    expect(isPreviewAnnotationDraft(draft({ strokes: [{ id: "stroke_1" }] }))).toBe(false);
   });
 });

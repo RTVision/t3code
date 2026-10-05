@@ -72,6 +72,7 @@ import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_DRAFT_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -84,7 +85,11 @@ import {
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
-import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
+import {
+  isPreviewAnnotationDraft,
+  isPreviewAnnotationPayload,
+  type PreviewAnnotationDraft,
+} from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import {
   makePreviewAutomationKeySequence,
@@ -344,6 +349,10 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
     height: Math.max(1, Math.ceil(height)),
   };
 };
+
+/** Whether two URLs load the same page, ignoring the fragment. */
+const isSamePageUrl = (left: string, right: string): boolean =>
+  left.split("#", 1)[0] === right.split("#", 1)[0];
 
 /** `capturePage` never settles when the guest's compositor is wedged. */
 const ANNOTATION_SCREENSHOT_TIMEOUT = "5 seconds";
@@ -2679,8 +2688,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const cleanup = Effect.fn("PreviewManager.cleanupPickElement")(function* () {
           yield* attempt({ operation: "pickElement.cleanup", tabId, webContentsId: wc.id }, () => {
             wc.ipc.removeListener(ELEMENT_PICKED_CHANNEL, onMessage);
+            wc.ipc.removeListener(ANNOTATION_DRAFT_CHANNEL, onDraft);
             wc.off("destroyed", onDestroyed);
             wc.off("did-start-navigation", onNavigated);
+            wc.off("dom-ready", onDomReady);
           }).pipe(Effect.ignore);
           // Only drop the slot while it is still ours. A newer session may
           // already have swapped itself in before cancelling this one.
@@ -2737,12 +2748,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }
           resume(Effect.succeed(null));
         });
+        // A reload of the page keeps the markup alive: the preload keeps the
+        // draft current here, and the fresh document gets it back on dom-ready.
+        const pageUrl = wc.getURL();
+        let draft: PreviewAnnotationDraft | null = null;
+        let reloading = false;
+        let submitted = false;
         const onMessage = (_event: Electron.IpcMainEvent, ...args: unknown[]): void => {
           const payload = args[0];
           if (!isPreviewAnnotationPayload(payload)) {
             settle(null);
             return;
           }
+          submitted = true;
           const cropRect = normalizeCaptureRect(args[1]);
           const submission = args[2] === "send" ? "send" : "attach";
           runFork(
@@ -2776,11 +2794,40 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ),
           );
         };
+        const onDraft = (_event: Electron.IpcMainEvent, value: unknown): void => {
+          if (!submitted && isPreviewAnnotationDraft(value)) draft = value;
+        };
         const onDestroyed = () => settle(null);
         const onNavigated = (
           event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
         ) => {
-          if (event.isMainFrame) settle(null);
+          if (!event.isMainFrame) return;
+          if (!event.isSameDocument && isSamePageUrl(event.url, pageUrl)) {
+            reloading = true;
+            return;
+          }
+          settle(null);
+        };
+        const onDomReady = () => {
+          if (!reloading) return;
+          reloading = false;
+          // A submitted annotation is already capturing and settles on its own.
+          if (submitted) return;
+          // The reload redirected somewhere else, so the markup no longer applies.
+          if (!isSamePageUrl(wc.getURL(), pageUrl)) {
+            settle(null);
+            return;
+          }
+          runFork(
+            Ref.get(annotationThemeRef).pipe(
+              Effect.flatMap((theme) =>
+                attempt({ operation: "pickElement.restore", tabId, webContentsId: wc.id }, () =>
+                  wc.send(START_PICK_CHANNEL, theme, draft),
+                ),
+              ),
+              Effect.ignore,
+            ),
+          );
         };
         const registerPickElement = Effect.fn("PreviewManager.registerPickElement")(function* () {
           // Two picks on one tab can overlap. Swap this session in and cancel
@@ -2800,8 +2847,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (settled) return;
           yield* attempt({ operation: "pickElement.register", tabId, webContentsId: wc.id }, () => {
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
+            wc.ipc.on(ANNOTATION_DRAFT_CHANNEL, onDraft);
             wc.once("destroyed", onDestroyed);
             wc.on("did-start-navigation", onNavigated);
+            wc.on("dom-ready", onDomReady);
             if (!wc.isFocused()) wc.focus();
             wc.send(START_PICK_CHANNEL, annotationTheme);
           });
