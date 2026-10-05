@@ -1585,9 +1585,12 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
       });
       for (const { element, found } of matches) {
         removeRegion(element.placeholderId);
-        const target = addSelected(found, element.id);
+        // The user may have selected it again by hand while it was missing.
+        const target = selected.get(found) ?? addSelected(found, element.id);
         if (!target) continue;
-        for (const change of element.styleChanges) applyStyleChange(target, change);
+        for (const change of element.styleChanges) {
+          applyStyleChange(target, { ...change, targetId: target.id });
+        }
       }
       updateStatus();
       if (unresolved.length > 0 && Date.now() < deadline) {
