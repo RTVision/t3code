@@ -53,7 +53,7 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import type { ProviderInstance, ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
@@ -94,12 +94,16 @@ function dropProviderWorkspaceSnapshot(provider: ServerProvider, cwd: string): S
 export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,
   cwd: string,
-  scopedSnapshot: ServerProvider,
+  scopedSnapshot: ProviderWorkspaceSnapshot,
 ): ServerProvider {
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
-    slashCommands: scopedSnapshot.slashCommands,
+    slashCommands: scopedSnapshot.slashCommandsPending
+      ? (provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.slashCommands ??
+        scopedSnapshot.slashCommands)
+      : scopedSnapshot.slashCommands,
+    ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
@@ -917,8 +921,12 @@ export const ProviderRegistryLive = Layer.effect(
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
-      const existingSnapshot = workspaceSnapshotOf(provider);
-      if (!provider || !provider.enabled || (!input.fresh && existingSnapshot)) {
+      const scannedFrom = workspaceSnapshotOf(provider);
+      if (
+        !provider ||
+        !provider.enabled ||
+        (!input.fresh && scannedFrom && !scannedFrom.slashCommandsPending)
+      ) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -934,7 +942,10 @@ export const ProviderRegistryLive = Layer.effect(
               (candidate) => candidate.instanceId === input.instanceId,
             ),
           );
-          if (!input.fresh && (current?.has(input.cwd) || scannedFrom)) {
+          if (
+            !input.fresh &&
+            (current?.has(input.cwd) || (scannedFrom && !scannedFrom.slashCommandsPending))
+          ) {
             return [null, refreshes] as const;
           }
           // A fresh scan takes ownership from work that may predate the change.
@@ -954,7 +965,7 @@ export const ProviderRegistryLive = Layer.effect(
           return refreshMachineSnapshot.pipe(
             Effect.andThen(snapshotForCwd(input.cwd)),
             Effect.flatMap((scopedSnapshot) =>
-              scopedSnapshot.status === "error"
+              scopedSnapshot.status === "error" && scopedSnapshot.slashCommandsPending === undefined
                 ? Ref.get(providersRef)
                 : instanceRegistry.getInstance(input.instanceId).pipe(
                     Effect.flatMap((currentInstance) => {

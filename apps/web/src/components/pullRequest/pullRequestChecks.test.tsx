@@ -119,6 +119,8 @@ function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
     showProvider: false,
     showReviewRequest: false,
     onSelect: () => {},
+    speedMode: false,
+    onActed: () => {},
   });
 }
 

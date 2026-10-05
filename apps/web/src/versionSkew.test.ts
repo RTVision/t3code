@@ -27,9 +27,29 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
-  it("copies an exact-version command for the RTVision registry", () => {
-    expect(manualServerUpdateCommand("0.0.41")).toBe(
-      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.41",
+  it("updates only the proven npm prefix and safely quotes its path", () => {
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+      "npm install --global --registry=https://npm-registry.rtvision.com/ --prefix '/opt/node' @rtvision/t3@0.0.45",
+    );
+    expect(
+      manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
+    ).toBe(
+      "npm install --global --registry=https://npm-registry.rtvision.com/ --prefix '/opt/maria'\\''s node' @rtvision/t3@0.0.45",
+    );
+  });
+
+  it("keeps runner and unknown commands as relaunches", () => {
+    expect(manualServerUpdateCommand("0.0.45")).toBe(
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
+    );
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npx" })).toBe(
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
+    );
+    expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" })).toBe(
+      "pnpm dlx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
+    );
+    expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(
+      "bunx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
     );
   });
   beforeEach(() => {

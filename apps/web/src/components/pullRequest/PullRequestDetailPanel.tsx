@@ -7,7 +7,6 @@ import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/enviro
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
-  DEFAULT_SERVER_SETTINGS,
   type PullRequestAction,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
@@ -16,7 +15,6 @@ import {
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
@@ -63,24 +61,18 @@ import {
   type ShortcutMatchContext,
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
-import { useClientSettings } from "~/hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  selectProjectGroupingSettings,
-} from "~/logicalProject";
 import {
   changeRequestRepositoryUrl,
   gitHubPullRequestBrowserUrl,
   giteaPullRequestBrowserUrl,
 } from "~/lib/openPullRequestLink";
+import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import {
@@ -147,6 +139,7 @@ import {
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
+  isPullRequestNotFound,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
@@ -569,19 +562,14 @@ export function PullRequestDetailPanel({
   }, [condensed]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
-  // Server-side and per project, like every other project setting. The
-  // client-local per-project map from before still answers when the server
-  // has no value, so a choice made on an older release keeps applying until
-  // it is set (or reset) in Settings.
-  const legacyMergeMethodOverrides = useClientSettings(
-    (settings) => settings.pullRequestMergeMethodOverrides,
+  const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
+    environmentId,
+    reference.projectId,
   );
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const projectDefaultMergeMethod =
-    resolveProjectSettings(
-      environmentConfigs.get(environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS,
-      reference.projectId,
-    ).settings.pullRequestMergeMethod ?? undefined;
+  const projectDefaultMergeMethod = useMemo(
+    () => resolveProjectDefaultMergeMethod(),
+    [resolveProjectDefaultMergeMethod],
+  );
   const [mergeMethodSelection, setMergeMethodSelection] = useState<{
     readonly pullRequestKey: string;
     readonly method: PullRequestMergeMethod;
@@ -911,7 +899,6 @@ export function PullRequestDetailPanel({
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const unavailableBrowserUrl = useMemo(() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
@@ -926,32 +913,6 @@ export function PullRequestDetailPanel({
     reference.number,
     reference.projectId,
     reference.repository,
-  ]);
-  // Project settings store the override under the sidebar group's key, which a duplicate row
-  // borrows from its siblings, so the project alone does not always name the same key.
-  const legacyProjectDefaultMergeMethod = useMemo(() => {
-    if (projectDefaultMergeMethod !== undefined) return undefined;
-    const project = projects.find(
-      (candidate) =>
-        candidate.environmentId === environmentId && candidate.id === reference.projectId,
-    );
-    if (!project) return undefined;
-    const projectKey =
-      buildPhysicalToLogicalProjectKeyMap({
-        projects,
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-      }).get(derivePhysicalProjectKey(project)) ??
-      deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    return legacyMergeMethodOverrides[projectKey];
-  }, [
-    environmentId,
-    legacyMergeMethodOverrides,
-    primaryEnvironmentId,
-    projectDefaultMergeMethod,
-    projectGroupingSettings,
-    projects,
-    reference.projectId,
   ]);
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
@@ -1454,7 +1415,7 @@ export function PullRequestDetailPanel({
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedMergeMethods,
     currentMergeMethod,
-    projectDefaultMergeMethod ?? legacyProjectDefaultMergeMethod,
+    projectDefaultMergeMethod,
     lastSelectedMergeMethod,
   );
   const selectedMergeMethodLabel = PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod];
@@ -2728,7 +2689,13 @@ export function PullRequestDetailPanel({
       >
         {detailQuery.error && !detail ? (
           <PullRequestsUnavailableState
-            error={detailQuery.error}
+            {...(isPullRequestNotFound(detailQuery.failure)
+              ? {
+                  title: `Pull request #${reference.number} not found`,
+                  error:
+                    "It may be an issue rather than a pull request, or this account can't see it.",
+                }
+              : { error: detailQuery.error })}
             refreshing={detailQuery.isPending}
             onRetry={refreshDetail}
             {...(unavailableBrowserUrl ? { browserUrl: unavailableBrowserUrl } : {})}

@@ -82,6 +82,10 @@ import {
   setWslOnly,
   setSshRunner,
 } from "./methods/wsl.ts";
+import {
+  completeLegacyLocalStorage,
+  takeLegacyLocalStorage,
+} from "./methods/legacyLocalStorage.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
@@ -91,6 +95,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
 
+  yield* ipc.handleSync(takeLegacyLocalStorage);
+  yield* ipc.handle(completeLegacyLocalStorage);
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getWindowFullscreenState);
