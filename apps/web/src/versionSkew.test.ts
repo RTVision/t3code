@@ -49,7 +49,7 @@ describe("versionSkew", () => {
       "pnpm dlx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
     );
     expect(manualServerUpdateCommand("0.0.45", { kind: "bunx" })).toBe(
-      "bunx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@0.0.45",
     );
   });
   beforeEach(() => {

@@ -129,11 +129,10 @@ export function manualServerUpdateCommand(
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
     return `npm install --global --registry=${T3_NPM_REGISTRY} --prefix ${prefix} ${T3_NPM_PACKAGE}@${targetVersion}`;
   }
-  const runner =
-    installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return runner === "npx"
-    ? `${T3_NPX_COMMAND}@${targetVersion}`
-    : `${runner} --registry=${T3_NPM_REGISTRY} ${T3_NPM_PACKAGE}@${targetVersion}`;
+  // bunx ignores its registry flag, so use npx for the fork's registry.
+  return installation?.kind === "pnpm-dlx"
+    ? `pnpm dlx --registry=${T3_NPM_REGISTRY} ${T3_NPM_PACKAGE}@${targetVersion}`
+    : `${T3_NPX_COMMAND}@${targetVersion}`;
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {
