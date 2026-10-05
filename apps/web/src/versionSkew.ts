@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
-import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY, T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -131,7 +131,9 @@ export function manualServerUpdateCommand(
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} --registry=${T3_NPM_REGISTRY} ${T3_NPM_PACKAGE}@${targetVersion}`;
+  return runner === "npx"
+    ? `${T3_NPX_COMMAND}@${targetVersion}`
+    : `${runner} --registry=${T3_NPM_REGISTRY} ${T3_NPM_PACKAGE}@${targetVersion}`;
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {
