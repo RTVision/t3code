@@ -2346,9 +2346,8 @@ it.effect("ProviderSessionManagerV2 reopens Codex after its shared child exits c
       Layer.mergeAll(
         IdAllocator.layer,
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-clean-exit-" }),
-      ),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
-    Effect.provide(NodeServices.layer),
   ),
 );
 
