@@ -21,7 +21,7 @@ import * as HashMap from "effect/HashMap";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -199,7 +199,7 @@ function createPullRequestRefreshAtomFamily<R, E>(
   const events = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:pull-requests:refreshes",
     tag: WS_METHODS.pullRequestsSubscribeRefreshes,
-    transform: (stream) => stream.pipe(Stream.scan(emptyRefreshRevisions(), accumulateRefresh)),
+    transform: (stream) => stream.pipe(Stream.scan(emptyRefreshRevisions, accumulateRefresh)),
   });
   const scoped = Atom.family((key: string) => {
     const { environmentId, input } = JSON.parse(key) as {

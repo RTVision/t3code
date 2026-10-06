@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export type SshRunner =
   | { readonly kind: "native" }

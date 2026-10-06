@@ -9,7 +9,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { buildRemoteLaunchScript } from "@t3tools/ssh/tunnel";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
 import { sshHelperCommand } from "./sshHelper.ts";

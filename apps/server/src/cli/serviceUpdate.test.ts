@@ -6,7 +6,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ProcessRunner, type ProcessRunInput } from "../processRunner.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "../cloud/serviceProtocol.ts";
 import {

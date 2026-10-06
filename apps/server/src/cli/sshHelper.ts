@@ -9,7 +9,7 @@ import * as NodeNet from "node:net";
 
 import { resolveSshRuntimePort } from "@t3tools/shared/sshRuntime";
 import * as Effect from "effect/Effect";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 
 /**
  * Small helpers the SSH launch script needs on the remote host. The script

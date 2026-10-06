@@ -1,6 +1,5 @@
 import { Spinner } from "~/components/ui/spinner";
 import type {
-  ChatFileAttachment,
   EditorId,
   EnvironmentId,
   ResolvedKeybindingsConfig,
@@ -39,13 +38,14 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import type { ChatFileAttachment } from "~/types";
 import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -928,6 +928,7 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1030,7 +1031,7 @@ export default function FilePreviewPanel({
     previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
-    isPreviewSupportedInRuntime() &&
+    previewAvailable &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -1192,6 +1193,7 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+              htmlRender={attachment.htmlRender === true}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
