@@ -787,6 +787,40 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect(
+    "fails pending and future requests on process exit while a notification is blocked",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+        const handling = yield* Deferred.make<void>();
+        const error = new CodexError.CodexAppServerProcessExitedError({ code: 0 });
+        const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+          stdio,
+          processExit: Deferred.await(exited),
+          onNotification: () =>
+            Deferred.succeed(handling, undefined).pipe(Effect.andThen(Effect.never)),
+        });
+        const pending = yield* transport
+          .request("thread/start", {})
+          .pipe(Effect.asVoid, Effect.flip, Effect.forkScoped);
+        yield* Queue.take(output);
+        yield* Queue.offer(input, encodeJsonl({ method: "test/blocked" }));
+        yield* Deferred.await(handling);
+
+        yield* Deferred.succeed(exited, error);
+
+        assert.strictEqual(yield* transport.awaitTermination.pipe(Effect.flip), error);
+        assert.strictEqual(yield* Fiber.join(pending), error);
+        assert.strictEqual(
+          yield* transport.request("thread/start", {}).pipe(Effect.asVoid, Effect.flip),
+          error,
+        );
+        // Late observers must receive the stored failure too.
+        assert.strictEqual(yield* transport.awaitTermination.pipe(Effect.flip), error);
+      }),
+  );
+
   it.effect("classifies an input stream ending without inventing a cause", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();

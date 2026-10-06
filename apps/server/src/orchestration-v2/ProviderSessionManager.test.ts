@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  CodexSettings,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -20,6 +21,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -28,18 +30,23 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -128,7 +135,8 @@ const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
-const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
+const CodexCapabilities: OrchestrationV2ProviderCapabilities =
+  CodexAdapterV2.CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
   sessions: {
@@ -160,6 +168,7 @@ const modelSelection = {
   model: "gpt-5.4",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const codexSettings = Schema.decodeSync(CodexSettings)({});
 
 const runtimePolicy = {
   runtimeMode: "full-access",
@@ -394,6 +403,7 @@ function makeProviderAdapter(
 }
 
 function layerTest(input: {
+  readonly adapter?: ProviderAdapterV2Shape;
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
@@ -421,19 +431,20 @@ function layerTest(input: {
         ? layerFailingReleaseEventSink
         : layerTestEventSink;
   const layerRegistry = ProviderAdapterRegistry.layerSingle(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-    }),
+    input.adapter ??
+      makeProviderAdapter(input.state, {
+        failEventStream: input.failEventStream ?? false,
+        ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+        ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+        ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+        ...(input.hasPendingBackgroundWork === undefined
+          ? {}
+          : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+        ...(input.hangSessionScopeClose === undefined
+          ? {}
+          : { hangSessionScopeClose: input.hangSessionScopeClose }),
+        ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      }),
   );
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
@@ -2331,6 +2342,118 @@ it.effect("ProviderSessionManagerV2 uses the same release path for runtime failu
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
+);
+
+it.effect("ProviderSessionManagerV2 reopens Codex after its shared child exits cleanly", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handles: Array<ChildProcessSpawner.ChildProcessHandle> = [];
+    const adapter = CodexAdapterV2.makeCodexAdapterV2({
+      crypto: yield* Crypto.Crypto,
+      instanceId: modelSelection.instanceId,
+      settings: codexSettings,
+      environment: {},
+      fileSystem,
+      idAllocator,
+      serverConfig,
+      clientFactory: {
+        open: () =>
+          Effect.gen(function* () {
+            const handle = yield* spawner
+              .spawn(
+                ChildProcess.make(process.execPath, [
+                  "-e",
+                  `
+            process.on("SIGTERM", () => process.exit(0));
+            require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+              const { id } = JSON.parse(line);
+              process.stdout.write(JSON.stringify({ id, result: null }) + "\\n");
+            });
+          `,
+                ]),
+              )
+              .pipe(Effect.orDie);
+            handles.push(handle);
+            const context = yield* Layer.build(CodexClient.layerChildProcess(handle));
+            const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+              Effect.provide(context),
+            );
+            // A response proves the child has installed its clean-exit handler.
+            yield* client.raw.request("test/ready").pipe(Effect.orDie);
+            return client;
+          }),
+      },
+    });
+
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread-codex-clean-exit");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const input = { threadId, providerSessionId, modelSelection, runtimePolicy };
+      const runtime = yield* manager.open(input);
+      assert.strictEqual(yield* manager.open(input), runtime);
+      assert.lengthOf(handles, 1);
+      const subscriptions = yield* Effect.all([runtime.subscribeEvents!, runtime.subscribeEvents!]);
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      const released = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-session.updated" &&
+            stored.event.payload.status === "error",
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+
+      yield* handles[0]!.kill();
+      yield* Fiber.join(released);
+      for (const subscription of subscriptions) {
+        const error = yield* subscription.events.pipe(Stream.runDrain, Effect.flip);
+        assert.instanceOf(error, ProviderAdapterEventStreamError);
+        assert.instanceOf(error.cause, CodexErrors.CodexAppServerProcessExitedError);
+        assert.equal(error.cause.code, 0);
+        assert.equal(error.cause.pid, handles[0]!.pid);
+      }
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+        "error",
+      );
+
+      const replacement = yield* manager.open(input);
+      assert.notStrictEqual(replacement, runtime);
+      assert.lengthOf(handles, 2);
+      assert.notEqual(handles[1]!.pid, handles[0]!.pid);
+      assert.isTrue(yield* handles[1]!.isRunning);
+      assert.strictEqual(yield* manager.open(input), replacement);
+      assert.lengthOf(handles, 2);
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+        "ready",
+      );
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, adapter })));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-clean-exit-" }),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
 );
 
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>

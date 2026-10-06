@@ -39,6 +39,8 @@ interface CodexAppServerClientRaw {
 export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
   {
+    /** Fails with the stored transport error when this connection terminates. */
+    readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
     readonly raw: CodexAppServerClientRaw;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
@@ -98,6 +100,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
+  processExit?: Effect.Effect<CodexError.CodexAppServerError>,
 ): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
   const requestHandlers = new Map<string, ServerRequestHandler>();
   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
@@ -198,6 +201,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
     stdio,
     ...(terminationError ? { terminationError } : {}),
+    ...(processExit ? { processExit } : {}),
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
@@ -230,6 +234,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     );
 
   return CodexAppServerClient.of({
+    awaitTermination: transport.awaitTermination,
     raw: {
       notifications: transport.incomingNotifications,
       requests: transport.incomingRequests,
@@ -271,5 +276,6 @@ const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
   yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
+  const processExit = makeTerminationError(handle);
+  return yield* make(makeChildStdio(handle), options, processExit, processExit);
 });
