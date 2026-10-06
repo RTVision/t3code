@@ -803,7 +803,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         });
         const pending = yield* transport
           .request("thread/start", {})
-          .pipe(Effect.flip, Effect.forkScoped);
+          .pipe(Effect.asVoid, Effect.flip, Effect.forkScoped);
         yield* Queue.take(output);
         yield* Queue.offer(input, encodeJsonl({ method: "test/blocked" }));
         yield* Deferred.await(handling);
@@ -812,7 +812,10 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
         assert.strictEqual(yield* transport.awaitTermination.pipe(Effect.flip), error);
         assert.strictEqual(yield* Fiber.join(pending), error);
-        assert.strictEqual(yield* transport.request("thread/start", {}).pipe(Effect.flip), error);
+        assert.strictEqual(
+          yield* transport.request("thread/start", {}).pipe(Effect.asVoid, Effect.flip),
+          error,
+        );
         // Late observers must receive the stored failure too.
         assert.strictEqual(yield* transport.awaitTermination.pipe(Effect.flip), error);
       }),
