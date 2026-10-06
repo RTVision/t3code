@@ -10,7 +10,14 @@
  * channel via prototype pollution) would otherwise throw deep in the
  * renderer and the chip silently never appears.
  */
-import type { PickedElementPayload, PreviewAnnotationPayload } from "@t3tools/contracts";
+import type {
+  PickedElementPayload,
+  PreviewAnnotationPayload,
+  PreviewAnnotationRect,
+  PreviewAnnotationRegionTarget,
+  PreviewAnnotationStrokeTarget,
+  PreviewAnnotationStyleChange,
+} from "@t3tools/contracts";
 
 function isStringOrNull(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -67,6 +74,41 @@ function isPoint(value: unknown): boolean {
   );
 }
 
+function isArrayOf(value: unknown, isEntry: (entry: unknown) => boolean): boolean {
+  return Array.isArray(value) && value.every(isEntry);
+}
+
+function isRegionTarget(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const target = value as Record<string, unknown>;
+  return typeof target["id"] === "string" && isRect(target["rect"]);
+}
+
+function isStrokeTarget(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const target = value as Record<string, unknown>;
+  return (
+    typeof target["id"] === "string" &&
+    typeof target["color"] === "string" &&
+    typeof target["width"] === "number" &&
+    Number.isFinite(target["width"]) &&
+    isArrayOf(target["points"], isPoint) &&
+    isRect(target["bounds"])
+  );
+}
+
+function isStyleChange(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const change = value as Record<string, unknown>;
+  return (
+    typeof change["targetId"] === "string" &&
+    isStringOrNull(change["selector"]) &&
+    typeof change["property"] === "string" &&
+    typeof change["previousValue"] === "string" &&
+    typeof change["value"] === "string"
+  );
+}
+
 export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnnotationPayload {
   if (typeof value !== "object" || value === null) return false;
   const annotation = value as Record<string, unknown>;
@@ -77,10 +119,8 @@ export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnno
   if (typeof annotation["createdAt"] !== "string") return false;
   if (annotation["screenshot"] !== null) return false;
 
-  const elements = annotation["elements"];
-  if (!Array.isArray(elements)) return false;
-  if (
-    !elements.every((entry) => {
+  return (
+    isArrayOf(annotation["elements"], (entry) => {
       if (typeof entry !== "object" || entry === null) return false;
       const target = entry as Record<string, unknown>;
       return (
@@ -88,59 +128,54 @@ export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnno
         isPickedElementPayload(target["element"]) &&
         isRect(target["rect"])
       );
-    })
-  ) {
-    return false;
-  }
+    }) &&
+    isArrayOf(annotation["regions"], isRegionTarget) &&
+    isArrayOf(annotation["strokes"], isStrokeTarget) &&
+    isArrayOf(annotation["styleChanges"], isStyleChange)
+  );
+}
 
-  const regions = annotation["regions"];
-  if (!Array.isArray(regions)) return false;
-  if (
-    !regions.every((entry) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const target = entry as Record<string, unknown>;
-      return typeof target["id"] === "string" && isRect(target["rect"]);
-    })
-  ) {
-    return false;
-  }
+export type PreviewAnnotationTool = "select" | "marquee" | "draw" | "erase";
 
-  const strokes = annotation["strokes"];
-  if (!Array.isArray(strokes)) return false;
-  if (
-    !strokes.every((entry) => {
+/**
+ * An in-progress markup that outlives a reload of the inspected page. The
+ * preload keeps main's copy current, and main hands it back to the fresh
+ * document so a dev-server refresh does not throw the user's comment away.
+ * Selected elements travel as a CSS path plus their last rect, because the
+ * DOM nodes themselves do not survive the reload.
+ */
+export interface PreviewAnnotationDraft {
+  readonly comment: string;
+  readonly tool: PreviewAnnotationTool;
+  readonly elements: ReadonlyArray<{
+    readonly id: string;
+    readonly selector: string;
+    readonly rect: PreviewAnnotationRect;
+  }>;
+  readonly regions: ReadonlyArray<PreviewAnnotationRegionTarget>;
+  readonly strokes: ReadonlyArray<PreviewAnnotationStrokeTarget>;
+  readonly styleChanges: ReadonlyArray<PreviewAnnotationStyleChange>;
+}
+
+const ANNOTATION_TOOLS: ReadonlySet<unknown> = new Set(["select", "marquee", "draw", "erase"]);
+
+export function isPreviewAnnotationDraft(value: unknown): value is PreviewAnnotationDraft {
+  if (typeof value !== "object" || value === null) return false;
+  const draft = value as Record<string, unknown>;
+  return (
+    typeof draft["comment"] === "string" &&
+    ANNOTATION_TOOLS.has(draft["tool"]) &&
+    isArrayOf(draft["elements"], (entry) => {
       if (typeof entry !== "object" || entry === null) return false;
       const target = entry as Record<string, unknown>;
       return (
         typeof target["id"] === "string" &&
-        typeof target["color"] === "string" &&
-        typeof target["width"] === "number" &&
-        Number.isFinite(target["width"]) &&
-        Array.isArray(target["points"]) &&
-        target["points"].every(isPoint) &&
-        isRect(target["bounds"])
+        typeof target["selector"] === "string" &&
+        isRect(target["rect"])
       );
-    })
-  ) {
-    return false;
-  }
-
-  const styleChanges = annotation["styleChanges"];
-  if (!Array.isArray(styleChanges)) return false;
-  if (
-    !styleChanges.every((entry) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const change = entry as Record<string, unknown>;
-      return (
-        typeof change["targetId"] === "string" &&
-        isStringOrNull(change["selector"]) &&
-        typeof change["property"] === "string" &&
-        typeof change["previousValue"] === "string" &&
-        typeof change["value"] === "string"
-      );
-    })
-  ) {
-    return false;
-  }
-  return true;
+    }) &&
+    isArrayOf(draft["regions"], isRegionTarget) &&
+    isArrayOf(draft["strokes"], isStrokeTarget) &&
+    isArrayOf(draft["styleChanges"], isStyleChange)
+  );
 }

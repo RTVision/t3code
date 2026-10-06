@@ -16,10 +16,16 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import {
+  isPreviewAnnotationDraft,
+  type PreviewAnnotationDraft,
+  type PreviewAnnotationTool,
+} from "./PickedElementPayload.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_DRAFT_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -41,6 +47,9 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+/** How long a restored draft keeps looking for elements the reloaded page renders late. */
+const DRAFT_RESTORE_TIMEOUT_MS = 5_000;
+const DRAFT_RESTORE_INTERVAL_MS = 200;
 
 let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
 ipcRenderer.on(
@@ -116,8 +125,6 @@ ipcRenderer.on(RECORDING_POINTER_CHANNEL, (_event, point: unknown) => {
     );
 });
 
-type AnnotationTool = "select" | "marquee" | "draw" | "erase";
-
 interface SelectedElement {
   id: string;
   element: Element;
@@ -129,6 +136,7 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  syncDraft: () => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -225,6 +233,14 @@ const nextId = (prefix: string): string => {
   return `${prefix}_${idSequence.toString(36)}`;
 };
 
+/** Keeps fresh ids from colliding with ids a restored draft brought along. */
+const reserveIds = (ids: ReadonlyArray<string>): void => {
+  for (const id of ids) {
+    const sequence = Number.parseInt(id.slice(id.lastIndexOf("_") + 1), 36);
+    if (Number.isFinite(sequence)) idSequence = Math.max(idSequence, sequence);
+  }
+};
+
 const rectFromDomRect = (rect: DOMRect): PreviewAnnotationRect => ({
   x: rect.left,
   y: rect.top,
@@ -279,6 +295,36 @@ function pickFromPoint(clientX: number, clientY: number): Element | null {
     return candidate;
   }
   return null;
+}
+
+/** A CSS path that finds `element` again in a reloaded copy of the page. */
+function cssPathFor(element: Element): string {
+  const parts: string[] = [];
+  let current: Element | null = element;
+  while (current && current !== document.documentElement) {
+    if (current.id) {
+      const idSelector = `#${CSS.escape(current.id)}`;
+      if (document.querySelectorAll(idSelector).length === 1) {
+        parts.unshift(idSelector);
+        return parts.join(" > ");
+      }
+    }
+    const node: Element = current;
+    const siblings = node.parentElement ? Array.from(node.parentElement.children) : [node];
+    const index = siblings.filter((sibling) => sibling.localName === node.localName).indexOf(node);
+    parts.unshift(`${CSS.escape(node.localName)}:nth-of-type(${index + 1})`);
+    current = node.parentElement;
+  }
+  return [":root", ...parts].join(" > ");
+}
+
+function findBySelector(selector: string): Element | null {
+  try {
+    const element = document.querySelector(selector);
+    return element && !isAnnotationNode(element) ? element : null;
+  } catch {
+    return null;
+  }
 }
 
 function describeRawElement(element: Element): string {
@@ -512,7 +558,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(): void {
+function startAnnotation(draft: PreviewAnnotationDraft | null): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -603,8 +649,8 @@ function startAnnotation(): void {
   const regions: PreviewAnnotationRegionTarget[] = [];
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
-  const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
-  let tool: AnnotationTool = "select";
+  const toolButtons = new Map<PreviewAnnotationTool, HTMLButtonElement>();
+  let tool: PreviewAnnotationTool = "select";
   let dragStart: PreviewAnnotationPoint | null = null;
   let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
   let pendingCapture = false;
@@ -613,6 +659,40 @@ function startAnnotation(): void {
   let editorPosition: { left: number; top: number } | null = null;
   let editorDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null;
   let editorLayoutFrame: number | null = null;
+  let restoreTimer: number | null = null;
+  // Restored elements the reloaded page has not rendered yet. Each one holds
+  // its old spot as a placeholder region until it turns up.
+  const unresolved: Array<
+    PreviewAnnotationDraft["elements"][number] & {
+      placeholderId: string;
+      styleChanges: ReadonlyArray<PreviewAnnotationStyleChange>;
+    }
+  > = [];
+
+  // Main keeps the latest copy so a reload of the page can hand it back.
+  const syncDraft = (): void => {
+    if (pendingCapture) return;
+    const placeholderIds = new Set(unresolved.map((element) => element.placeholderId));
+    const snapshot: PreviewAnnotationDraft = {
+      comment: comment.value,
+      tool,
+      elements: [
+        ...Array.from(selected.values(), (target) => ({
+          id: target.id,
+          selector: cssPathFor(target.element),
+          rect: rectFromDomRect(target.element.getBoundingClientRect()),
+        })),
+        ...unresolved.map(({ id, selector, rect }) => ({ id, selector, rect })),
+      ],
+      regions: regions.filter((region) => !placeholderIds.has(region.id)),
+      strokes,
+      styleChanges: [
+        ...styleChanges.values(),
+        ...unresolved.flatMap((element) => element.styleChanges),
+      ],
+    };
+    ipcRenderer.send(ANNOTATION_DRAFT_CHANNEL, snapshot);
+  };
 
   const resizeComment = (): void => {
     const maxHeight = 96;
@@ -622,7 +702,10 @@ function startAnnotation(): void {
     comment.style.overflowY = comment.scrollHeight > maxHeight ? "auto" : "hidden";
     queueEditorLayout();
   };
-  comment.addEventListener("input", resizeComment);
+  comment.addEventListener("input", () => {
+    resizeComment();
+    syncDraft();
+  });
 
   const updateStatus = (): void => {
     const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
@@ -636,6 +719,7 @@ function startAnnotation(): void {
       editorWasShown = true;
       window.setTimeout(() => comment.focus({ preventScroll: true }), 0);
     }
+    syncDraft();
   };
 
   const refreshToolButtons = (): void => {
@@ -648,6 +732,7 @@ function startAnnotation(): void {
     if (tool !== "select") hoverOutline.style.display = "none";
     if (tool !== "marquee") marqueeBox.style.display = "none";
     document.documentElement.setAttribute("data-t3code-annotation-tool", tool);
+    syncDraft();
   };
 
   const removeSelected = (target: SelectedElement): void => {
@@ -666,10 +751,10 @@ function startAnnotation(): void {
     updateStatus();
   };
 
-  const addSelected = (element: Element): void => {
-    if (selected.has(element)) return;
+  const addSelected = (element: Element, id = nextId("element")): SelectedElement | null => {
+    if (selected.has(element)) return null;
     const target: SelectedElement = {
-      id: nextId("element"),
+      id,
       element,
       outline: createBox(PRIMARY, PRIMARY_FILL),
       label: createLabel(),
@@ -683,6 +768,7 @@ function startAnnotation(): void {
       stylePanel.style.display = "grid";
       syncStyleControls();
     }
+    return target;
   };
 
   const toggleSelected = (element: Element, additive: boolean): void => {
@@ -697,27 +783,38 @@ function startAnnotation(): void {
     addSelected(element);
   };
 
+  const applyStyleChange = (
+    target: SelectedElement,
+    change: PreviewAnnotationStyleChange,
+  ): void => {
+    if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement)) return;
+    if (!target.baselineStyles.has(change.property)) {
+      target.baselineStyles.set(
+        change.property,
+        target.element.style.getPropertyValue(change.property),
+      );
+    }
+    target.element.style.setProperty(change.property, change.value, "important");
+    styleChanges.set(`${target.id}:${change.property}`, change);
+    updateSelectedVisual(target);
+  };
+
   const setStyleForSelected = (property: string, value: string): void => {
     for (const target of selected.values()) {
       if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
         continue;
-      if (!target.baselineStyles.has(property)) {
-        target.baselineStyles.set(property, target.element.style.getPropertyValue(property));
-      }
-      const key = `${target.id}:${property}`;
       const previousValue =
-        styleChanges.get(key)?.previousValue ??
+        styleChanges.get(`${target.id}:${property}`)?.previousValue ??
         getComputedStyle(target.element).getPropertyValue(property).trim();
-      target.element.style.setProperty(property, value, "important");
-      styleChanges.set(key, {
+      applyStyleChange(target, {
         targetId: target.id,
         selector: null,
         property,
         previousValue,
         value,
       });
-      updateSelectedVisual(target);
     }
+    syncDraft();
   };
 
   const textSection = createStyleSection();
@@ -943,7 +1040,7 @@ function startAnnotation(): void {
     gap.value = computed.gap === "normal" ? "0px" : computed.gap;
   };
 
-  const tools: ReadonlyArray<[AnnotationTool, string, string]> = [
+  const tools: ReadonlyArray<[PreviewAnnotationTool, string, string]> = [
     ["select", "Select", "Select elements (V)"],
     ["marquee", "Region", "Draw a region or marquee-select elements (R)"],
     ["draw", "Draw", "Draw freehand (D)"],
@@ -1117,8 +1214,7 @@ function startAnnotation(): void {
         y <= region.rect.y + region.rect.height,
     );
     if (regionIndex >= 0) {
-      const [removed] = regions.splice(regionIndex, 1);
-      root.querySelector(`[data-region-id="${removed?.id}"]`)?.remove();
+      removeRegion(regions[regionIndex]!.id);
       updateStatus();
       return true;
     }
@@ -1171,6 +1267,36 @@ function startAnnotation(): void {
       .slice(0, MAX_MARQUEE_ELEMENTS);
     for (const candidate of candidates) addSelected(candidate.element);
     return candidates.length;
+  };
+
+  const addRegion = (region: PreviewAnnotationRegionTarget): void => {
+    regions.push(region);
+    const regionBox = createBox(PRIMARY, "color-mix(in srgb, var(--t3-primary) 6%, transparent)");
+    regionBox.setAttribute("data-region-id", region.id);
+    positionBox(regionBox, region.rect);
+    root.appendChild(regionBox);
+  };
+
+  const removeRegion = (regionId: string): void => {
+    const index = regions.findIndex((region) => region.id === regionId);
+    if (index >= 0) regions.splice(index, 1);
+    root.querySelector(`[data-region-id="${regionId}"]`)?.remove();
+    const unresolvedIndex = unresolved.findIndex((element) => element.placeholderId === regionId);
+    if (unresolvedIndex >= 0) unresolved.splice(unresolvedIndex, 1);
+  };
+
+  const createStrokePath = (stroke: PreviewAnnotationStrokeTarget): SVGPathElement => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute(OVERLAY_ATTRIBUTE, "");
+    path.setAttribute("data-stroke-id", stroke.id);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", stroke.color);
+    path.setAttribute("stroke-width", String(stroke.width));
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("d", pathFromPoints(stroke.points));
+    svg.appendChild(path);
+    return path;
   };
 
   const clearHoverOutline = (): void => {
@@ -1231,16 +1357,7 @@ function startAnnotation(): void {
         points: [dragStart],
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },
       };
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute(OVERLAY_ATTRIBUTE, "");
-      path.setAttribute("data-stroke-id", stroke.id);
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", stroke.color);
-      path.setAttribute("stroke-width", String(stroke.width));
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.appendChild(path);
-      activeStroke = { target: stroke, path };
+      activeStroke = { target: stroke, path: createStrokePath(stroke) };
     }
   };
 
@@ -1253,17 +1370,7 @@ function startAnnotation(): void {
       marqueeBox.style.display = "none";
       if (isUsableRect(rect)) {
         const found = selectElementsInRect(rect);
-        if (found === 0) {
-          const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
-          regions.push(region);
-          const regionBox = createBox(
-            PRIMARY,
-            "color-mix(in srgb, var(--t3-primary) 6%, transparent)",
-          );
-          regionBox.setAttribute("data-region-id", region.id);
-          positionBox(regionBox, rect);
-          root.appendChild(regionBox);
-        }
+        if (found === 0) addRegion({ id: nextId("region"), rect });
       }
     } else if (tool === "draw" && activeStroke) {
       if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
@@ -1317,6 +1424,7 @@ function startAnnotation(): void {
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
+    if (restoreTimer !== null) window.clearTimeout(restoreTimer);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
@@ -1347,6 +1455,7 @@ function startAnnotation(): void {
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
+    syncDraft();
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
@@ -1428,18 +1537,79 @@ function startAnnotation(): void {
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   document.documentElement.appendChild(host);
+  if (draft) restoreDraft(draft);
   refreshToolButtons();
   updateStatus();
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    syncDraft,
   };
+
+  /**
+   * Rebuilds the markup a reload interrupted. Apps often render after
+   * DOMContentLoaded, so an element that is not there yet holds its old spot
+   * as a region and is swapped back in if it shows up before the timeout.
+   */
+  function restoreDraft(restored: PreviewAnnotationDraft): void {
+    reserveIds([
+      ...restored.elements.map((element) => element.id),
+      ...restored.regions.map((region) => region.id),
+      ...restored.strokes.map((stroke) => stroke.id),
+    ]);
+    comment.value = restored.comment;
+    resizeComment();
+    tool = restored.tool;
+    for (const region of restored.regions) addRegion(region);
+    for (const stroke of restored.strokes) {
+      strokes.push(stroke);
+      createStrokePath(stroke);
+    }
+    for (const element of restored.elements) {
+      const placeholderId = nextId("region");
+      unresolved.push({
+        ...element,
+        placeholderId,
+        styleChanges: restored.styleChanges.filter((change) => change.targetId === element.id),
+      });
+      addRegion({ id: placeholderId, rect: element.rect });
+    }
+    const deadline = Date.now() + DRAFT_RESTORE_TIMEOUT_MS;
+    const resolveElements = (): void => {
+      restoreTimer = null;
+      if (finished || pendingCapture) return;
+      // removeRegion drops each match from `unresolved`, so collect first.
+      const matches = unresolved.flatMap((element) => {
+        const found = findBySelector(element.selector);
+        return found ? [{ element, found }] : [];
+      });
+      for (const { element, found } of matches) {
+        removeRegion(element.placeholderId);
+        // The user may have selected it again by hand while it was missing.
+        const target = selected.get(found) ?? addSelected(found, element.id);
+        if (!target) continue;
+        for (const change of element.styleChanges) {
+          applyStyleChange(target, { ...change, targetId: target.id });
+        }
+      }
+      updateStatus();
+      if (unresolved.length > 0 && Date.now() < deadline) {
+        restoreTimer = window.setTimeout(resolveElements, DRAFT_RESTORE_INTERVAL_MS);
+      }
+    };
+    resolveElements();
+  }
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
-  if (theme) annotationTheme = theme;
-  startAnnotation();
-});
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined, draft: unknown) => {
+    if (theme) annotationTheme = theme;
+    startAnnotation(isPreviewAnnotationDraft(draft) ? draft : null);
+  },
+);
+// Element rects drift as the page scrolls, so hand main a fresh copy on the way out.
+window.addEventListener("pagehide", () => activeSession?.syncDraft());
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
   recordingCursor?.setTheme(theme);
