@@ -75,6 +75,7 @@ it.effect("parks automatic pull until activation without delaying command readin
             Effect.provide(Path.layer),
           )),
           baseDir: cwd,
+          dbPath: ":memory:",
           logLevel: "Error",
           traceMinLevel: "Info",
           traceTimingEnabled: false,
@@ -177,8 +178,11 @@ it.effect("parks automatic pull until activation without delaying command readin
         yield* startup.markHttpListening;
 
         // A reverted, awaited pull reaches statusDetails instead of prepareTrial.
-        // Race the two receipts so that regression fails without a timeout.
-        yield* Effect.raceFirst(Deferred.await(prepared), Deferred.await(statusCalled));
+        // Race receipts and readiness so regressions and startup failures surface.
+        yield* Effect.raceFirst(
+          Effect.raceFirst(Deferred.await(prepared), Deferred.await(statusCalled)),
+          startup.awaitCommandReady,
+        );
         expect(yield* Deferred.isDone(activation)).toBe(false);
         expect(yield* Deferred.isDone(statusCalled)).toBe(false);
         expect(yield* Deferred.isDone(prepared)).toBe(true);
