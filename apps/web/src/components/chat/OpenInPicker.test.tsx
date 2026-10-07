@@ -34,7 +34,17 @@ vi.mock("../../state/session", async () => {
       ),
   };
 });
-vi.mock("../../state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
+vi.mock("../../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    shellEnvironment: {
+      openInEditor: {
+        permissionAtom: (environmentId: EnvironmentId) =>
+          Atom.make(state.allowed.has(environmentId)),
+      },
+    },
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
 vi.mock("../../state/environments", () => ({ useEnvironment: () => ({ label: "Test host" }) }));
 vi.mock("../../terminalEditors", () => ({
