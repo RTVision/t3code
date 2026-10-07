@@ -3,7 +3,7 @@ import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import { runServicePreflight } from "../cloud/servicePreflight.ts";
 import * as NodePtyAdapter from "../terminal/NodePtyAdapter.ts";
@@ -42,7 +42,7 @@ export const checkPtySpawns = Effect.gen(function* () {
 }).pipe(
   // A host that cannot open PTYs at all fails the same way on every version;
   // blocking on it would only stop that host from ever updating.
-  Effect.catchTag("PtySpawnError", () => Effect.void),
+  Effect.catchTags({ PtySpawnError: () => Effect.void }),
   Effect.provide(NodePtyAdapter.layer),
 );
 

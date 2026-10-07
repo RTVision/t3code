@@ -2,7 +2,7 @@ import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import { HostProcessAddresses, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import { collectProcessOutput } from "@t3tools/ssh/command";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { SshRunner } from "@t3tools/ssh/runner";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

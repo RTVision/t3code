@@ -10,7 +10,7 @@ import * as OpenCode2Server from "../provider/opencode2/OpenCode2Server.ts";
 import * as OpenCode2TextGeneration from "./OpenCode2TextGeneration.ts";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
 
-const layer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-opencode2-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 

@@ -14,7 +14,7 @@ import {
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";

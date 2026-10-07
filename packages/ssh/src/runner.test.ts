@@ -6,7 +6,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { buildSshChildEnvironment } from "./auth.ts";
 import { collectProcessOutput, remoteStateKey, targetConnectionKey } from "./command.ts";
@@ -145,10 +145,12 @@ describe("WSL SSH runner", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it("separates runner connections without changing the remote server identity", () => {
-    const target = { alias: "host", hostname: "host", username: null, port: null };
-    const wsl = { ...target, runner: { kind: "wsl", distro: "Debian" } as const };
-    assert.notEqual(targetConnectionKey(target), targetConnectionKey(wsl));
-    assert.equal(remoteStateKey(target), remoteStateKey(wsl));
-  });
+  it.effect("separates runner connections without changing the remote server identity", () =>
+    Effect.gen(function* () {
+      const target = { alias: "host", hostname: "host", username: null, port: null };
+      const wsl = { ...target, runner: { kind: "wsl", distro: "Debian" } as const };
+      assert.notEqual(targetConnectionKey(target), targetConnectionKey(wsl));
+      assert.equal(yield* remoteStateKey(target), yield* remoteStateKey(wsl));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

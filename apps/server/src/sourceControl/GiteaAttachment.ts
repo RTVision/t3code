@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as GiteaCli from "./GiteaCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import { ServerConfig } from "../config.ts";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 
 export class GiteaAttachmentError extends Schema.TaggedError<GiteaAttachmentError>()(
   "GiteaAttachmentError",

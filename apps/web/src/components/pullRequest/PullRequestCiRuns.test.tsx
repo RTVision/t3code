@@ -2,7 +2,7 @@ import { act, createElement, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 const submission = Atom.make<"idle" | "pending" | "requested">("idle");
 let registry: AtomRegistry.AtomRegistry;

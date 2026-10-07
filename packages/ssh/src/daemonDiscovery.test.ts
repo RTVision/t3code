@@ -60,7 +60,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32").each(["node", "a
         import * as NodeServices from ${JSON.stringify(import.meta.resolve("@effect/platform-node/NodeServices"))};
         import * as NodeRuntime from ${JSON.stringify(import.meta.resolve("@effect/platform-node/NodeRuntime"))};
         import * as Effect from ${JSON.stringify(import.meta.resolve("effect/Effect"))};
-        import { Command } from ${JSON.stringify(import.meta.resolve("effect/unstable/cli"))};
+        import { Command } from ${JSON.stringify(import.meta.resolve("effect/cli"))};
         import { sshHelperCommand } from ${JSON.stringify(new URL("../../../apps/server/src/cli/sshHelper.ts", import.meta.url).href)};
         const cli = Command.make("t3").pipe(Command.withSubcommands([sshHelperCommand]));
         Command.run(cli, { version: ${JSON.stringify(version)} }).pipe(Effect.provide(NodeServices.layer), NodeRuntime.runMain);
