@@ -89,13 +89,24 @@ vi.mock("../state/entities", () => ({
 vi.mock("../rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ openFile: state.openFile }) },
 }));
+vi.mock("../terminalEditors", () => ({
+  useTerminalEditor: () => ({
+    capability: { preferenceKey: "", state: "unavailable" },
+    connected: false,
+    refresh: vi.fn(),
+  }),
+  invalidateTerminalEditors: vi.fn(),
+}));
+vi.mock("../editorPreferenceStorage", () => ({
+  useEditorPreference: (key: string, fallback: unknown) => [
+    key === "t3code:editor-choice:v1" ? { kind: "gui", editor: "vscode" } : fallback,
+    vi.fn(),
+  ],
+}));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
-}));
-vi.mock("../hooks/useLocalStorage", () => ({
-  useLocalStorage: () => ["vscode", vi.fn()],
-  getLocalStorageItem: () => "vscode",
-  setLocalStorageItem: vi.fn(),
+  useRemoteCapableEditors: () => [],
+  openRemoteEditorUrl: vi.fn(),
 }));
 vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,

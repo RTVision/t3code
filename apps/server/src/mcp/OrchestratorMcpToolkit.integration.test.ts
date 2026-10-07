@@ -4038,6 +4038,7 @@ describe("orchestrator MCP toolkit", () => {
           const finalStatusCall = yield* invoke("task_status", {
             taskId: delegated.taskId,
           });
+          expect(finalStatusCall.isError).toBe(false);
           const finalStatus = yield* decodeDelegateTaskResult(
             finalStatusCall.structuredContent,
           ).pipe(Effect.orDie);
@@ -4052,6 +4053,39 @@ describe("orchestrator MCP toolkit", () => {
             latestTerminalSummary: queuedFollowupResult,
             latestTerminalResultContextTransferId: null,
           });
+
+          // The caller stays live through the status checks. Only this explicit
+          // interrupt lets the replay close its shared app-server connection.
+          const parentStopSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
+          const parentInterruptCall = yield* invoke("t3_thread_interrupt", {
+            threadId: parentThreadId,
+            clientRequestId: "interrupt-replay-parent-after-status",
+          });
+          expect(parentInterruptCall.isError).toBe(false);
+          const parentInterrupt = yield* decodeThreadInterruptResult(
+            parentInterruptCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(parentInterrupt.status).toBe("interrupt_requested");
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: parentThreadId,
+              afterSequence: parentStopSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === parentInterrupt.runId &&
+                  stored.event.payload.status === "interrupted",
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Replay parent did not finish its interrupt."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
         }).pipe(Effect.provide(layerTest));
       }),
     ),

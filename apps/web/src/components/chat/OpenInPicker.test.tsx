@@ -37,18 +37,28 @@ vi.mock("../../state/session", async () => {
 vi.mock("../../state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
 vi.mock("../../state/environments", () => ({ useEnvironment: () => ({ label: "Test host" }) }));
-vi.mock("../../editorPreferences", () => ({
-  usePreferredEditor: (available: readonly EditorId[]) => [
-    available[0] ?? null,
+vi.mock("../../terminalEditors", () => ({
+  useTerminalEditor: () => ({
+    capability: { preferenceKey: "", state: "unavailable" },
+    connected: false,
+    refresh: vi.fn(),
+  }),
+  invalidateTerminalEditors: vi.fn(),
+}));
+vi.mock("../../editorPreferenceStorage", () => ({
+  useEditorPreference: (key: string, fallback: unknown) => [
+    key === "t3code:editor-choice:v1" ? { kind: "gui", editor: "vscode" } : fallback,
     state.setPreferred,
   ],
 }));
 vi.mock("../../remoteOpen", () => ({
-  useRemoteOpenState: () => state.remote,
+  useRemoteOpenResolution: () => ({ state: state.remote, isResolved: true }),
   useRemoteCapableEditors: () => editors,
   useRemoteOpenHint: () => [false, state.markHintSeen],
   openRemoteEditorUrl: state.openUrl,
 }));
+vi.mock("@tanstack/react-router", () => ({ Link: "a" }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../keybindings", () => ({
   isOpenFavoriteEditorShortcut: () => true,
   shortcutLabelForCommand: () => "Ctrl+O",
@@ -208,7 +218,27 @@ describe("client editor links", () => {
     );
     expect(state.run).not.toHaveBeenCalled();
     expect(state.markHintSeen).toHaveBeenCalledOnce();
-    expect(state.setPreferred).toHaveBeenCalledExactlyOnceWith("vscode");
+    expect(state.setPreferred).not.toHaveBeenCalled();
+  });
+
+  it("remembers an explicit SSH editor choice only after the client accepts the URL", async () => {
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
+    await renderPicker();
+    const option = renderer!.root
+      .findAllByType("button")
+      .find((node) =>
+        node.findAllByType("span").some((label) => label.props.children === "VS Code"),
+      );
+    expect(option).toBeDefined();
+    state.openUrl.mockResolvedValueOnce(false);
+    await act(async () => option!.props.onClick());
+    expect(state.setPreferred).not.toHaveBeenCalled();
+    expect(state.markHintSeen).not.toHaveBeenCalled();
+
+    await act(async () => option!.props.onClick());
+    expect(state.setPreferred).toHaveBeenCalledExactlyOnceWith({ kind: "gui", editor: "vscode" });
+    expect(state.markHintSeen).toHaveBeenCalledOnce();
+    expect(state.run).not.toHaveBeenCalled();
   });
 
   it("does not change preferences when the client rejects the SSH URL", async () => {

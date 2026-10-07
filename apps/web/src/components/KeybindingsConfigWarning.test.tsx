@@ -30,10 +30,24 @@ vi.mock("../rpc/atomRegistry", () => ({
 }));
 vi.mock("../state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
-vi.mock("../hooks/useLocalStorage", () => ({
-  getLocalStorageItem: () => "vscode",
-  setLocalStorageItem: vi.fn(),
-  useLocalStorage: vi.fn(),
+vi.mock("../terminalEditors", () => ({
+  useTerminalEditor: () => ({
+    capability: { preferenceKey: "", state: "unavailable" },
+    connected: false,
+    refresh: vi.fn(),
+  }),
+  invalidateTerminalEditors: vi.fn(),
+}));
+vi.mock("../editorPreferenceStorage", () => ({
+  useEditorPreference: (key: string, fallback: unknown) => [
+    key === "t3code:editor-choice:v1" ? { kind: "gui", editor: "vscode" } : fallback,
+    vi.fn(),
+  ],
+}));
+vi.mock("../remoteOpen", () => ({
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+  useRemoteCapableEditors: () => [],
+  openRemoteEditorUrl: vi.fn(),
 }));
 vi.mock("./ui/button", () => ({ Button: "button" }));
 vi.mock("./ui/toast", () => ({

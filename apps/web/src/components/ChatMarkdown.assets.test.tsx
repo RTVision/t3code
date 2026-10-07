@@ -47,8 +47,7 @@ vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
 }));
 vi.mock("../editorPreferences", () => ({
-  useOpenInPreferredEditor: () => vi.fn(),
-  usePreferredEditor: () => [null, vi.fn()],
+  useEditorDispatch: () => ({ choice: null, open: vi.fn() }),
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectForChangeRequest: () => undefined,

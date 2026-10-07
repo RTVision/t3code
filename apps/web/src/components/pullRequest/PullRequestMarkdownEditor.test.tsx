@@ -107,6 +107,11 @@ it("keeps an edited draft through revocation and saves it after access returns w
   await act(() => {
     renderer!.root.findByType("textarea").props.onChange({
       target: { value: "Keep these unsaved edits" },
+      currentTarget: {
+        value: "Keep these unsaved edits",
+        selectionStart: "Keep these unsaved edits".length,
+        selectionEnd: "Keep these unsaved edits".length,
+      },
     });
   });
 

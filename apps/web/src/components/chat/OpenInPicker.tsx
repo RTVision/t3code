@@ -294,12 +294,28 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
+      if (
+        preferredEditor.kind === "terminal"
+          ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+          : remote.mode === "local-exec" &&
+            !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+      )
+        return;
       e.preventDefault();
       void openInEditor(preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [canOpenEditor, enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
+  }, [
+    canOpenEditor,
+    enableShortcut,
+    environmentId,
+    keybindings,
+    openInCwd,
+    openInEditor,
+    preferredEditor,
+    remote.mode,
+  ]);
   const toolbarLabel = isPanel
     ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
     : "Open";
