@@ -1,5 +1,7 @@
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   EditorId,
   type EditorChoice,
   type EnvironmentId,
@@ -66,6 +68,8 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { useComposerMenuState } from "./useComposerMenuState";
 
 type OpenInOption = {
   label: string;
@@ -229,6 +233,12 @@ export const OpenInPicker = memo(function OpenInPicker({
     workspacePath ?? (compact ? undefined : openInCwd),
   );
   const remote = dispatch.remote.state;
+  const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canOpenGui =
+    remote.mode !== "remote-unavailable" && (remote.mode !== "local-exec" || canOperateHost);
+  const isEditorMenuDenied = !canOpenGui && !canOperateTerminal;
+  const [menuOpen, setMenuOpen] = useComposerMenuState(isEditorMenuDenied);
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   const preferredEditor = dispatch.choice;
@@ -242,10 +252,17 @@ export const OpenInPicker = memo(function OpenInPicker({
     [dispatch.effectiveEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
+  const canOpenEditor = preferredEditor?.kind === "terminal" ? canOperateTerminal : canOpenGui;
   const density = presentation === "menu" ? "touch" : "default";
   const openInEditor = useCallback(
     async (editor: EditorChoice | null, explicit = false) => {
       if (!openInCwd || !editor) return;
+      if (
+        editor.kind === "terminal"
+          ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+          : !canOpenGui
+      )
+        return;
       const result = await dispatch.open(
         { kind: compact ? "file" : "directory", path: openInCwd },
         editor,
@@ -263,7 +280,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         if (remote.mode === "remote-links") markRemoteHintSeen();
       }
     },
-    [compact, dispatch, markRemoteHintSeen, openInCwd, remote.mode],
+    [canOpenGui, compact, dispatch, environmentId, markRemoteHintSeen, openInCwd, remote.mode],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -272,18 +289,17 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   useEffect(() => {
-    if (!enableShortcut) return;
+    if (!enableShortcut || !canOpenEditor) return;
     const handler = (e: globalThis.KeyboardEvent) => {
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
-
       e.preventDefault();
       void openInEditor(preferredEditor);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
+  }, [canOpenEditor, enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
   const toolbarLabel = isPanel
     ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
     : "Open";
@@ -293,6 +309,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       {terminalVisible && (
         <MenuItem
           density={density}
+          disabled={!openInCwd || !canOperateTerminal}
           onClick={() => openInEditor({ kind: "terminal", editor: "neovim" }, true)}
         >
           <NeovimIcon aria-hidden="true" />
@@ -308,7 +325,11 @@ export const OpenInPicker = memo(function OpenInPicker({
         </MenuItem>
       )}
       {terminalVisible && (
-        <MenuItem density={density} onClick={() => void dispatch.terminal.rescan()}>
+        <MenuItem
+          density={density}
+          disabled={!canOperateTerminal}
+          onClick={() => void dispatch.terminal.rescan()}
+        >
           Rescan Neovim
         </MenuItem>
       )}
@@ -326,6 +347,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           {options.map(({ label, Icon, value, kind }) => (
             <MenuItem
               density={density}
+              disabled={!openInCwd || !canOpenGui}
               key={value}
               onClick={() => openInEditor({ kind: "gui", editor: value }, true)}
             >
@@ -351,6 +373,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   const primaryDisabled =
     !preferredEditor ||
     !openInCwd ||
+    !canOpenEditor ||
     (preferredEditor.kind === "gui" && remote.mode === "remote-unavailable");
   const primaryLabel =
     preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : primaryOption?.label;
@@ -379,7 +402,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           </MenuItem>
         )}
         <MenuSub>
-          <MenuSubTrigger density="touch">
+          <MenuSubTrigger density="touch" disabled={isEditorMenuDenied}>
             <SquareArrowOutUpRightIcon className="size-4" />
             <MenuItemLabel>Open in…</MenuItemLabel>
           </MenuSubTrigger>
@@ -443,11 +466,14 @@ export const OpenInPicker = memo(function OpenInPicker({
         <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       )}
       <Menu
+        open={menuOpen}
         onOpenChange={(open) => {
+          setMenuOpen(open);
           if (open) void dispatch.terminal.refresh();
         }}
       >
         <MenuTrigger
+          disabled={isEditorMenuDenied}
           render={
             <ThreadDetailsControl
               aria-label="Choose editor"

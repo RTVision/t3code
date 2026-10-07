@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -15,6 +16,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GiteaCli from "./GiteaCli.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
@@ -43,6 +45,7 @@ function makeRegistry(input: {
   }>;
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
+  readonly githubApi?: Partial<GitHubApi.GitHubApi["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
@@ -106,7 +109,9 @@ function makeRegistry(input: {
             detail: Option.none(),
           }),
         }),
+        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
+        Layer.mock(GitHubApi.GitHubApi)(input.githubApi ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         ServerConfig.layerTest(process.cwd(), {
@@ -340,9 +345,15 @@ it.effect(
     Effect.gen(function* () {
       const registry = yield* makeRegistry({
         remotes: [{ name: "origin", url: "https://github.com/unrelated/checkout.git" }],
-        github: {
-          execute: () =>
-            Effect.succeed(processOutput(JSON.stringify({ title: "GitHub issue", body: null }))),
+        githubApi: {
+          rest: () =>
+            Effect.succeed({
+              status: 200,
+              headers: {},
+              body: JSON.stringify({ title: "GitHub issue", body: null }),
+              truncated: false,
+              invalidUtf8: false,
+            }),
         },
         gitlab: {
           execute: () =>

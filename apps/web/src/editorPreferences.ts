@@ -1,4 +1,7 @@
 import {
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  EnvironmentAuthorizationError,
   EditorChoice,
   EditorId,
   EnvironmentId,
@@ -18,6 +21,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";
+import { readEnvironmentScope } from "./state/session";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import {
@@ -124,6 +128,22 @@ export function useEditorDispatch(
             }),
           ),
         );
+      const requiredScope =
+        selected.kind === "terminal"
+          ? AuthTerminalOperateScope
+          : remote.state.mode === "local-exec"
+            ? AuthOrchestrationOperateScope
+            : null;
+      if (requiredScope && !readEnvironmentScope(environmentId, requiredScope)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope,
+              message: "This connection cannot open this editor on the environment.",
+            }),
+          ),
+        );
+      }
       try {
         if (selected.kind === "terminal") {
           const bridge = window.desktopBridge?.openTerminalEditor;

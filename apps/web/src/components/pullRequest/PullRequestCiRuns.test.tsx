@@ -5,6 +5,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 const submission = Atom.make<"idle" | "pending" | "requested">("idle");
+const rerunPermission = Atom.make(true);
 let registry: AtomRegistry.AtomRegistry;
 
 const mocks = vi.hoisted(() => ({
@@ -22,7 +23,7 @@ vi.mock("~/state/pullRequests", () => ({
       mocks.jobs(input);
       return "jobs";
     },
-    rerunCi: "rerun",
+    rerunCi: { permissionAtom: () => rerunPermission },
     ciRerunState: () => submission,
     invalidate: "invalidate",
   },
@@ -35,7 +36,7 @@ vi.mock("@effect/atom-react", () => ({
     ),
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "rerun" ? mocks.rerun : mocks.invalidate),
+  useAtomCommand: (command: unknown) => (command === "invalidate" ? mocks.invalidate : mocks.rerun),
 }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: string) => ({
@@ -143,4 +144,21 @@ it("does not submit a rerun while the run data is refreshing", async () => {
   await act(async () => button("Rerun all").props.onClick());
   expect(mocks.rerun).not.toHaveBeenCalled();
   expect(button("Rerun all").props.disabled).toBe(true);
+});
+
+it("blocks reruns after source control permission is revoked", async () => {
+  await act(async () => {
+    renderer = create(<PullRequestCiRuns {...props} />);
+  });
+  await act(async () => {
+    registry.set(rerunPermission, false);
+    button("CI").props.onClick();
+  });
+  await act(async () => {
+    button("Rerun all").props.onClick();
+    button("Rerun").props.onClick();
+  });
+  expect(mocks.rerun).not.toHaveBeenCalled();
+  expect(button("Rerun all").props.disabled).toBe(true);
+  expect(button("Rerun").props.disabled).toBe(true);
 });

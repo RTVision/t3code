@@ -106,11 +106,14 @@ function Run({
   const [expanded, setExpanded] = useState(false);
   const rerun = useAtomCommand(pullRequestCiEnvironment.rerunCi, { reportFailure: false });
   const input = { ...reference, runId: run.id, headSha, attempt: run.attempt };
+  const canRerun = useAtomValue(
+    pullRequestCiEnvironment.rerunCi.permissionAtom(environmentId, input),
+  );
   const submission = useAtomValue(pullRequestCiEnvironment.ciRerunState({ environmentId, input }));
   const pending = submission === "pending";
   const requested = submission === "requested";
   const submit = async (target: PullRequestCiRerunTarget) => {
-    if (pending || requested || disabled) return;
+    if (pending || requested || disabled || !canRerun) return;
     const result = await rerun({ environmentId, input: { ...input, target } });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
@@ -139,7 +142,7 @@ function Run({
           <Action
             key={kind}
             label={kind === "all" ? "Rerun all" : "Rerun failed"}
-            disabled={disabled || pending || requested}
+            disabled={disabled || pending || requested || !canRerun}
             onPress={() => void submit({ kind })}
           />
         ))}
@@ -148,7 +151,7 @@ function Run({
         <Jobs
           environmentId={environmentId}
           input={input}
-          disabled={disabled || pending || requested}
+          disabled={disabled || pending || requested || !canRerun}
           onRerun={(target) => void submit(target)}
         />
       )}

@@ -26,6 +26,7 @@ import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_DRAFT_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -137,6 +138,7 @@ interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   syncDraft: () => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -558,7 +560,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(draft: PreviewAnnotationDraft | null): void {
+function startAnnotation(sendEnabled: boolean, draft: PreviewAnnotationDraft | null): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -635,6 +637,12 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1453,6 +1461,7 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     syncDraft();
@@ -1505,7 +1514,12 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
-        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+        );
       })
       .catch(() => {
         // Last resort. Main is waiting on this message, so hand it an empty
@@ -1516,7 +1530,8 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
     // it is isolated from listeners installed by the inspected page.
     event.stopImmediatePropagation();
@@ -1544,6 +1559,10 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
     syncDraft,
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 
   /**
@@ -1603,13 +1622,20 @@ function startAnnotation(draft: PreviewAnnotationDraft | null): void {
 
 ipcRenderer.on(
   START_PICK_CHANNEL,
-  (_event, theme: DesktopPreviewAnnotationTheme | undefined, draft: unknown) => {
+  (
+    _event,
+    theme: DesktopPreviewAnnotationTheme | undefined,
+    sendEnabled: boolean | undefined,
+    draft: unknown,
+  ) => {
     if (theme) annotationTheme = theme;
-    startAnnotation(isPreviewAnnotationDraft(draft) ? draft : null);
+    startAnnotation(sendEnabled === true, isPreviewAnnotationDraft(draft) ? draft : null);
   },
 );
-// Element rects drift as the page scrolls, so hand main a fresh copy on the way out.
 window.addEventListener("pagehide", () => activeSession?.syncDraft());
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
+});
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
   recordingCursor?.setTheme(theme);
