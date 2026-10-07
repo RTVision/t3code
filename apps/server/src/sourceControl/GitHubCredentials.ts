@@ -159,8 +159,16 @@ export const make = Effect.gen(function* () {
           ...(account === undefined ? [] : ["--user", account]),
         ],
         cwd: workingDirectory,
-        // Never let gh print the token into a debug log.
-        env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
+        // Allowed environment tokens were resolved above. Ask only for stored credentials,
+        // without inheriting a token for another host, and keep tokens out of debug logs.
+        env: {
+          GH_TOKEN: "",
+          GITHUB_TOKEN: "",
+          GH_ENTERPRISE_TOKEN: "",
+          GITHUB_ENTERPRISE_TOKEN: "",
+          GH_DEBUG: "",
+          GH_PROMPT_DISABLED: "1",
+        },
         timeoutMs: 10_000,
       })
       .pipe(

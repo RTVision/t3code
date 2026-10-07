@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -62,6 +65,82 @@ describe("GitHubCredentials", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
+
+  it.effect.each(TOKEN_VARIABLES)(
+    "keeps ambient %s out of the stored-credential subprocess for another host",
+    (name) =>
+      Effect.gen(function* () {
+        vi.stubEnv(name, "dummy-ambient-token");
+        vi.stubEnv("GH_HOST", "trusted.example");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gh-credentials-" });
+        const script = path.join(directory, "gh.cjs");
+        yield* fs.writeFileString(
+          path.join(directory, "tokens.json"),
+          JSON.stringify({ "github.unrelated.example": { work: "stored-work-token" } }),
+        );
+        yield* fs.writeFileString(
+          script,
+          `const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const host = args[args.indexOf("--hostname") + 1];
+const account = args[args.indexOf("--user") + 1];
+const ambient = ${JSON.stringify(TOKEN_VARIABLES)}.map(name => process.env[name]).find(Boolean);
+const stored = JSON.parse(fs.readFileSync(path.join(process.env.GH_CONFIG_DIR, "tokens.json"), "utf8"));
+process.stdout.write(ambient || stored[host]?.[account] || "");
+`,
+        );
+        vi.stubEnv("GH_CONFIG_DIR", directory);
+        // Use the real process layers; only replace the external gh executable with a fixture.
+        const vcs = yield* VcsProcess.make;
+        const credentialLayer = GitHubCredentials.layer.pipe(
+          Layer.provide(
+            ServerSettings.ServerSettingsService.layerTest({
+              github: { hosts: { "github.unrelated.example": { account: "work" } } },
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(
+              VcsProcess.VcsProcess,
+              VcsProcess.VcsProcess.of({
+                run: (input) =>
+                  vcs.run({ ...input, command: process.execPath, args: [script, ...input.args] }),
+              }),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const credentials = yield* GitHubCredentials.GitHubCredentials;
+          const credential = yield* credentials.get("github.unrelated.example");
+          expect(credential.source).toBe("gh");
+          expect(Redacted.value(credential.token)).toBe("stored-work-token");
+          const missing = yield* Effect.flip(credentials.get("github.no-login.example"));
+          expect(missing._tag).toBe("GitHubNotSignedInError");
+          expect(missing.host).toBe("github.no-login.example");
+        }).pipe(Effect.provide(credentialLayer));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      ),
+  );
+
+  it.effect.each(["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"])(
+    "keeps allowed %s as a direct credential for its intended host",
+    (name) => {
+      vi.stubEnv(name, "allowed-enterprise-token");
+      vi.stubEnv("GH_HOST", "trusted.example");
+      const { layer, calls } = harness({ "trusted.example": { account: "work" } });
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("trusted.example");
+        expect(credential.source).toBe("env");
+        expect(Redacted.value(credential.token)).toBe("allowed-enterprise-token");
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("asks gh for the active login when Settings pin nothing", () => {
     const { layer, calls } = harness();

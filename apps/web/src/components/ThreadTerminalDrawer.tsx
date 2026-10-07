@@ -60,7 +60,7 @@ import {
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
-import { useOpenInPreferredEditor } from "../editorPreferences";
+import { useEditorDispatch } from "../editorPreferences";
 import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
@@ -383,17 +383,27 @@ export function TerminalViewport({
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const canActivateTerminalLink = useEffectEvent(
-    (text: string) =>
-      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
-  );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const openInPreferredEditor = useOpenInPreferredEditor(
+  const editorDispatch = useEditorDispatch(
     environmentId,
     serverConfig?.availableEditors ?? [],
     cwd,
   );
-  const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const { choice, remote } = editorDispatch;
+  const canActivateTerminalLink = useEffectEvent((text: string) => {
+    if (isTerminalUrl(text)) return true;
+    if (!choice) return false;
+    if (choice.kind === "terminal") {
+      return readEnvironmentScope(environmentId, AuthTerminalOperateScope);
+    }
+    return (
+      remote.isResolved &&
+      remote.state.mode !== "remote-unavailable" &&
+      (remote.state.mode !== "local-exec" ||
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    );
+  });
+  const openTerminalPath = useEffectEvent((target: string) => editorDispatch.open(target));
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -508,10 +518,10 @@ export function TerminalViewport({
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
 
-  // A grant can change while the pointer remains over a link.
+  // Editor routes and grants can change while the pointer remains over a link.
   useEffect(() => {
     terminalRef.current?.refreshLinkActivation();
-  }, [canOpenHostEditor]);
+  }, [canOpenHostEditor, canOperateTerminal, choice, remote.isResolved, remote.state]);
 
   useEffect(() => {
     if (resizeSessionGeneration === null) return;

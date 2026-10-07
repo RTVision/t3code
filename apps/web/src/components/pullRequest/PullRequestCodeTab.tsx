@@ -431,6 +431,7 @@ function PullRequestCodeTab({
     setViewed,
     refresh: refreshFilesViewed,
     enabled: filesViewedEnabled,
+    writable: filesViewedWritable,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
@@ -639,7 +640,7 @@ function PullRequestCodeTab({
         // Ticking a file that is already folded changes no fold, so without this the box on
         // screen would keep saying the opposite of what the count says.
         const viewedMark = filesViewedEnabled
-          ? `e${viewed ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+          ? `e${filesViewedWritable ? "w" : ""}${viewed ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
           : "";
         return {
           id: fileKey,
@@ -653,6 +654,7 @@ function PullRequestCodeTab({
     [
       annotatedFiles,
       filesViewedEnabled,
+      filesViewedWritable,
       effectiveFoldOverride,
       isFileViewed,
       isFileViewedStale,
@@ -760,7 +762,7 @@ function PullRequestCodeTab({
   // nothing off.
   const setFileViewed = useCallback(
     (path: string, viewed: boolean, headerPinned: boolean) => {
-      setViewed(path, viewed);
+      if (!setViewed(path, viewed)) return;
       setFoldChoices((current) =>
         foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
       );
@@ -957,6 +959,7 @@ function PullRequestCodeTab({
             <Checkbox
               aria-label={stale ? "Changed" : "Viewed"}
               checked={viewed}
+              disabled={!viewedFiles.writable}
               onCheckedChange={(next, { event }) =>
                 setFileViewedRef.current(
                   path,

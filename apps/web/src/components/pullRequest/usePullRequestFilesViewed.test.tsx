@@ -4,10 +4,12 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const writePermission = Atom.make(true);
 
 const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
   host: { data: null as unknown, refresh: vi.fn() },
@@ -16,7 +18,10 @@ const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
 }));
 
 vi.mock("~/state/pullRequests", () => ({
-  pullRequestEnvironment: { filesViewed: () => null, setFilesViewed: {} },
+  pullRequestEnvironment: {
+    filesViewed: () => null,
+    setFilesViewed: { permissionAtom: () => writePermission },
+  },
 }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: () => ({
