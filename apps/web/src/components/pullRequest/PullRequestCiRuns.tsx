@@ -96,11 +96,14 @@ function CiRunRow({
   const [expanded, setExpanded] = useState(false);
   const rerun = useAtomCommand(pullRequestEnvironment.rerunCi, { reportFailure: false });
   const input = { ...reference, runId: run.id, headSha, attempt: run.attempt };
+  const canRerun = useAtomValue(
+    pullRequestEnvironment.rerunCi.permissionAtom(environmentId, input),
+  );
   const submission = useAtomValue(pullRequestEnvironment.ciRerunState({ environmentId, input }));
   const pending = submission === "pending";
   const requested = submission === "requested";
   const submit = async (target: PullRequestCiRerunTarget) => {
-    if (pending || requested || disabled) return;
+    if (pending || requested || disabled || !canRerun) return;
     const result = await rerun({ environmentId, input: { ...input, target } });
     if (result._tag === "Failure")
       toastManager.add({
@@ -147,7 +150,7 @@ function CiRunRow({
             key={kind}
             size="xs"
             variant="ghost"
-            disabled={disabled || pending || requested}
+            disabled={disabled || pending || requested || !canRerun}
             onClick={() => void submit({ kind })}
           >
             {kind === "failed" ? "Rerun failed" : "Rerun all"}
@@ -158,7 +161,7 @@ function CiRunRow({
         <CiJobs
           environmentId={environmentId}
           input={input}
-          disabled={disabled || pending || requested}
+          disabled={disabled || pending || requested || !canRerun}
           onRerun={(target) => void submit(target)}
           openLink={openLink}
         />

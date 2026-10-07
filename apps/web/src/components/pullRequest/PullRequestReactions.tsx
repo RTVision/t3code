@@ -1,3 +1,5 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   PullRequestReaction,
@@ -5,11 +7,10 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 import { SmilePlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useContext, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
@@ -53,41 +54,70 @@ export function PullRequestReactionBar({
   readonly onRefresh: () => void;
   readonly className?: string | undefined;
 }) {
+  const registry = useContext(RegistryContext);
+  const permission = pullRequestEnvironment.setReaction.permissionAtom(environmentId);
+  const canWrite = useAtomValue(permission);
+  const writable = canReact && canWrite;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
   }>({ signature: "", values: EMPTY_PENDING });
-  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, { reportFailure: false });
+  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
+    reportFailure: false,
+  });
 
   const signature = reactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(reactions, values);
 
-  const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
-    setPending({ signature, values: new Map([...values, [content, reacted]]) });
-    const result = await setReaction({
-      environmentId,
-      input: {
-        ...reference,
-        ...(subjectId === undefined ? {} : { subjectId }),
-        content,
-        reacted,
-      },
-    });
-    if (result._tag === "Failure") {
-      setPending((current) => {
-        const next = new Map(current.values);
-        next.delete(content);
-        return { signature: current.signature, values: next };
-      });
-      toastManager.add({ type: "error", title: "The reaction could not be saved" });
-      return;
-    }
-    onRefresh();
+  const current = {
+    canReact,
+    permission,
+    environmentId,
+    reference,
+    subjectId,
+    signature,
+    values,
+    onRefresh,
   };
+  const latest = useRef(current);
+  useLayoutEffect(() => {
+    latest.current = current;
+  });
 
-  if (shown.length === 0 && !canReact) return null;
+  const toggle = useCallback(
+    async (content: PullRequestReactionContent, reacted: boolean) => {
+      const target = latest.current;
+      if (!target.canReact || !registry.get(target.permission)) return;
+      setPending({
+        signature: target.signature,
+        values: new Map([...target.values, [content, reacted]]),
+      });
+      const result = await setReaction({
+        environmentId: target.environmentId,
+        input: {
+          ...target.reference,
+          ...(target.subjectId === undefined ? {} : { subjectId: target.subjectId }),
+          content,
+          reacted,
+        },
+      });
+      if (result._tag === "Failure") {
+        setPending((current) => {
+          const next = new Map(current.values);
+          next.delete(content);
+          return { signature: current.signature, values: next };
+        });
+        toastManager.add({ type: "error", title: "The reaction could not be saved" });
+        return;
+      }
+      target.onRefresh();
+    },
+    [registry, setReaction],
+  );
+
+  if (shown.length === 0 && !writable) return null;
 
   return (
     <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
@@ -99,13 +129,13 @@ export function PullRequestReactionBar({
                 type="button"
                 aria-pressed={reaction.viewerHasReacted}
                 aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
-                disabled={!canReact}
+                disabled={!writable}
                 className={cn(
                   PILL_CLASS,
                   reaction.viewerHasReacted
                     ? "border-primary/60 bg-primary/10 text-foreground"
                     : "border-border/70 bg-muted/40 text-muted-foreground",
-                  canReact ? "hover:border-primary/60" : "cursor-default",
+                  writable ? "hover:border-primary/60" : "cursor-default",
                 )}
                 onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
               />
@@ -118,7 +148,7 @@ export function PullRequestReactionBar({
         </Tooltip>
       ))}
 
-      {canReact ? (
+      {writable ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
             render={

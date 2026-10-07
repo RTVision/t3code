@@ -6,7 +6,6 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
 
 import { CircleDotIcon } from "lucide-react";
@@ -175,6 +174,9 @@ export function PullRequestChecksPopover({
       : pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
   const runningCount = checks?.filter((check) => check.status === "pending").length ?? 0;
+  const failedCount =
+    checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
+    0;
   const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
@@ -208,8 +210,9 @@ export function PullRequestChecksPopover({
               <span className="tabular-nums">
                 {runningCount}/{checks.length}
               </span>
+            ) : failedCount > 0 ? (
+              <span className="tabular-nums">{failedCount} failed</span>
             ) : null}
-            <ChevronDownIcon aria-hidden className="size-3" />
           </>
         ) : null}
       </PopoverTrigger>

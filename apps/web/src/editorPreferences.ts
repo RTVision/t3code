@@ -1,4 +1,8 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  EnvironmentAuthorizationError,
   EditorChoice,
   EditorId,
   EnvironmentId,
@@ -18,6 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";
+import { readEnvironmentScope, useEnvironmentScope } from "./state/session";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import {
@@ -107,6 +112,18 @@ export function useEditorDispatch(
   const state = useEditorChoice(environmentId, availableEditors);
   const openGui = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const { choice, terminal, remote } = state;
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canOpenLocalEditor = useAtomValue(
+    shellEnvironment.openInEditor.permissionAtom(environmentId),
+  );
+  const canOpen =
+    environmentId !== null &&
+    choice !== null &&
+    (choice.kind === "terminal"
+      ? canOperateTerminal
+      : remote.isResolved &&
+        remote.state.mode !== "remote-unavailable" &&
+        (remote.state.mode !== "local-exec" || canOpenLocalEditor));
   const open = useCallback(
     async (input: string | EditorOpenTarget, selected: EditorChoice | null = choice) => {
       const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
@@ -124,6 +141,22 @@ export function useEditorDispatch(
             }),
           ),
         );
+      const requiredScope =
+        selected.kind === "terminal"
+          ? AuthTerminalOperateScope
+          : remote.state.mode === "local-exec"
+            ? AuthOrchestrationOperateScope
+            : null;
+      if (requiredScope && !readEnvironmentScope(environmentId, requiredScope)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope,
+              message: "This connection cannot open this editor on the environment.",
+            }),
+          ),
+        );
+      }
       try {
         if (selected.kind === "terminal") {
           const bridge = window.desktopBridge?.openTerminalEditor;
@@ -192,7 +225,7 @@ export function useEditorDispatch(
     },
     [availableEditors, choice, environmentId, openGui, remote, terminal, workspace],
   );
-  return { ...state, open };
+  return { ...state, open, canOpen };
 }
 export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,

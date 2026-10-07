@@ -1,6 +1,7 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -31,10 +32,12 @@ const NO_OVERLAY: FileViewedOverlay = new Map();
 export interface PullRequestFilesViewedView {
   /** Whether anything remembers this at all, which is what hides the whole control. */
   readonly enabled: boolean;
+  /** Whether this connection may change the marks, independently of reading them. */
+  readonly writable: boolean;
   readonly isViewed: (path: string) => boolean;
   /** This file has been pushed to since it was cleared. */
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (path: string, viewed: boolean) => boolean;
   /** How many of the files on screen are ticked off. */
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
@@ -63,6 +66,10 @@ export function usePullRequestFilesViewed(options: {
   readonly paths: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
   const { environmentId, reference, enabled, paths } = options;
+  const registry = useContext(RegistryContext);
+  const permission = pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId);
+  const canWrite = useAtomValue(permission);
+  const writable = enabled && canWrite;
   const query = useEnvironmentQuery(
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );
@@ -116,6 +123,13 @@ export function usePullRequestFilesViewed(options: {
     const batch = toFileViewedBatch(queued.current);
     if (batch.length === 0) return;
     queued.current = new Map();
+    // A granted press can still lose its grant while waiting for the batch timer.
+    if (!enabled || !registry.get(permission)) {
+      setOverlay((current) =>
+        revertFileViewedOverlay(current, batch, new Set(batch.map((file) => file.path))),
+      );
+      return;
+    }
     const sentFrom = scope.current;
     const request = ++requests.current;
     for (const file of batch) sentBy.current.set(file.path, request);
@@ -145,7 +159,7 @@ export function usePullRequestFilesViewed(options: {
       for (const path of mine) answeredFrom.current.set(path, statesRef.current);
       refresh();
     });
-  }, [environmentId, reference, refresh, setFilesViewed]);
+  }, [enabled, environmentId, permission, reference, refresh, registry, setFilesViewed]);
 
   // Read through a ref rather than closed over: `setViewed` is handed to every file header the
   // viewer draws, and a new identity per render would rebuild all of them.
@@ -174,12 +188,17 @@ export function usePullRequestFilesViewed(options: {
   refreshRef.current = refresh;
   const refreshFromHost = useCallback(() => refreshRef.current(), []);
 
-  const setViewed = useCallback((path: string, viewed: boolean) => {
-    setOverlay((current) => new Map(current).set(path, viewed));
-    queued.current.set(path, viewed);
-    if (flushTimer.current !== null) clearTimeout(flushTimer.current);
-    flushTimer.current = setTimeout(() => flushRef.current(), FLUSH_DELAY_MS);
-  }, []);
+  const setViewed = useCallback(
+    (path: string, viewed: boolean) => {
+      if (!enabled || !registry.get(permission)) return false;
+      setOverlay((current) => new Map(current).set(path, viewed));
+      queued.current.set(path, viewed);
+      if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(() => flushRef.current(), FLUSH_DELAY_MS);
+      return true;
+    },
+    [enabled, permission, registry],
+  );
 
   const isViewed = useCallback(
     (path: string) => isFileViewed(path, states, overlay),
@@ -198,6 +217,7 @@ export function usePullRequestFilesViewed(options: {
   return useMemo(
     () => ({
       enabled,
+      writable,
       isViewed,
       isStale,
       setViewed,
@@ -206,6 +226,16 @@ export function usePullRequestFilesViewed(options: {
       error,
       refresh: refreshFromHost,
     }),
-    [enabled, error, isStale, isViewed, refreshFromHost, setViewed, truncated, viewedCount],
+    [
+      enabled,
+      error,
+      isStale,
+      isViewed,
+      refreshFromHost,
+      setViewed,
+      truncated,
+      viewedCount,
+      writable,
+    ],
   );
 }

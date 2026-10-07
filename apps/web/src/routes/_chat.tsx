@@ -1,5 +1,6 @@
 import { onAppCommand } from "../vim/commandBus";
 import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
+import { AuthPreviewOperateScope } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -12,6 +13,7 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
@@ -35,6 +37,10 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const canOperatePreview = useEnvironmentScope(
+    routeThreadRef?.environmentId ?? null,
+    AuthPreviewOperateScope,
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -144,7 +150,7 @@ function ChatRouteGlobalShortcuts() {
       if (command === "preview.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        if (!routeThreadRef) return;
+        if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
         if (!isPreviewAvailableFor(routeThreadRef.environmentId)) {
           toastManager.add(
             stackedThreadToast({
@@ -171,6 +177,7 @@ function ChatRouteGlobalShortcuts() {
       ) {
         event.preventDefault();
         event.stopPropagation();
+        if (!canOperatePreview) return;
         const action =
           command === "preview.refresh"
             ? "refresh"
@@ -195,6 +202,7 @@ function ChatRouteGlobalShortcuts() {
     activeDraftThread,
     activeThread,
     clearSelection,
+    canOperatePreview,
     handleNewThread,
     keybindings,
     defaultProjectRef,

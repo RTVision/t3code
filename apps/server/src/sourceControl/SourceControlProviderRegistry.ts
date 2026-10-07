@@ -308,6 +308,7 @@ export const make = Effect.gen(function* () {
   const github = yield* GitHubSourceControlProvider.make;
   const gitea = yield* GiteaSourceControlProvider.make;
   const giteaDiscovery = yield* GiteaSourceControlProvider.makeDiscovery;
+  const githubDiscovery = yield* GitHubSourceControlProvider.makeDiscovery;
   const gitlab = yield* GitLabSourceControlProvider.make;
   const forgejo = yield* ForgejoSourceControlProvider.make;
   const forgejoDiscovery = yield* ForgejoSourceControlProvider.makeDiscovery;
@@ -318,7 +319,7 @@ export const make = Effect.gen(function* () {
     {
       kind: "github",
       provider: github,
-      discovery: GitHubSourceControlProvider.discovery,
+      discovery: githubDiscovery,
     },
     {
       kind: "gitlab",

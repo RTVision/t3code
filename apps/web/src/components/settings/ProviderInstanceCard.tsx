@@ -1116,30 +1116,26 @@ export function ProviderInstanceCard({
           environment={genericEnvironment}
           onChange={updateGenericEnvironment}
         />
-        {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
-          <AcpSessionManagementSection
-            environmentId={environmentId}
-            instanceId={instanceId}
-            provider={liveProvider}
-            projects={acpProjects}
-            readOnly={readOnly}
-          />
-        ) : null}
       </SettingsSection>
+      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+        <AcpSessionManagementSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          provider={liveProvider}
+          projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
 
       {driverOption !== undefined ? (
-        <SettingsSection
-          title="Models"
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
-        >
+        <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
               Favorites, visibility, and ordering are saved on this device. Custom models are saved
               on the selected environment.
             </p>
             <ProviderModelsSection
+              canManageCustomModels={!readOnly}
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}
