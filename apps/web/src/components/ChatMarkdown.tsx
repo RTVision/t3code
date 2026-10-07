@@ -1,9 +1,5 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import {
-  AuthFilesystemReadScope,
-  AuthOrchestrationOperateScope,
-  AuthTerminalOperateScope,
-} from "@t3tools/contracts";
+import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -2579,14 +2575,7 @@ function useChatMarkdownState({
   const editorDispatch = useEditorDispatch(environmentId, availableEditors, cwd);
   const preferredEditorMenuLabel = openInEditorMenuLabel(editorDispatch.choice?.editor ?? null);
   const openInPreferredEditor = editorDispatch.open;
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const canOpenPreferredEditor =
-    canUseShellActions ||
-    (environmentId !== null &&
-      editorDispatch.choice !== null &&
-      (editorDispatch.choice.kind === "terminal"
-        ? canOperateTerminal
-        : remoteOpen.state.mode === "remote-links"));
+  const canOpenPreferredEditor = editorDispatch.canOpen;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });

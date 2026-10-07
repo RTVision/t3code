@@ -23,13 +23,35 @@ type Send = (
 
 /** Every git command the cascade ran, in order; none actually runs. */
 let gitCalls: Array<ReadonlyArray<string>> = [];
+const remoteHeads = new Map<string, string>();
+let advanceProcessedParent = false;
 const fakeGit = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
     run: (input) =>
       Effect.sync(() => {
         gitCalls.push(input.args);
+        if (input.args[0] === "init") {
+          remoteHeads.clear();
+          remoteHeads.set("refs/heads/middle", "bbb");
+          remoteHeads.set("refs/heads/top", "ccc");
+        }
+        if (input.args[0] === "push") {
+          const [sha, ref] = input.args.at(-1)!.split(":");
+          remoteHeads.set(ref!, sha!);
+          if (advanceProcessedParent && ref === "refs/heads/middle") {
+            remoteHeads.set(ref, "concurrent-sha");
+            advanceProcessedParent = false;
+          }
+        }
         const stdout =
-          input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
+          input.args[0] === "ls-remote"
+            ? input.args
+                .slice(3)
+                .map((ref) => `${remoteHeads.get(ref)}\t${ref}`)
+                .join("\n")
+            : input.args[0] === "rev-parse" || input.args[0] === "merge-base"
+              ? "new-sha\n"
+              : "";
         return {
           exitCode: ChildProcessSpawner.ExitCode(0),
           stdout,
@@ -389,5 +411,20 @@ it.effect("checks every layer's write access before any git runs", () =>
     ]);
     yield* Effect.flip(runGitHubStackAction(api.execute, { ...input, action: "update-branch" }));
     expect(gitCalls).toEqual([]);
+  }),
+);
+
+it.effect("reports a changed processed parent with partial completion", () =>
+  Effect.gen(function* () {
+    gitCalls = [];
+    advanceProcessedParent = true;
+    const api = fake([stack, access]);
+    const error = yield* Effect.flip(
+      runGitHubStackAction(api.execute, { ...input, action: "update-branch" }),
+    );
+    expect(error).toMatchObject({ _tag: "GitHubStackChangedError", number: 2, completed: 1 });
+    expect(error.message).toContain("Earlier updates remain on GitHub");
+    expect(gitCalls.filter((args) => args[0] === "push")).toHaveLength(1);
+    expect(remoteHeads.get("refs/heads/top")).toBe("ccc");
   }),
 );

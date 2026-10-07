@@ -6,13 +6,15 @@ import {
   type PullRequestDetailView,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
+const { newThread, prepareThread, refresh, Wrapper, Trigger, access } = vi.hoisted(() => ({
+  access: { allowed: true },
   newThread: vi.fn(),
   prepareThread: vi.fn(),
   refresh: vi.fn(),
@@ -26,10 +28,13 @@ const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() =>
 }));
 vi.mock("~/state/session", async (original) => ({
   ...(await original<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => access.allowed,
+  readEnvironmentScope: () => access.allowed,
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => [],
+}));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
 vi.mock("~/state/environments", () => ({
@@ -49,7 +54,11 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
-  pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
+  pullRequestEnvironment: {
+    detail: () => "detail",
+    activity: () => "activity",
+    setReaction: { permissionAtom: () => Atom.make(true) },
+  },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
 }));
@@ -104,22 +113,45 @@ vi.mock("./PullRequestMarkdown", () => ({
 }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestThreadLinks", () => ({ PullRequestThreadLinks: () => null }));
-vi.mock("./PullRequestSummaryTab", () => ({
-  PullRequestSummaryTab: ({
-    onFixFinding,
-  }: ComponentProps<typeof import("./PullRequestSummaryTab").PullRequestSummaryTab>) => (
-    <button
-      onClick={() =>
-        onFixFinding?.({
-          kind: "check",
-          check: { name: "Unit tests", status: "failure", description: "Test failed", url: null },
-        })
-      }
-    >
-      Fix check
-    </button>
-  ),
-}));
+vi.mock("./PullRequestSummaryTab", async () => {
+  const { PullRequestReactionBar } = await import("./PullRequestReactions");
+  const { pullRequestCanReact } = await import("@t3tools/contracts");
+  return {
+    PullRequestSummaryTab: ({
+      onFixFinding,
+      detail,
+      environmentId,
+      reference,
+      onRefresh,
+    }: ComponentProps<typeof import("./PullRequestSummaryTab").PullRequestSummaryTab>) => (
+      <>
+        <button
+          onClick={() =>
+            onFixFinding?.({
+              kind: "check",
+              check: {
+                name: "Unit tests",
+                status: "failure",
+                description: "Test failed",
+                url: null,
+              },
+            })
+          }
+        >
+          Fix check
+        </button>
+        <PullRequestReactionBar
+          reactions={[{ content: "thumbs-up", count: 1, viewerHasReacted: false, actors: [] }]}
+          canReact={pullRequestCanReact(detail.capabilities, "issue-comment")}
+          environmentId={environmentId}
+          reference={reference}
+          subjectId="comment-1"
+          onRefresh={onRefresh}
+        />
+      </>
+    ),
+  };
+});
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
     onAddToAgentSelection,
@@ -211,6 +243,7 @@ const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  access.allowed = true;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -341,4 +374,54 @@ describe.each([
       expect(newThread).toHaveBeenCalled();
     }
   });
+});
+
+it("masks granular Gitea reaction subjects for a read-only panel and restores them on regrant", async () => {
+  const previous = detail.capabilities;
+  // Host capability alone is deliberately allowed; this proof targets the panel's grant mask.
+  Object.assign(detail, {
+    capabilities: {
+      ...previous,
+      reactions: false,
+      reactionSubjects: {
+        changeRequest: true,
+        issueComment: true,
+        reviewComment: true,
+        review: false,
+      },
+    },
+  });
+  const reaction = () =>
+    renderer.root
+      .findAllByType("button")
+      .find((node) => node.props["aria-label"] === "thumbs up, 1")!;
+  const surface = () => (
+    <PullRequestDetailPanel
+      environmentId={threadRef.environmentId}
+      reference={detail}
+      context="page"
+      shortcutsEnabled={false}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+    />
+  );
+  try {
+    access.allowed = false;
+    await act(async () => {
+      renderer = create(surface());
+    });
+    expect(reaction().props.disabled).toBe(true);
+    expect(reaction().props["aria-pressed"]).toBe(false);
+    access.allowed = true;
+    await act(async () => renderer.update(surface()));
+    expect(reaction().props.disabled).toBe(false);
+  } finally {
+    Object.assign(detail, { capabilities: previous });
+  }
 });

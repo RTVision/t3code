@@ -1018,7 +1018,6 @@ export function EnvironmentProviderSettings({
             />
           ) : undefined
         }
-        canWriteSettings={canWriteSettings}
         setup={
           mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection

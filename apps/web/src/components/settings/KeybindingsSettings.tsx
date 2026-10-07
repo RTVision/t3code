@@ -1,5 +1,4 @@
 import { VimSettingsPanel } from "../../vim/VimSettingsPanel";
-import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
   ChevronDownIcon,
@@ -25,7 +24,6 @@ import {
   useState,
 } from "react";
 import {
-  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
@@ -39,7 +37,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { isElectron } from "../../env";
-import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { useEditorDispatch } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
@@ -1286,10 +1284,6 @@ export function KeybindingsSettingsPanel() {
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs T3 Code on.
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
-  const canOpenKeybindingsFile = useEnvironmentScope(
-    primaryEnvironment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
   const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
   const canWriteSettings =
     connectedEnvironments.length > 0 &&
@@ -1307,7 +1301,7 @@ export function KeybindingsSettingsPanel() {
   const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
-  const openInPreferredEditor = useOpenInPreferredEditor(
+  const { open: openInPreferredEditor, canOpen: canOpenKeybindingsFile } = useEditorDispatch(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,
   );
@@ -1364,12 +1358,7 @@ export function KeybindingsSettingsPanel() {
   }, []);
 
   const openKeybindingsFile = useCallback(() => {
-    if (
-      !keybindingsConfigPath ||
-      !primaryEnvironment ||
-      !readEnvironmentScope(primaryEnvironment.environmentId, AuthOrchestrationOperateScope)
-    )
-      return;
+    if (!keybindingsConfigPath || !primaryEnvironment) return;
     void (async () => {
       const result = await openInPreferredEditor(keybindingsConfigPath);
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) {

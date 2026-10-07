@@ -244,3 +244,21 @@ describe("buildDraftActionMenuItems", () => {
     expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
   });
 });
+
+it.each([false, true])(
+  "keeps local project filtering available without operate, active %s",
+  (isActive) => {
+    const item = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      projectFilter: { label: "Project", isActive },
+    }).find((item) => item.id === "filter-by-project");
+    expect(item?.disabled).not.toBe(true);
+    expect(item?.label).toBe(isActive ? "Show all projects" : "Filter by Project");
+    expect(
+      buildThreadActionMenuItems({ ...baseState, canOperate: false }).find(
+        (item) => item.id === "archive",
+      )?.disabled,
+    ).toBe(true);
+  },
+);

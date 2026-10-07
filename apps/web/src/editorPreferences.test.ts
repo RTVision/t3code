@@ -42,9 +42,18 @@ vi.mock("./remoteOpen", () => ({
   useRemoteCapableEditors: () => [],
   openRemoteEditorUrl: vi.fn(),
 }));
-vi.mock("./state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (environmentId: string) => state.allowed.has(environmentId),
+}));
+vi.mock("./state/shell", () => ({
+  shellEnvironment: { openInEditor: { permissionAtom: (environmentId: string) => environmentId } },
+}));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
 vi.mock("./state/session", () => ({
+  useEnvironmentScope: (environmentId: string, scope: string) =>
+    scope === AuthOrchestrationOperateScope
+      ? state.allowed.has(environmentId)
+      : scope === AuthTerminalOperateScope && state.terminalAllowed.has(environmentId),
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope
       ? state.allowed.has(environmentId)

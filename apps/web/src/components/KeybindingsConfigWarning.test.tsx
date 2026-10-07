@@ -2,9 +2,15 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
+  type EditorChoice,
+  WS_METHODS,
   type AuthEnvironmentScope,
   type AuthSessionState,
 } from "@t3tools/contracts";
+import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -15,6 +21,13 @@ const state = vi.hoisted(() => ({
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   run: vi.fn(),
   toast: vi.fn(),
+  choice: { kind: "gui", editor: "vscode" } as EditorChoice,
+  remote: { mode: "local-exec" } as
+    | { mode: "local-exec" }
+    | { mode: "remote-links"; host: { kind: "ssh-alias"; host: string } }
+    | { mode: "remote-unavailable" },
+  bridge: vi.fn(),
+  remoteOpen: vi.fn(),
 }));
 
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
@@ -28,26 +41,43 @@ vi.mock("../rpc/atomRegistry", () => ({
     return state.registry;
   },
 }));
-vi.mock("../state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
+const runtime = Atom.runtime(
+  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+    run: (_id: EnvironmentId, effect: Effect.Effect<unknown>) => effect,
+  } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+);
+const openEditorCommand = createEnvironmentRpcCommand(runtime, {
+  label: "test.open-editor",
+  tag: WS_METHODS.shellOpenInEditor,
+});
+vi.mock("../state/shell", () => ({
+  shellEnvironment: {
+    get openInEditor() {
+      return openEditorCommand;
+    },
+  },
+}));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
 vi.mock("../terminalEditors", () => ({
   useTerminalEditor: () => ({
-    capability: { preferenceKey: "", state: "unavailable" },
-    connected: false,
-    refresh: vi.fn(),
+    capability: { preferenceKey: "", state: "available" },
+    connected: true,
+    connection: { kind: "primary" },
+    generation: 1,
+    refresh: async () => ({ state: "available", routeGeneration: 1 }),
   }),
   invalidateTerminalEditors: vi.fn(),
 }));
 vi.mock("../editorPreferenceStorage", () => ({
   useEditorPreference: (key: string, fallback: unknown) => [
-    key === "t3code:editor-choice:v1" ? { kind: "gui", editor: "vscode" } : fallback,
+    key === "t3code:editor-choice:v1" ? state.choice : fallback,
     vi.fn(),
   ],
 }));
 vi.mock("../remoteOpen", () => ({
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
-  useRemoteCapableEditors: () => [],
-  openRemoteEditorUrl: vi.fn(),
+  useRemoteOpenResolution: () => ({ state: state.remote, isResolved: true }),
+  useRemoteCapableEditors: () => ["vscode"],
+  openRemoteEditorUrl: (url: string) => state.remoteOpen(url),
 }));
 vi.mock("./ui/button", () => ({ Button: "button" }));
 vi.mock("./ui/toast", () => ({
@@ -81,6 +111,11 @@ beforeEach(() => {
   );
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.toast.mockReset();
+  state.choice = { kind: "gui", editor: "vscode" };
+  state.remote = { mode: "local-exec" };
+  state.bridge.mockReset().mockResolvedValue({ status: "opened" });
+  state.remoteOpen.mockReset().mockResolvedValue(true);
+  vi.stubGlobal("window", { desktopBridge: { openTerminalEditor: state.bridge } });
 });
 
 afterEach(async () => {
@@ -130,4 +165,88 @@ it("updates a visible warning on revocation and blocks its retained action until
     environmentId,
     input: { cwd: "/t3/keybindings.json", editor: "vscode" },
   });
+});
+
+it.each(["terminal", "remote-gui"] as const)(
+  "permits the warning action when the selected %s route is authorized",
+  async (route) => {
+    state.choice =
+      route === "terminal"
+        ? { kind: "terminal", editor: "neovim" }
+        : { kind: "gui", editor: "vscode" };
+    state.remote =
+      route === "terminal"
+        ? { mode: "local-exec" }
+        : { mode: "remote-links", host: { kind: "ssh-alias", host: "dev" } };
+    state.registry!.set(
+      state.sessions.get(environmentId)!,
+      AsyncResult.success(session(route === "terminal" ? ["terminal:operate"] : [])),
+    );
+    await act(async () => {
+      renderer = create(
+        <RegistryContext.Provider value={state.registry!}>
+          <KeybindingsConfigWarning
+            environmentId={environmentId}
+            configPath="/t3/keybindings.json"
+            availableEditors={route === "terminal" ? [] : ["vscode"]}
+            message="Invalid shortcut"
+          />
+        </RegistryContext.Provider>,
+      );
+    });
+    const button = renderer!.root.findByType("button");
+    // Invoke the same retained handler to prove the real dispatcher accepts this route.
+    await act(async () => button.props.onClick());
+    expect(route === "terminal" ? state.bridge : state.remoteOpen).toHaveBeenCalledOnce();
+    expect(state.toast).not.toHaveBeenCalled();
+    expect(button.props.disabled).toBe(false);
+  },
+);
+
+it("refreshes warning availability when the selected editor route and live grant change", async () => {
+  const warning = () => (
+    <RegistryContext.Provider value={state.registry!}>
+      <KeybindingsConfigWarning
+        environmentId={environmentId}
+        configPath="/t3/keybindings.json"
+        availableEditors={["vscode"]}
+        message="Invalid shortcut"
+      />
+    </RegistryContext.Provider>
+  );
+  const disabled = () => renderer!.root.findByType("button").props.disabled;
+  await act(async () => {
+    renderer = create(warning());
+  });
+  expect(disabled()).toBe(false);
+  state.choice = { kind: "terminal", editor: "neovim" };
+  await act(async () => renderer!.update(warning()));
+  expect(disabled()).toBe(true);
+  await act(async () =>
+    state.registry!.set(
+      state.sessions.get(environmentId)!,
+      AsyncResult.success(session(["terminal:operate"])),
+    ),
+  );
+  expect(disabled()).toBe(false);
+  state.choice = { kind: "gui", editor: "vscode" };
+  state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "dev" } };
+  await act(async () => {
+    state.registry!.set(state.sessions.get(environmentId)!, AsyncResult.success(session([])));
+    renderer!.update(warning());
+  });
+  expect(disabled()).toBe(false);
+  state.remote = { mode: "remote-unavailable" };
+  await act(async () => renderer!.update(warning()));
+  expect(disabled()).toBe(true);
+  state.remote = { mode: "local-exec" };
+  await act(async () => renderer!.update(warning()));
+  expect(disabled()).toBe(true);
+  await act(async () =>
+    state.registry!.set(
+      state.sessions.get(environmentId)!,
+      AsyncResult.success(session([AuthOrchestrationOperateScope])),
+    ),
+  );
+  expect(disabled()).toBe(false);
 });

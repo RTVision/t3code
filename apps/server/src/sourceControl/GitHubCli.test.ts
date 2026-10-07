@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
+import { GitCommandError } from "@t3tools/contracts";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -58,6 +59,7 @@ function harness(input: {
   readonly remotes: string;
   readonly api: Partial<GitHubApi.GitHubApi["Service"]>;
   readonly localBranches?: ReadonlyArray<string>;
+  readonly headGone?: boolean;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const record =
@@ -80,7 +82,24 @@ function harness(input: {
         git.push(["ensureRemote", args]);
         return args.preferredName;
       }),
-    fetchRemoteTrackingBranch: (args) => record("fetchRemoteTrackingBranch", undefined)(args),
+    fetchRemoteTrackingBranch: (args) =>
+      record(
+        "fetchRemoteTrackingBranch",
+        undefined,
+      )(args).pipe(
+        Effect.andThen(
+          input.headGone
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "fetchRemoteTrackingBranch",
+                  command: "git",
+                  cwd: args.cwd,
+                  detail: "The head branch is gone.",
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
     setBranchUpstream: (args) => record("setBranchUpstream", undefined)(args),
     switchRef: (args) => record("switchRef", { refName: args.refName })(args) as never,
     listLocalBranchNames: () => Effect.succeed([...(input.localBranches ?? [])]),
@@ -516,6 +535,305 @@ describe("GitHubCli.checkoutPullRequest", () => {
           "setBranchUpstream",
           { cwd: "/repo", branch: "feature/x", remoteName: "origin", remoteBranch: "feature/x" },
         ],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  const checkoutApi = (owner = "acme") => ({
+    graphql: () =>
+      Effect.succeed(
+        encodeJson({ data: { repository: { pullRequest: node(5, "feature/x", owner) } } }),
+      ),
+    rest: () => Effect.succeed(repository("acme/web")),
+  });
+
+  const assertForcedCheckout = (git: Array<readonly [string, unknown]>, remoteName: string) =>
+    assert.deepStrictEqual(git, [
+      ["fetchRemoteTrackingBranch", { cwd: "/repo", remoteName, remoteBranch: "feature/x" }],
+      ["switchRef", { cwd: "/repo", refName: "feature/x" }],
+      ["execute", ["reset", "--hard", "--quiet", `refs/remotes/${remoteName}/feature/x`]],
+      [
+        "setBranchUpstream",
+        { cwd: "/repo", branch: "feature/x", remoteName, remoteBranch: "feature/x" },
+      ],
+    ]);
+
+  it.effect("resets an existing branch from the requested GitHub host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "git@github.enterprise.test:acme/web.git"],
+        ["origin", "https://GitHub.com/Acme/Web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("resets an enterprise pull request from its own host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "git@github.com:acme/web.git"],
+        ["enterprise", "ssh://git@github.enterprise.test/acme/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.enterprise.test/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "enterprise");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("selects a fork remote on the pull request host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "git@github.enterprise.test:someone/web.git"],
+        ["origin", "git@github.com:acme/web.git"],
+        ["fork", "git@github.com:someone/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: checkoutApi("someone"),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "fork");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps supported GitHub SSH aliases for base and fork remotes", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["origin", "git@github-work:acme/web.git"],
+        ["fork", "git@github-personal:someone/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: checkoutApi("someone"),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "fork");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("accepts an exact explicitly selected custom GitHub host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(["origin", "https://code.acme.test/acme/web.git"]),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://code.acme.test/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects a same-name repository on another host before any mutation", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(["origin", "git@github.enterprise.test:acme/web.git"]),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* Effect.flip(
+        gh.checkoutPullRequest({
+          cwd: "/repo",
+          reference: "https://github.com/acme/web/pull/5",
+          force: true,
+        }),
+      );
+      assert.instanceOf(error, GitHubCli.GitHubCliCommandError);
+      assert.deepStrictEqual(git, []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an unrelated primary repository before adding a fork remote", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:other/project.git"]),
+      localBranches: ["feature/x"],
+      api: checkoutApi("someone"),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* Effect.flip(
+        gh.checkoutPullRequest({
+          cwd: "/repo",
+          reference: "https://github.com/acme/web/pull/5",
+          force: true,
+        }),
+      );
+      assert.instanceOf(error, GitHubCli.GitHubCliCommandError);
+      assert.deepStrictEqual(git, []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fetches a deleted head's pull ref from the matching base host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "git@github.enterprise.test:acme/web.git"],
+        ["origin", "git@github.com:acme/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      headGone: true,
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assert.deepStrictEqual(git, [
+        [
+          "fetchRemoteTrackingBranch",
+          { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
+        ],
+        ["execute", ["fetch", "--quiet", "--no-tags", "origin", "refs/pull/5/head"]],
+        ["switchRef", { cwd: "/repo", refName: "feature/x" }],
+        ["execute", ["reset", "--hard", "--quiet", "abc123"]],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps the base SSH alias when synchronizing without force", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(["origin", "git@github-work:acme/web.git"]),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+      });
+      assert.deepStrictEqual(git, [
+        [
+          "fetchRemoteTrackingBranch",
+          { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
+        ],
+        ["switchRef", { cwd: "/repo", refName: "feature/x" }],
+        ["execute", ["merge", "--ff-only", "--quiet", "refs/remotes/origin/feature/x"]],
+        [
+          "setBranchUpstream",
+          { cwd: "/repo", branch: "feature/x", remoteName: "origin", remoteBranch: "feature/x" },
+        ],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("creates a fork remote when the same-name existing fork is on another host", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["origin", "git@github.com:acme/web.git"],
+        ["aaa", "git@github.enterprise.test:someone/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: {
+        ...checkoutApi("someone"),
+        rest: (input) => Effect.succeed(repository(input.path.slice("repos/".length))),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assert.deepStrictEqual(git[0], [
+        "ensureRemote",
+        { cwd: "/repo", preferredName: "someone", url: "git@github.com:someone/web.git" },
+      ]);
+      assertForcedCheckout(git.slice(1), "someone");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("distinguishes custom GitHub API ports when selecting a remote", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "https://code.acme.test:8444/acme/web.git"],
+        ["origin", "https://code.acme.test:8443/acme/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: checkoutApi(),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://code.acme.test:8443/acme/web/pull/5",
+        force: true,
+      });
+      assertForcedCheckout(git, "origin");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fetches a deleted fork's pull ref only from its matching base", () => {
+    const { layer, git } = harness({
+      remotes: remotesOutput(
+        ["aaa", "git@github.enterprise.test:acme/web.git"],
+        ["origin", "git@github.com:acme/web.git"],
+      ),
+      localBranches: ["feature/x"],
+      api: {
+        ...checkoutApi(),
+        graphql: () =>
+          Effect.succeed(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    ...node(5, "feature/x", "someone"),
+                    headRepository: null,
+                  },
+                },
+              },
+            }),
+          ),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://github.com/acme/web/pull/5",
+        force: true,
+      });
+      assert.deepStrictEqual(git, [
+        ["execute", ["fetch", "--quiet", "--no-tags", "origin", "refs/pull/5/head"]],
+        ["switchRef", { cwd: "/repo", refName: "feature/x" }],
+        ["execute", ["reset", "--hard", "--quiet", "abc123"]],
       ]);
     }).pipe(Effect.provide(layer));
   });

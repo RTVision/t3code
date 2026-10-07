@@ -141,6 +141,8 @@ vi.mock("../../state/entities", () => ({
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderModelsSection } from "./ProviderModelsSection";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
 const environmentId = EnvironmentId.make("remote-device");
@@ -365,6 +367,67 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
+
+  it.each(["favorite", "visibility", "order"] as const)(
+    "keeps the actual device-local %s control editable without server writes",
+    (action) => {
+      commands.canWriteSettings = false;
+      commands.canManageProviders = false;
+      atoms.providers = [
+        {
+          ...provider(),
+          models: [
+            { slug: "first", name: "First", isCustom: false, capabilities: null },
+            { slug: "second", name: "Second", isCustom: false, capabilities: null },
+          ],
+        },
+      ];
+      const editor = visitElements(
+        renderPanel({ readOnly: true }),
+        (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+      );
+      if (!editor) throw new Error("Provider editor missing");
+      hooks.reset();
+      hooks.beginRender();
+      const card = ProviderInstanceCard(
+        editor.props as unknown as Parameters<typeof ProviderInstanceCard>[0],
+      );
+      const models = visitElements(card, (element) => element.type === ProviderModelsSection);
+      if (!models) throw new Error("Model controls missing");
+      hooks.reset();
+      hooks.beginRender();
+      const controls = ProviderModelsSection(
+        models.props as unknown as Parameters<typeof ProviderModelsSection>[0],
+      );
+      const label =
+        action === "favorite"
+          ? "Add First to favorites"
+          : action === "visibility"
+            ? "Show First in the model picker"
+            : "Move First down";
+      const control = visitElements(controls, (element) => element.props["aria-label"] === label);
+      if (!control) throw new Error(`Missing ${label}`);
+      expect(control.props.disabled).toBeFalsy();
+      if (action === "visibility")
+        (control.props.onCheckedChange as (value: boolean) => void)(false);
+      else (control.props.onClick as () => void)();
+      expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(
+        action === "favorite"
+          ? { favorites: [{ provider: codexId, model: "first" }] }
+          : {
+              providerModelPreferences: {
+                [codexId]: {
+                  hiddenModels: action === "visibility" ? ["first"] : [],
+                  modelOrder: action === "order" ? ["second", "first"] : [],
+                },
+              },
+            },
+      );
+      expect(settingsState.updateSettings).not.toHaveBeenCalled();
+      expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
+      expect(models.props.canManageCustomModels).toBe(false);
+    },
+  );
 
   it("does not substitute another account when the requested instance was removed", () => {
     atoms.providers = [provider()];

@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
@@ -21,7 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useCallback, useEffect, useMemo } from "react";
 import { randomUUID } from "./lib/utils";
-import { readEnvironmentScope } from "./state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "./state/session";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import {
@@ -111,6 +112,18 @@ export function useEditorDispatch(
   const state = useEditorChoice(environmentId, availableEditors);
   const openGui = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const { choice, terminal, remote } = state;
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canOpenLocalEditor = useAtomValue(
+    shellEnvironment.openInEditor.permissionAtom(environmentId),
+  );
+  const canOpen =
+    environmentId !== null &&
+    choice !== null &&
+    (choice.kind === "terminal"
+      ? canOperateTerminal
+      : remote.isResolved &&
+        remote.state.mode !== "remote-unavailable" &&
+        (remote.state.mode !== "local-exec" || canOpenLocalEditor));
   const open = useCallback(
     async (input: string | EditorOpenTarget, selected: EditorChoice | null = choice) => {
       const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
@@ -212,7 +225,7 @@ export function useEditorDispatch(
     },
     [availableEditors, choice, environmentId, openGui, remote, terminal, workspace],
   );
-  return { ...state, open };
+  return { ...state, open, canOpen };
 }
 export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,

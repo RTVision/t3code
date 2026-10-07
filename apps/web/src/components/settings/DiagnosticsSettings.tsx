@@ -1,7 +1,6 @@
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { environmentSession } from "../../state/session";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -22,7 +21,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { useEditorDispatch } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -719,7 +718,6 @@ export function DiagnosticsSettingsPanel() {
   const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
-  const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const session = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
   );
@@ -732,7 +730,10 @@ export function DiagnosticsSettingsPanel() {
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors ?? []);
+  const { open: openInEditor, canOpen: canOpenHostEditor } = useEditorDispatch(
+    environmentId,
+    availableEditors ?? [],
+  );
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -790,9 +791,6 @@ export function DiagnosticsSettingsPanel() {
 
     if (environmentId === null) {
       setOpenLogsDirectoryError("No environment is selected.");
-      return;
-    }
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       return;
     }
 

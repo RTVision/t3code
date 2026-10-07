@@ -292,3 +292,38 @@ it.effect.each([WS_METHODS.pullRequestsRerunCi, WS_METHODS.pullRequestsSetFileVi
       }),
     ),
 );
+
+it("matches the server editor grant for availability and destination dispatch across revocation and regrant", async () => {
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(sessions(env));
+  const unmountOther = registry.mount(sessions(other));
+  let writes = 0;
+  const command = createEnvironmentRpcCommand(runtime, {
+    label: "test.editor",
+    tag: WS_METHODS.shellOpenInEditor,
+    execute: () =>
+      Effect.sync(() => {
+        writes++;
+      }),
+  });
+  const target = { environmentId: env, input: { cwd: "/repo/file.ts", editor: "vscode" as const } };
+  try {
+    registry.set(sessions(env), AsyncResult.success(grant(false)));
+    registry.set(sessions(other), AsyncResult.success(grant(true)));
+    expect(registry.get(command.permissionAtom(env))).toBe(false);
+    expect((await command.run(registry, target))._tag).toBe("Failure");
+    expect(writes).toBe(0);
+    registry.set(sessions(env), AsyncResult.success(grant(true)));
+    expect(registry.get(command.permissionAtom(env))).toBe(true);
+    expect((await command.run(registry, target))._tag).toBe("Success");
+    expect(writes).toBe(1);
+    registry.set(sessions(env), AsyncResult.success(grant(false)));
+    expect(registry.get(command.permissionAtom(env))).toBe(false);
+    expect((await command.run(registry, target))._tag).toBe("Failure");
+    expect(writes).toBe(1);
+  } finally {
+    unmount();
+    unmountOther();
+    registry.dispose();
+  }
+});

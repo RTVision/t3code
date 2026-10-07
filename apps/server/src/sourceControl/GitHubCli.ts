@@ -879,16 +879,26 @@ export const make = Effect.gen(function* () {
       remotes
         .split("\n")
         .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim()))
-        .find(
-          (match) =>
-            match !== null &&
-            normalizeGitRemoteUrl(match[2]!).split("/").slice(1).join("/") ===
-              nameWithOwner.toLowerCase(),
-        )?.[1] ?? null;
-    const baseRemote = Effect.suspend(() => {
-      const known = remoteFor(baseNameWithOwner);
-      return known === null ? git.resolvePrimaryRemoteName(input.cwd) : Effect.succeed(known);
-    });
+        .find((match) => {
+          if (match === null) return false;
+          const remoteUrl = match[2]!;
+          const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
+          const host =
+            gitHubApiHostForRemote(remoteUrl) ??
+            (provider === null ? null : new URL(provider.baseUrl).host.toLowerCase());
+          return (
+            host === base.host &&
+            normalizeGitRemoteUrl(remoteUrl).split("/").slice(1).join("/") ===
+              nameWithOwner.toLowerCase()
+          );
+        })?.[1] ?? null;
+    const baseRemote = remoteFor(baseNameWithOwner);
+    if (baseRemote === null) {
+      return yield* commandFailure(
+        input.cwd,
+        "No git remote matches the pull request's base repository.",
+      );
+    }
     // A fork's branch named like the base's default branch is checked out under the owner's
     // prefix. Without the default branch that collision cannot be ruled out, and the checkout
     // would reset the local default branch to the fork's commit, so it fails instead.
@@ -906,7 +916,7 @@ export const make = Effect.gen(function* () {
 
     /** The remote the head branch lives on; a fork the checkout does not know yet is added. */
     const headRemote = Effect.gen(function* () {
-      if (!isCrossRepository) return yield* baseRemote;
+      if (!isCrossRepository) return baseRemote;
       if (headNameWithOwner === null) return yield* commandFailure(input.cwd, "The fork is gone.");
       const known = remoteFor(headNameWithOwner);
       if (known !== null) return known;
@@ -947,7 +957,7 @@ export const make = Effect.gen(function* () {
             "fetch",
             "--quiet",
             "--no-tags",
-            yield* baseRemote,
+            baseRemote,
             `refs/pull/${pullRequest.number}/head`,
           ]);
           const { commitSha } = yield* git.resolveCommit({

@@ -105,7 +105,7 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { useOpenInPreferredEditor } from "~/editorPreferences";
+import { useEditorDispatch } from "~/editorPreferences";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
@@ -1096,7 +1096,7 @@ export default function GitActionsControl({
   );
   const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
-  const openInPreferredEditor = useOpenInPreferredEditor(
+  const { open: openInPreferredEditor, canOpen: canOpenEditor } = useEditorDispatch(
     activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
     gitCwd,
@@ -2082,7 +2082,7 @@ export default function GitActionsControl({
                                 <button
                                   type="button"
                                   className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                                  disabled={!canOperateThread}
+                                  disabled={!canOpenEditor}
                                   aria-label={`Open ${file.path} in editor`}
                                   onClick={() => openChangedFileInEditor(file.path)}
                                 >

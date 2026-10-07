@@ -98,7 +98,16 @@ export function useReviewSections(input: {
     // Keep the selected section while its grant loads, without displaying cached host files.
     return fileAccess.isPending
       ? sections.map((section) =>
-          section.kind === "turn" ? section : { ...section, diff: null, isLoading: true },
+          section.kind === "turn"
+            ? section
+            : {
+                ...section,
+                source: undefined,
+                files: undefined,
+                truncated: false,
+                diff: null,
+                isLoading: true,
+              },
         )
       : sections;
   }, [

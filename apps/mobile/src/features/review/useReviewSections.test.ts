@@ -13,6 +13,8 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   session: null as Pick<AuthSessionState, "authenticated" | "scopes"> | null,
   sessionError: null as string | null,
+  registry: null as unknown as AtomRegistry.AtomRegistry,
+  fileQuery: vi.fn(),
   sessionAtom: {},
   effects: [] as Array<() => void>,
   checkpoints: [] as ReadonlyArray<ThreadCheckpointSummary>,
@@ -22,6 +24,9 @@ vi.mock("@t3tools/client-runtime/state/thread-checkpoints", () => ({
   deriveThreadCheckpointSummaries: () => state.checkpoints,
 }));
 vi.mock("react", () => ({
+  useContext: () => state.registry,
+  useRef: <A>(current: A) => ({ current }),
+  useState: <A>(value: A) => [value, vi.fn()],
   useCallback: <A>(callback: A) => callback,
   useEffect: (effect: () => void) => state.effects.push(effect),
   useMemo: <A>(factory: () => A) => factory(),
@@ -53,9 +58,10 @@ vi.mock("../../state/queries", () => ({
   useCheckpointDiff: () => ({ data: null, error: null, isPending: false, refresh: vi.fn() }),
 }));
 vi.mock("../../state/review", () => ({
-  reviewEnvironment: { diffPreview: vi.fn() },
+  reviewEnvironment: { diffPreview: vi.fn(), diffFilePatch: state.fileQuery },
 }));
-vi.mock("./reviewState", () => ({
+vi.mock("./reviewState", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./reviewState")>()),
   setReviewAsyncError: vi.fn(),
   setReviewGitSections: vi.fn(),
   setReviewSelectedSectionId: vi.fn(),
@@ -208,3 +214,79 @@ it("keeps a cached checkpoint available when the filesystem access check fails",
   expect(checkpoint.selectedSection?.diff).toBe(checkpointDiff);
   expect(checkpoint.error).toBeNull();
 });
+
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
+import { useReviewDiffData } from "./useReviewDiffData";
+vi.mock("@effect/atom-react", () => ({
+  RegistryContext: {},
+  useAtomValue: (atom: Atom.Atom<unknown>) => state.registry.get(atom),
+}));
+vi.mock("./nativeReviewDiffAdapter", () => ({
+  getCachedNativeReviewDiffData: ({ parsedDiff }: { parsedDiff: unknown }) => ({
+    rows: [],
+    parsedDiff,
+  }),
+}));
+
+it.each(["working-tree", "branch-range"] as const)(
+  "withholds cached lazy %s patches while access reloads and restores them only when allowed",
+  (kind) => {
+    state.registry = AtomRegistry.make();
+    let input = makeInput(makeReviewCache(kind));
+    const diff =
+      "diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n@@ -1 +1 @@\n-old\n+private host line\n";
+    const source = {
+      ...input.reviewCache.gitSections[0]!,
+      diff,
+      truncated: true,
+      files: [{ path: "private.ts", previousPath: null, additions: 1, deletions: 1 }],
+    };
+    input = makeInput({ ...input.reviewCache, gitSections: [source] });
+    const patch = Atom.make(AsyncResult.success({ ...source, truncated: false }));
+    state.fileQuery.mockReturnValue(patch);
+    const renderDiff = () => {
+      const sections = renderSections(input);
+      return {
+        sections,
+        diff: useReviewDiffData({
+          threadKey: input.reviewCache.threadKey,
+          environmentId: input.environmentId,
+          cwd: "/repo",
+          selectedSection: sections.selectedSection,
+          revision: undefined,
+          draftMessage: "",
+        }),
+      };
+    };
+    try {
+      const allowed = renderDiff();
+      expect(state.fileQuery).toHaveBeenCalledTimes(1);
+      expect(allowed.diff.parsedDiff.kind).toBe("files");
+      if (allowed.diff.parsedDiff.kind === "files") {
+        expect(allowed.diff.parsedDiff.files[0]?.additionLines).toContain("private host line");
+      }
+      state.fileQuery.mockClear();
+      state.session = null;
+      const pending = renderDiff();
+      expect(pending.sections.selectedSection?.id).toBe(`git:${kind}`);
+      expect(pending.sections.selectedSection?.isLoading).toBe(true);
+      expect(pending.sections.reviewSections.find((section) => section.id === "turn:1")?.diff).toBe(
+        checkpointDiff,
+      );
+      expect.soft(state.fileQuery).not.toHaveBeenCalled();
+      expect.soft(pending.diff.parsedDiff.kind).toBe("empty");
+      expect(setReviewSelectedSectionId).not.toHaveBeenCalled();
+      state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+      expect(renderDiff().diff.parsedDiff.kind).toBe("files");
+      state.fileQuery.mockClear();
+      state.session = { authenticated: true, scopes: [] };
+      const denied = renderDiff();
+      expect(denied.sections.reviewSections.map((section) => section.id)).toEqual(["turn:1"]);
+      expect(state.fileQuery).not.toHaveBeenCalled();
+      expect(denied.sections.selectedSection?.diff).toBe(checkpointDiff);
+      expect(JSON.stringify(denied.diff.parsedDiff)).not.toContain("private host line");
+    } finally {
+      state.registry.dispose();
+    }
+  },
+);

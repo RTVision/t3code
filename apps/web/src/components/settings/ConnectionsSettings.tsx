@@ -3804,17 +3804,12 @@ export function ConnectionsSettings() {
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}
-                {canReadRelay || canManageRelay ? (
-                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
-                ) : null}
               </>
             ) : canManageLocalBackend ? (
-              <>
-                {renderDisabledNetworkAccessRow()}
-                {canReadRelay || canManageRelay ? (
-                  <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
-                ) : null}
-              </>
+              renderDisabledNetworkAccessRow()
+            ) : null}
+            {canReadRelay || canManageRelay ? (
+              <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />
             ) : null}
           </SettingsSection>
 

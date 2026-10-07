@@ -1,5 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  type EditorChoice,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -15,6 +17,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  choice: { kind: "gui", editor: "vscode" } as EditorChoice,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
   updateMetadata: vi.fn(),
@@ -27,7 +30,21 @@ const state = vi.hoisted(() => ({
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => serverConfig }));
+vi.mock("@effect/atom-react", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useAtomValue: (atom: unknown) => {
+      const allowed = useSyncExternalStore(
+        (listener) => {
+          state.listeners.add(listener);
+          return () => state.listeners.delete(listener);
+        },
+        () => state.allowed,
+      );
+      return atom === "editor-permission" ? allowed : serverConfig;
+    },
+  };
+});
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", () => ({
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
@@ -54,6 +71,7 @@ vi.mock("../state/session", async () => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
+    scope !== AuthTerminalOperateScope &&
     (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
   return {
     // Asset atoms read these at module scope; the markdown tests only exercise
@@ -77,6 +95,13 @@ vi.mock("../state/session", async () => {
 vi.mock("../state/server", () => ({
   serverEnvironment: { configValueAtom: () => "config" },
 }));
+vi.mock("../state/shell", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/shell")>()),
+  shellEnvironment: {
+    openInEditor: { permissionAtom: () => "editor-permission" },
+    revealInFileManager: "revealInFileManager",
+  },
+}));
 vi.mock("../state/threads", () => ({
   threadEnvironment: { updateMetadata: "updateMetadata" },
 }));
@@ -99,7 +124,7 @@ vi.mock("../terminalEditors", () => ({
 }));
 vi.mock("../editorPreferenceStorage", () => ({
   useEditorPreference: (key: string, fallback: unknown) => [
-    key === "t3code:editor-choice:v1" ? { kind: "gui", editor: "vscode" } : fallback,
+    key === "t3code:editor-choice:v1" ? state.choice : fallback,
     vi.fn(),
   ],
 }));
@@ -156,6 +181,7 @@ let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
   state.allowed = true;
+  state.choice = { kind: "gui", editor: "vscode" };
   state.listeners.clear();
   state.linkedPullRequest = null;
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -308,3 +334,15 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     });
   },
 );
+
+it("keeps denied terminal-editor routes out of the context menu even when local GUI actions are allowed", async () => {
+  state.choice = { kind: "terminal", editor: "neovim" };
+  state.allowed = true;
+  state.choose.mockResolvedValue("open");
+  await renderMarkdown("[Readme](docs/readme.md)");
+  await openContextMenu();
+  expect(offeredActions()).not.toContain("open");
+  expect(offeredActions()).toContain("reveal");
+  expect(state.openEditor).not.toHaveBeenCalled();
+  expect(state.toast).not.toHaveBeenCalled();
+});

@@ -1,12 +1,7 @@
-import {
-  AuthOrchestrationOperateScope,
-  type EditorId,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import type { EditorId, EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { useOpenInPreferredEditor } from "../editorPreferences";
-import { useEnvironmentScope } from "../state/session";
+import { useEditorDispatch } from "../editorPreferences";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
@@ -21,8 +16,7 @@ export function KeybindingsConfigWarning({
   configPath: string | null;
   availableEditors: readonly EditorId[];
 }) {
-  const canOpenEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const { open: openInEditor, canOpen } = useEditorDispatch(environmentId, availableEditors);
 
   return (
     <>
@@ -31,7 +25,7 @@ export function KeybindingsConfigWarning({
         <Button
           size="xs"
           variant="outline"
-          disabled={!canOpenEditor || !configPath || availableEditors.length === 0}
+          disabled={!canOpen || !configPath}
           onClick={async () => {
             if (!configPath) return;
             const result = await openInEditor(configPath);

@@ -40,7 +40,21 @@ const state = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => ({ availableEditors: ["vscode"] }) }));
+vi.mock("@effect/atom-react", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useAtomValue: (atom: unknown) => {
+      const allowed = useSyncExternalStore(
+        (listener) => {
+          state.listeners.add(listener);
+          return () => state.listeners.delete(listener);
+        },
+        () => state.hostAllowed,
+      );
+      return atom === "editor-permission" ? allowed : { availableEditors: ["vscode"] };
+    },
+  };
+});
 vi.mock("../hooks/useSettings", () => ({
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
@@ -69,7 +83,7 @@ vi.mock("../terminalEditors", () => ({
 }));
 vi.mock("../state/shell", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/shell")>()),
-  shellEnvironment: { openInEditor: "openInEditor" },
+  shellEnvironment: { openInEditor: { permissionAtom: () => "editor-permission" } },
 }));
 vi.mock("~/lib/selectionActions", () => ({
   observeSelectionActions: () => ({ dispose: vi.fn(), cancel: vi.fn(), pending: false }),
@@ -85,7 +99,7 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "resize"
       ? state.resize
-      : command === "openInEditor"
+      : typeof command === "object"
         ? state.openGui
         : state.otherCommand,
 }));

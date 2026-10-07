@@ -24,7 +24,17 @@ export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubSta
   }
 }
 
-/** Git failed for a reason other than a conflict: the fetch, or a push GitHub refused. */
+/** A stack head changed while its lower layers were being processed. */
+export class GitHubStackRebaseChangedError extends Schema.TaggedError<GitHubStackRebaseChangedError>()(
+  "GitHubStackRebaseChangedError",
+  { number: Schema.Int, completed: Schema.Int },
+) {
+  override get message(): string {
+    return `The stack changed at PR #${this.number} after ${this.completed} layers. Refresh it before trying again.`;
+  }
+}
+
+/** Git failed while preparing, rebasing or publishing a layer. */
 export class GitHubStackRebaseGitError extends Schema.TaggedError<GitHubStackRebaseGitError>()(
   "GitHubStackRebaseGitError",
   { step: Schema.String, number: Schema.Int, completed: Schema.Int, cause: Schema.Defect() },
@@ -115,6 +125,33 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
     ),
   ]).pipe(Effect.mapError(failed("fetching", first.number, 0)));
 
+  const processed: Array<CascadeLayer> = [];
+  const checkHeads = Effect.fnUntraced(function* (
+    heads: ReadonlyArray<CascadeLayer>,
+    completed: number,
+  ) {
+    const observed = yield* git([
+      "ls-remote",
+      "--heads",
+      "origin",
+      ...heads.map((head) => `refs/heads/${head.headBranch}`),
+    ]).pipe(Effect.mapError(failed("checking stack heads", heads[0]!.number, completed)));
+    const current = new Map(
+      observed.stdout
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const [sha, ref] = line.split("\t");
+          return [ref, sha];
+        }),
+    );
+    const changed = heads.find(
+      (head) => current.get(`refs/heads/${head.headBranch}`) !== head.headSha,
+    );
+    if (changed)
+      return yield* new GitHubStackRebaseChangedError({ number: changed.number, completed });
+  });
+
   let parentOld = `origin/${input.base}`;
   let parentNew = `origin/${input.base}`;
   for (const [index, layer] of input.layers.entries()) {
@@ -133,12 +170,24 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
       Effect.mapError(failed("rebasing", layer.number, index)),
     );
     if (rebase.exitCode !== 0) {
+      const conflicts = yield* git(["ls-files", "--unmerged"]).pipe(
+        Effect.mapError(failed("checking rebase conflicts", layer.number, index)),
+      );
       yield* git(["rebase", "--abort"], true).pipe(Effect.ignore);
-      return yield* new GitHubStackRebaseConflictError({ number: layer.number, completed: index });
+      if (conflicts.stdout.trim() !== "") {
+        return yield* new GitHubStackRebaseConflictError({
+          number: layer.number,
+          completed: index,
+        });
+      }
+      return yield* failed("rebasing", layer.number, index)(rebase);
     }
     const rebased = (yield* git(["rev-parse", "HEAD"]).pipe(
       Effect.mapError(failed("rebasing", layer.number, index)),
     )).stdout.trim();
+    // A lease guards the child only. Recheck every processed parent, including no-op layers,
+    // before publishing a dependent layer.
+    yield* checkHeads([...processed, layer], index);
     if (rebased !== layer.headSha) {
       yield* git([
         "push",
@@ -148,8 +197,10 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
         `${rebased}:refs/heads/${layer.headBranch}`,
       ]).pipe(Effect.mapError(failed("pushing", layer.number, index)));
     }
+    processed.push({ ...layer, headSha: rebased });
     parentOld = layer.headSha;
     parentNew = rebased;
   }
+  yield* checkHeads(processed, input.layers.length);
   return input.layers.length;
 }, Effect.scoped);

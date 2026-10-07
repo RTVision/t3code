@@ -1,15 +1,25 @@
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
+  type EditorChoice,
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isValidElement, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
+  choice: { kind: "gui", editor: "vscode" } as EditorChoice,
+  remote: { mode: "local-exec" } as
+    | { mode: "local-exec" }
+    | { mode: "remote-links"; host: { kind: "ssh-alias"; host: string } }
+    | { mode: "remote-unavailable" },
+  opened: vi.fn(),
+  toast: vi.fn(),
   primaryScopes: new Set<string>(),
   shell: { branch: "main" } as { branch: string } | null,
   detail: null as { branch: string } | null,
@@ -34,7 +44,12 @@ vi.mock("react", async (importOriginal) => ({
   },
 }));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) => (atom === "vcs-state" ? { isRunning: false } : null),
+  useAtomValue: (atom: unknown) =>
+    atom === "editor-permission"
+      ? state.scopes.has(AuthOrchestrationOperateScope)
+      : atom === "vcs-state"
+        ? { isRunning: false }
+        : { availableEditors: ["vscode"] },
 }));
 vi.mock("~/state/entities", () => ({
   useThreadProjection: (ref: unknown) =>
@@ -124,12 +139,53 @@ vi.mock("~/lib/sourceControlActions", () => ({
   }),
 }));
 vi.mock("~/lib/utils", () => ({ cn: () => "", randomUUID: () => "action" }));
-vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
+vi.mock("~/editorPreferenceStorage", () => ({
+  useEditorPreference: (key: string, fallback: unknown) => [
+    key === "t3code:editor-choice:v1" ? state.choice : fallback,
+    vi.fn(),
+  ],
+}));
+vi.mock("~/remoteOpen", () => ({
+  useRemoteOpenResolution: () => ({ state: state.remote, isResolved: true }),
+  useRemoteCapableEditors: () => ["vscode"],
+  openRemoteEditorUrl: async (url: string) => {
+    state.opened(url);
+    return true;
+  },
+}));
+vi.mock("~/terminalEditors", () => ({
+  useTerminalEditor: () => ({
+    capability: { preferenceKey: "", state: "available" },
+    connected: true,
+    connection: { kind: "primary" },
+    generation: 1,
+    refresh: async () => ({ state: "available", routeGeneration: 1 }),
+  }),
+  invalidateTerminalEditors: vi.fn(),
+}));
+vi.mock("~/state/shell", () => ({
+  shellEnvironment: {
+    openInEditor: Object.assign(
+      async (value: unknown) => {
+        state.opened(value);
+        return AsyncResult.success(undefined);
+      },
+      { permissionAtom: () => "editor-permission" },
+    ),
+  },
+}));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => () => {} }));
 vi.mock("~/lib/openPullRequestLink", () => ({ useOpenPrLink: () => () => {} }));
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (input: unknown) => input,
-  toastManager: { add: () => "toast", update: () => {}, close: () => {} },
+  toastManager: {
+    add: (value: unknown) => {
+      state.toast(value);
+      return "toast";
+    },
+    update: () => {},
+    close: () => {},
+  },
 }));
 vi.mock("~/components/ui/dialog", () => ({
   Dialog: "Dialog",
@@ -292,4 +348,108 @@ describe("Git actions while thread details load", () => {
     expect(state.draft.branch).toBe("feature");
     expect(state.metadataRequests).toEqual([]);
   });
+});
+
+function changedFileButton() {
+  const element = GitActionsControl({
+    gitCwd: "/repo",
+    activeThreadRef: {
+      environmentId: EnvironmentId.make("environment"),
+      threadId: ThreadId.make("thread"),
+    },
+  });
+  type ButtonProps = {
+    children?: ReactNode;
+    "aria-label"?: string;
+    disabled?: boolean;
+    onClick?: () => void;
+  };
+  const find = (node: ReactNode): ButtonProps | undefined => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const match = find(child);
+        if (match) return match;
+      }
+      return;
+    }
+    if (!isValidElement<ButtonProps>(node)) return;
+    if (node.props["aria-label"] === "Open file.ts in editor") return node.props;
+    return find(node.props.children);
+  };
+  const button = find(element);
+  if (!button) throw new Error("Changed-file editor button is missing");
+  return button;
+}
+
+it("opens changed files through authorized terminal and remote GUI routes and blocks local GUI after revocation", async () => {
+  state.scopes = new Set([AuthTerminalOperateScope]);
+  state.choice = { kind: "terminal", editor: "neovim" };
+  state.remote = { mode: "local-exec" };
+  state.opened.mockReset();
+  state.toast.mockReset();
+  vi.stubGlobal("window", {
+    desktopBridge: {
+      openTerminalEditor: async (input: unknown) => {
+        state.opened(input);
+        return { status: "opened" };
+      },
+    },
+  });
+  try {
+    let completed: () => void = () => {};
+    let milestone = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    state.opened.mockImplementation(() => completed());
+    expect(changedFileButton().disabled).toBe(false);
+    changedFileButton().onClick!();
+    await milestone;
+    expect(state.opened).toHaveBeenCalledWith(
+      expect.objectContaining({
+        editor: "neovim",
+        target: expect.objectContaining({ path: "/repo/file.ts" }),
+      }),
+    );
+    state.choice = { kind: "gui", editor: "vscode" };
+    state.scopes.clear();
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "dev" } };
+    milestone = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    expect(changedFileButton().disabled).toBe(false);
+    changedFileButton().onClick!();
+    await milestone;
+    expect(state.opened).toHaveBeenCalledWith(
+      expect.stringContaining("vscode://vscode-remote/ssh-remote+dev/repo/file.ts"),
+    );
+    state.remote = { mode: "local-exec" };
+    state.scopes.add(AuthOrchestrationOperateScope);
+    const retained = changedFileButton().onClick!;
+    state.scopes.clear();
+    state.opened.mockClear();
+    expect(changedFileButton().disabled).toBe(true);
+    milestone = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    state.toast.mockImplementation(() => completed());
+    retained();
+    await milestone;
+    expect(state.opened).not.toHaveBeenCalled();
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Unable to open file" }),
+    );
+    state.scopes.add(AuthOrchestrationOperateScope);
+    milestone = new Promise<void>((resolve) => {
+      completed = resolve;
+    });
+    expect(changedFileButton().disabled).toBe(false);
+    changedFileButton().onClick!();
+    await milestone;
+    expect(state.opened).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "environment",
+      input: { cwd: "/repo/file.ts", editor: "vscode" },
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

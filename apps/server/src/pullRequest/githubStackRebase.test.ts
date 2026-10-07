@@ -20,7 +20,7 @@ const layer = Layer.mergeAll(
  * A bare "GitHub" holding the live-run stack: `main` moved ahead after the stack was cut, and a
  * second layer sits on the first. Returns each branch's head.
  */
-const setup = Effect.gen(function* () {
+const setup = Effect.fnUntraced(function* (advanceMain = true, thirdLayer = false) {
   const fs = yield* FileSystem.FileSystem;
   const process = yield* VcsProcess.VcsProcess;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cascade-test-" });
@@ -53,19 +53,47 @@ const setup = Effect.gen(function* () {
   yield* git(work, "switch", "--quiet", "-c", "feat/answer-doc");
   yield* write("index.ts", "/** The answer. */\nexport const answer = 42;\n");
   yield* git(work, "commit", "--quiet", "-am", "B: document the answer");
+  if (thirdLayer) {
+    yield* git(work, "switch", "--quiet", "-c", "feat/answer-example");
+    yield* write("example.ts", "export const example = 42;\n");
+    yield* git(work, "add", "-A");
+    yield* git(work, "commit", "--quiet", "-m", "C: add an example");
+  }
   yield* git(work, "switch", "--quiet", "main");
-  yield* write("README.md", "main moved ahead\n");
-  yield* git(work, "add", "-A");
-  yield* git(work, "commit", "--quiet", "-m", "Docs");
+  if (advanceMain) {
+    yield* write("README.md", "main moved ahead\n");
+    yield* git(work, "add", "-A");
+    yield* git(work, "commit", "--quiet", "-m", "Docs");
+  }
   yield* git(work, "push", "--quiet", "origin", "main", "feat/answer-42", "feat/answer-doc");
+  if (thirdLayer) yield* git(work, "push", "--quiet", "origin", "feat/answer-example");
   const head = (branch: string) => git(remote, "rev-parse", `refs/heads/${branch}`);
   return {
     remote,
+    root,
     head,
+    pushConcurrentChange: Effect.fnUntraced(function* (branch: string) {
+      yield* git(work, "fetch", "--quiet", "origin");
+      yield* git(work, "switch", "--quiet", branch);
+      yield* git(work, "reset", "--quiet", "--hard", `origin/${branch}`);
+      yield* write("concurrent.txt", "Another writer advanced this branch.\n");
+      yield* git(work, "add", "-A");
+      yield* git(work, "commit", "--quiet", "-m", "Concurrent parent change");
+      yield* git(work, "push", "--quiet", "origin", branch);
+    }),
     git: (...args: string[]) => git(remote, ...args),
     layers: [
       { number: 1, headBranch: "feat/answer-42", headSha: yield* head("feat/answer-42") },
       { number: 2, headBranch: "feat/answer-doc", headSha: yield* head("feat/answer-doc") },
+      ...(thirdLayer
+        ? [
+            {
+              number: 3,
+              headBranch: "feat/answer-example",
+              headSha: yield* head("feat/answer-example"),
+            },
+          ]
+        : []),
     ],
   };
 });
@@ -73,7 +101,7 @@ const setup = Effect.gen(function* () {
 it.layer(layer)("cascadeRebaseStack", (it) => {
   it.effect("moves each layer's own commits onto the rebased layer below it", () =>
     Effect.gen(function* () {
-      const repo = yield* setup;
+      const repo = yield* setup();
       const completed = yield* cascadeRebaseStack({
         host: "github.com",
         repository: "acme/web",
@@ -97,7 +125,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
 
   it.effect("refuses to overwrite a layer pushed after it was reviewed", () =>
     Effect.gen(function* () {
-      const repo = yield* setup;
+      const repo = yield* setup();
       const stale = [
         repo.layers[0]!,
         // Reviewed at the bottom layer's head, but the branch is really at its own commit.
@@ -112,14 +140,18 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
           remote: repo.remote,
         }),
       );
-      expect(error).toMatchObject({ _tag: "GitHubStackRebaseGitError", number: 2, completed: 1 });
+      expect(error).toMatchObject({
+        _tag: "GitHubStackRebaseChangedError",
+        number: 2,
+        completed: 1,
+      });
       expect(yield* repo.head("feat/answer-doc")).toBe(repo.layers[1]!.headSha);
     }).pipe(Effect.scoped),
   );
 
   it.effect("stops at a conflicting layer and leaves it untouched", () =>
     Effect.gen(function* () {
-      const repo = yield* setup;
+      const repo = yield* setup();
       // Make main conflict with the bottom layer's change to the same line.
       const fs = yield* FileSystem.FileSystem;
       const process = yield* VcsProcess.VcsProcess;
@@ -157,6 +189,157 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
         completed: 0,
       });
       expect(yield* repo.head("feat/answer-42")).toBe(repo.layers[0]!.headSha);
+    }).pipe(Effect.scoped),
+  );
+  it.effect.each(["rebased parent", "unchanged parent", "earlier parent", "last push"] as const)(
+    "detects a concurrent push after processing %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const repo = yield* setup(scenario !== "unchanged parent", scenario === "earlier parent");
+        const process = yield* VcsProcess.VcsProcess;
+        let injected = false;
+        const triggerBranch =
+          scenario === "earlier parent"
+            ? repo.layers[1]!.headBranch
+            : scenario === "last push"
+              ? repo.layers[1]!.headBranch
+              : repo.layers[0]!.headBranch;
+        const error = yield* Effect.flip(
+          cascadeRebaseStack({
+            host: "github.com",
+            repository: "acme/web",
+            base: "main",
+            layers: repo.layers,
+            remote: repo.remote,
+          }).pipe(
+            Effect.provideService(VcsProcess.VcsProcess, {
+              run: (input) =>
+                process.run(input).pipe(
+                  Effect.tap(() => {
+                    const trigger =
+                      scenario === "unchanged parent"
+                        ? input.args[0] === "checkout" &&
+                          input.args.at(-1) === repo.layers[1]!.headSha
+                        : input.args[0] === "push" &&
+                          input.args.at(-1)?.endsWith(`:refs/heads/${triggerBranch}`);
+                    if (injected || !trigger) return Effect.void;
+                    injected = true;
+                    return repo.pushConcurrentChange(repo.layers[0]!.headBranch);
+                  }),
+                ),
+            }),
+          ),
+        );
+        expect(injected).toBe(true);
+        const completed = scenario === "earlier parent" || scenario === "last push" ? 2 : 1;
+        expect(error).toMatchObject({
+          _tag: "GitHubStackRebaseChangedError",
+          number: 1,
+          completed,
+        });
+        const unpublished = repo.layers[completed];
+        if (unpublished) expect(yield* repo.head(unpublished.headBranch)).toBe(unpublished.headSha);
+        expect(
+          yield* repo.git("show", `${yield* repo.head(repo.layers[0]!.headBranch)}:concurrent.txt`),
+        ).toBe("Another writer advanced this branch.");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([0, 1])(
+    "reports a signing failure after %s layers and preserves its evidence",
+    (completed) =>
+      Effect.gen(function* () {
+        const repo = yield* setup();
+        const fs = yield* FileSystem.FileSystem;
+        const process = yield* VcsProcess.VcsProcess;
+        const config = `${repo.root}/signing.gitconfig`;
+        yield* fs.writeFileString(
+          config,
+          "[commit]\n gpgsign = true\n[gpg]\n format = openpgp\n program = /bin/false\n[user]\n signingkey = DUMMY-CONTROL-KEY\n",
+        );
+        let rebases = 0;
+        const error = yield* Effect.flip(
+          cascadeRebaseStack({
+            host: "github.com",
+            repository: "acme/web",
+            base: "main",
+            layers: repo.layers,
+            remote: repo.remote,
+          }).pipe(
+            Effect.provideService(VcsProcess.VcsProcess, {
+              run: (input) => {
+                if (input.args[0] === "rebase" && input.args[1] !== "--abort") rebases++;
+                return process.run({
+                  ...input,
+                  env: {
+                    ...input.env,
+                    GIT_CONFIG_GLOBAL: rebases > completed ? config : "/dev/null",
+                    GIT_CONFIG_NOSYSTEM: "1",
+                  },
+                });
+              },
+            }),
+          ),
+        );
+        expect(error).toMatchObject({
+          _tag: "GitHubStackRebaseGitError",
+          number: completed + 1,
+          completed,
+          step: "rebasing",
+          cause: {
+            exitCode: 1,
+            stderr: expect.stringContaining("failed to write commit object"),
+          },
+        });
+        expect(error.message).not.toContain("conflicts");
+        for (const original of repo.layers.slice(completed))
+          expect(yield* repo.head(original.headBranch)).toBe(original.headSha);
+        if (completed > 0)
+          expect(yield* repo.head(repo.layers[0]!.headBranch)).not.toBe(repo.layers[0]!.headSha);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains the target lease when the child changes after checking its head", () =>
+    Effect.gen(function* () {
+      const repo = yield* setup();
+      const process = yield* VcsProcess.VcsProcess;
+      let injected = false;
+      const top = repo.layers[1]!;
+      const error = yield* Effect.flip(
+        cascadeRebaseStack({
+          host: "github.com",
+          repository: "acme/web",
+          base: "main",
+          layers: repo.layers,
+          remote: repo.remote,
+        }).pipe(
+          Effect.provideService(VcsProcess.VcsProcess, {
+            run: (input) =>
+              process.run(input).pipe(
+                Effect.tap(() => {
+                  if (
+                    injected ||
+                    input.args[0] !== "ls-remote" ||
+                    !input.args.includes(`refs/heads/${top.headBranch}`)
+                  )
+                    return Effect.void;
+                  injected = true;
+                  return repo.pushConcurrentChange(top.headBranch);
+                }),
+              ),
+          }),
+        ),
+      );
+      expect(error).toMatchObject({
+        _tag: "GitHubStackRebaseGitError",
+        step: "pushing",
+        number: 2,
+        completed: 1,
+      });
+      expect(injected).toBe(true);
+      expect(yield* repo.git("show", `${yield* repo.head(top.headBranch)}:concurrent.txt`)).toBe(
+        "Another writer advanced this branch.",
+      );
     }).pipe(Effect.scoped),
   );
 });

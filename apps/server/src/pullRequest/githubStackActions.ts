@@ -229,15 +229,21 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       })),
     }).pipe(
       Effect.mapError((cause) =>
-        cause._tag === "GitHubStackRebaseConflictError" ||
-        cause._tag === "GitHubStackRebaseGitError"
-          ? new GitHubStackRebaseFailedError({
+        cause._tag === "GitHubStackRebaseChangedError"
+          ? new GitHubStackChangedError({
               ...identity,
               number: cause.number,
               completed: cause.completed,
-              cause,
             })
-          : cause,
+          : cause._tag === "GitHubStackRebaseConflictError" ||
+              cause._tag === "GitHubStackRebaseGitError"
+            ? new GitHubStackRebaseFailedError({
+                ...identity,
+                number: cause.number,
+                completed: cause.completed,
+                cause,
+              })
+            : cause,
       ),
     );
     return;

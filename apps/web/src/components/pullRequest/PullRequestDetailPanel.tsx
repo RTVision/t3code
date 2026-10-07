@@ -706,6 +706,12 @@ export function PullRequestDetailPanel({
               : {
                   ...coreDetail.capabilities,
                   reactions: false,
+                  reactionSubjects: {
+                    changeRequest: false,
+                    issueComment: false,
+                    reviewComment: false,
+                    review: false,
+                  },
                   edit: { changeRequest: false, comment: false },
                 },
             viewerPermissions: canWriteSourceControl
@@ -713,6 +719,7 @@ export function PullRequestDetailPanel({
               : {
                   ...coreDetail.viewerPermissions,
                   actions: [],
+                  stackRebase: false,
                   comment: false,
                   resolve: false,
                   verdicts: [],
