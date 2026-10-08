@@ -204,10 +204,14 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relative-browser-" });
+      const cwd = yield* HostProcessWorkingDirectory;
+      const root = yield* fs.makeTempDirectoryScoped({
+        directory: cwd,
+        prefix: "t3-relative-browser-",
+      });
       const executable = path.join(root, "chromium");
       yield* fs.writeFileString(executable, "browser", { mode: 0o755 });
-      const configured = path.relative(yield* HostProcessWorkingDirectory, executable);
+      const configured = path.relative(cwd, executable);
       const { browser, requests } = yield* makeHarness({
         executable: configured,
         linuxLibc: "musl",
