@@ -143,12 +143,33 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       if (!settings.enabled) return;
       if (
         event.isComposing ||
+        event.keyCode === 229 ||
         event.key === "Process" ||
         event.key === "Dead" ||
         ["Control", "Shift", "Alt", "Meta"].includes(event.key)
       )
         return;
       const target = event.target instanceof HTMLElement ? event.target : null;
+      // The upstream find input lives in a shadow root, so document listeners see its host.
+      // Let the widget own typing and Escape; Enter confirms the query into Vim Normal mode.
+      if (
+        event
+          .composedPath()
+          .some((node) => node instanceof Element && node.hasAttribute("data-diffs-search"))
+      ) {
+        clear();
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey
+        ) {
+          consume(event);
+          focusVimNormal(vimPane(target));
+        }
+        return;
+      }
       if (target?.closest("[data-keybinding-capture]") || isOnSettings) {
         clear();
         return;

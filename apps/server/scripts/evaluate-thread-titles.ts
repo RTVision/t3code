@@ -23,7 +23,7 @@ import {
 } from "../src/textGeneration/ThreadTitleContext.ts";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as GitHubCli from "../src/sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
 import * as GiteaCli from "../src/sourceControl/GiteaCli.ts";
 import * as ForgejoCli from "../src/sourceControl/ForgejoCli.ts";
@@ -153,7 +153,7 @@ await Effect.runPromise(
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              GitHubCli.layer,
+              GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               GiteaCli.layer,
               ForgejoCli.layer,
