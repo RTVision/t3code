@@ -70,16 +70,6 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   background-image: none !important;
 }
 
-/* Diff search (useDiffSearch) paints matches with the CSS Custom Highlight API. */
-::highlight(t3-diff-search) {
-  background-color: color-mix(in srgb, var(--warning) 32%, transparent);
-}
-
-::highlight(t3-diff-search-current) {
-  background-color: color-mix(in srgb, var(--warning) 75%, transparent);
-  color: var(--code-foreground);
-}
-
 [data-file-info] {
   background-color: var(--code-background) !important;
   border-block-color: transparent !important;

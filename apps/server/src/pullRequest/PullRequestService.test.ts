@@ -5586,6 +5586,62 @@ it.effect("reuses an observed merged state for strict settlement reads", () =>
   }),
 );
 
+it.effect("announces state a detail read sees first or newly", () =>
+  Effect.gen(function* () {
+    let detail = {
+      state: "open" as "open" | "closed" | "merged",
+      updatedAt: "2026-07-02T00:00:00Z",
+    };
+    let summaryState: "open" | "merged" = "open";
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("body"), ...detail }),
+          getChangeRequestSummary: () =>
+            Effect.succeed({
+              ...changeRequest(1, "2026-07-04T00:00:00Z"),
+              state: summaryState,
+            }),
+        }),
+      ],
+    });
+    const announced: Array<string> = [];
+    yield* Stream.runForEach(yield* service.subscribeStateChanges, (key) =>
+      Effect.sync(() => announced.push(`${key.host}/${key.repository}#${key.number}`)),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    const readDetail = Effect.gen(function* () {
+      yield* service.invalidate({ reference });
+      yield* service.detail(reference);
+      yield* Effect.yieldNow;
+    });
+
+    // First sight announces; the same state again, even from a fresh read, does not.
+    yield* readDetail;
+    yield* readDetail;
+    assert.deepStrictEqual(announced, ["github.com/acme/web#1"]);
+
+    detail = { state: "closed", updatedAt: "2026-07-03T00:00:00Z" };
+    yield* readDetail;
+    assert.strictEqual(announced.length, 2);
+
+    // A summary seeing the merge first does not hide it from the detail read after.
+    summaryState = "merged";
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    yield* Effect.yieldNow;
+    assert.strictEqual(announced.length, 2);
+    detail = { state: "merged", updatedAt: "2026-07-04T00:00:00Z" };
+    yield* readDetail;
+    assert.strictEqual(announced.length, 3);
+
+    // A detail read older than the merge cannot announce a reopen.
+    detail = { state: "open", updatedAt: "2026-07-03T00:00:00Z" };
+    yield* readDetail;
+    assert.strictEqual(announced.length, 3);
+  }),
+);
+
 it.effect("does not let a stale detail reopen overwrite a fresher linked summary", () =>
   Effect.gen(function* () {
     const gate = yield* Deferred.make<void>();
@@ -6027,6 +6083,57 @@ it.effect.each([false, true])(
       yield* service.summary(unrelated);
       assert.strictEqual(summaryReads, 2);
     }),
+);
+
+it.effect("updates an authorized GitHub branch and refuses it after update access is revoked", () =>
+  Effect.gen(function* () {
+    const taken: string[] = [];
+    let canUpdateBranch = true;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["close", "update-branch"],
+            mergeMethods: [],
+            updateMethods: ["merge"],
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          // GitHub's light permission response cannot establish whether the branch is updatable.
+          getViewerPermissions: ({ includeUpdateBranch }) => {
+            const allowsUpdate = includeUpdateBranch === true && canUpdateBranch;
+            return Effect.succeed({
+              actions: allowsUpdate ? ["close", "update-branch"] : ["close"],
+              updateMethods: allowsUpdate ? ["merge"] : [],
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            });
+          },
+          runAction: ({ action }) =>
+            Effect.sync(() => {
+              taken.push(action);
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.runAction({ ...reference, action: "close" });
+    yield* service.runAction({ ...reference, action: "update-branch", updateMethod: "merge" });
+    assert.deepEqual(taken, ["close", "update-branch"]);
+    canUpdateBranch = false;
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "update-branch", updateMethod: "merge" }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.deepEqual(taken, ["close", "update-branch"]);
+  }),
 );
 
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>

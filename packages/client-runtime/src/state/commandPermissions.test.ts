@@ -8,6 +8,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  TurnItemId,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -324,6 +326,80 @@ it("matches the server editor grant for availability and destination dispatch ac
   } finally {
     unmount();
     unmountOther();
+    registry.dispose();
+  }
+});
+
+const readGrant = (): AuthSessionState => ({
+  ...grant(false),
+  scopes: [AuthOrchestrationReadScope],
+  permissions: [AuthOrchestrationReadScope],
+});
+it.effect.each([WS_METHODS.mcpAppsCallTool, WS_METHODS.mcpAppsUpdateModelContext])(
+  "requires the destination operate grant for MCP Apps %s",
+  (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const permission = createCommandPermissions(runtime, method);
+        registry.set(sessions(other), AsyncResult.success(grant(true)));
+        registry.set(sessions(env), AsyncResult.success(readGrant()));
+        expect(registry.get(permission.permissionAtom(other))).toBe(true);
+        expect(registry.get(permission.permissionAtom(env))).toBe(false);
+        expect((yield* permission.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        yield* permission.authorize(registry, env);
+      }),
+    ),
+);
+it("refuses an MCP tool queued before destination access was revoked", async () => {
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(sessions(env));
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const command = createEnvironmentRpcCommand(runtime, {
+    label: "test.mcp-tool",
+    tag: WS_METHODS.mcpAppsCallTool,
+    concurrency: { mode: "serial", key: () => "target" },
+    execute: () =>
+      Effect.promise(async () => {
+        calls++;
+        started();
+        await gate;
+        return { content: [] };
+      }),
+  });
+  const target = {
+    environmentId: env,
+    input: {
+      threadId: ThreadId.make("thread"),
+      itemId: TurnItemId.make("item"),
+      name: "tool",
+      arguments: {},
+    },
+  };
+  try {
+    registry.set(sessions(env), AsyncResult.success(grant(true)));
+    const first = command.run(registry, target);
+    await entered;
+    const second = command.run(registry, target);
+    registry.set(sessions(env), AsyncResult.success(readGrant()));
+    release();
+    expect((await first)._tag).toBe("Success");
+    expect((await second)._tag).toBe("Failure");
+    expect(calls).toBe(1);
+  } finally {
+    release();
+    unmount();
     registry.dispose();
   }
 });

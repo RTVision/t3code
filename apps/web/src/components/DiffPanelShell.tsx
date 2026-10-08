@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type KeyboardEventHandler, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { claimVimPaneFocus } from "../vim/runtime";
 
 import { isElectron } from "~/env";
@@ -23,7 +23,6 @@ export function DiffPanelShell(props: {
   mode: DiffPanelMode;
   header: ReactNode;
   children: ReactNode;
-  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }) {
   const paneRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -35,9 +34,7 @@ export function DiffPanelShell(props: {
     <div
       ref={paneRef}
       data-vim-pane="diff"
-      data-diff-search-root
       tabIndex={-1}
-      onKeyDown={props.onKeyDown}
       className={cn(
         "flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"

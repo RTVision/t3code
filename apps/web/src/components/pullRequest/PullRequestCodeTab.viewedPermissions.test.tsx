@@ -110,11 +110,6 @@ vi.mock("./pullRequestReviewStore", () => ({
   usePullRequestReviewStore: () => vi.fn(),
 }));
 vi.mock("../diffs/useCodeViewFileReveal", () => ({ useCodeViewFileReveal: () => state.reveal }));
-vi.mock("../diffs/useDiffSearch", () => ({ useDiffSearch: () => ({ onPostRender: vi.fn() }) }));
-vi.mock("../diffs/DiffSearchBar", () => ({
-  DiffSearchToggle: () => null,
-  DiffSearchBar: () => null,
-}));
 vi.mock("../diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("../diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./PullRequestReviewAnnotation", () => ({
@@ -147,6 +142,8 @@ vi.mock("../ui/menu", () => ({
   DropdownMenu: () => null,
   DropdownMenuContent: () => null,
   DropdownMenuItem: () => null,
+  DropdownMenuCheckboxItem: () => null,
+  DropdownMenuSeparator: () => null,
   DropdownMenuRadioGroup: () => null,
   DropdownMenuRadioItem: () => null,
   DropdownMenuTrigger: () => null,

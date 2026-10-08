@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { FileDiffMetadata, CodeViewScrollTarget } from "@pierre/diffs";
 import type { AnnotatableCodeViewHandle } from "../components/diffs/AnnotatableCodeView";
-import type { DiffSearch } from "../components/diffs/useDiffSearch";
 import { useVimAction, vimPane } from "./runtime";
 
 export function useVimDiff({
   files,
   viewer,
   reveal,
-  search,
 }: {
   files: readonly {
     fileDiff: FileDiffMetadata;
@@ -18,7 +16,6 @@ export function useVimDiff({
   }[];
   viewer: AnnotatableCodeViewHandle | null;
   reveal: (path: string) => void;
-  search: Pick<DiffSearch, "openSearch" | "step">;
 }) {
   const hunkIndex = useRef(-1);
   const fileIndex = useRef(0);
@@ -41,11 +38,11 @@ export function useVimDiff({
       fileIndex.current = 0;
     }
     if (command === "search.open") {
-      if (files.length > 0) search.openSearch();
+      if (files.length > 0) viewer?.getInstance()?.openSearch();
       return true;
     }
     if (command === "search.next" || command === "search.previous") {
-      search.step(command === "search.next" ? count : -count);
+      viewer?.getInstance()?.navigateSearch(command === "search.next" ? count : -count);
       return true;
     }
     if (command === "hunk.next" || command === "hunk.previous") {
