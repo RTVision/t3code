@@ -97,6 +97,9 @@ export interface McpAppHostOptions {
   /** Posts one JSON-RPC message to the app document. */
   readonly post: (message: unknown) => void;
   readonly hostContext: () => McpAppHostContext;
+  /** Destination command permissions, sampled before advertising or invoking mutations. */
+  readonly canCallTool?: () => boolean;
+  readonly canUpdateModelContext?: () => boolean;
 
   readonly callTool: (input: {
     readonly name: string;
@@ -245,11 +248,13 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           hostInfo: { name: "t3-code", version: options.hostVersion },
           hostCapabilities: {
             openLinks: {},
-            serverTools: {},
+            ...(options.canCallTool?.() === false ? {} : { serverTools: {} }),
             serverResources: {},
             logging: {},
             message: { text: {} },
-            updateModelContext: { text: {}, structuredContent: {} },
+            ...(options.canUpdateModelContext?.() === false
+              ? {}
+              : { updateModelContext: { text: {}, structuredContent: {} } }),
             downloadFile: {},
             sandbox: {
               ...(options.app.csp === undefined ? {} : { csp: options.app.csp }),
@@ -266,6 +271,10 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         respond(id, {});
         return;
       case "tools/call": {
+        if (options.canCallTool?.() === false) {
+          fail(id, -32000, "This connection cannot call tools.");
+          return;
+        }
         const name = params.name;
         const args = params.arguments ?? {};
         if (typeof name !== "string" || name.trim() === "" || !Predicate.isObject(args)) {
@@ -338,6 +347,10 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         return;
       }
       case "ui/update-model-context": {
+        if (options.canUpdateModelContext?.() === false) {
+          fail(id, -32000, "This connection cannot update model context.");
+          return;
+        }
         const content = params.content;
         const structured = params.structuredContent;
         if (

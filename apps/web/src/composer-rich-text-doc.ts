@@ -17,6 +17,7 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 
+import { collapseExpandedComposerCursor } from "~/composer-logic";
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
@@ -778,6 +779,8 @@ export interface RichRun {
   mdLen: number;
   /** Marker layout inside text runs. */
   openLen: number;
+  /** Fence info tokens can occupy fewer draft positions than source characters. */
+  collapsedOpenLen?: number;
   closeLen: number;
   /** ProseMirror position of the run start. */
   pmPos: number;
@@ -1256,11 +1259,13 @@ function appendCodeBlockRun(
           : { length: segment.source.length, collapsedLen: 1 },
       )
     : [{ length: 0, collapsedLen: 0 }];
+  const collapsedOpeningLength = collapseExpandedComposerCursor(open, open.length);
   let offset = 0;
   pieces.forEach((piece, index) => {
     const openLen = index === 0 ? open.length : 0;
     const closeLen = index === pieces.length - 1 ? close.length : 0;
-    const collapsedLen = openLen + piece.collapsedLen + closeLen;
+    const collapsedOpenLen = index === 0 ? collapsedOpeningLength : 0;
+    const collapsedLen = collapsedOpenLen + piece.collapsedLen + closeLen;
     const mdLen = openLen + piece.length + closeLen;
     acc.runs.push({
       kind: "text",
@@ -1273,6 +1278,7 @@ function appendCodeBlockRun(
       pmPos: pmPos + offset,
       mdStart: acc.md,
       collapsedStart: acc.collapsed,
+      collapsedOpenLen,
       nodeName: "codeBlock",
     });
     offset += piece.length;
@@ -1430,11 +1436,9 @@ export function flatToCollapsed(map: RichDocMap, flatOffset: number): number {
     if (runOwnsOffset(run, bounded)) {
       if (run.kind === "text" || run.kind === "token") {
         // A chip's source in a fence spans its characters but one position.
-        const within = Math.min(
-          bounded - run.flatStart,
-          run.collapsedLen - run.openLen - run.closeLen,
-        );
-        return run.collapsedStart + run.openLen + within;
+        const openLen = run.collapsedOpenLen ?? run.openLen;
+        const within = Math.min(bounded - run.flatStart, run.collapsedLen - openLen - run.closeLen);
+        return run.collapsedStart + openLen + within;
       }
       return run.collapsedStart + (bounded - run.flatStart);
     }
@@ -1462,12 +1466,13 @@ export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): numbe
       // offset inside them clamps to the adjacent document position.
       if (run.kind === "prefix") return run.flatStart;
       if (run.kind === "text" || run.kind === "token") {
+        const openLen = run.collapsedOpenLen ?? run.openLen;
         const within = collapsedOffset - run.collapsedStart;
-        const contentLen = run.collapsedLen - run.openLen - run.closeLen;
+        const contentLen = run.collapsedLen - openLen - run.closeLen;
         // Marker characters clamp to the styled edge: they are shown, never edited.
-        if (within <= run.openLen) return run.flatStart;
-        if (within >= run.openLen + contentLen) return run.flatStart + run.docLen;
-        return run.flatStart + (within - run.openLen);
+        if (within <= openLen) return run.flatStart;
+        if (within >= openLen + contentLen) return run.flatStart + run.docLen;
+        return run.flatStart + (within - openLen);
       }
       return run.flatStart + (collapsedOffset - run.collapsedStart);
     }

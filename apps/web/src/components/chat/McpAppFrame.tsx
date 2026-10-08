@@ -1,3 +1,4 @@
+import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
@@ -19,7 +20,7 @@ import {
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { Minimize2Icon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -87,6 +88,7 @@ export function McpAppFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
+  const registry = useContext(RegistryContext);
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -319,6 +321,12 @@ export function McpAppFrame(props: {
     const host = makeMcpAppHost({
       app,
       hostVersion: APP_VERSION,
+      canCallTool: () =>
+        registry.get(mcpAppEnvironment.callTool.permissionAtom(latest.current.props.environmentId)),
+      canUpdateModelContext: () =>
+        registry.get(
+          mcpAppEnvironment.updateModelContext.permissionAtom(latest.current.props.environmentId),
+        ),
       // The document's origin is opaque, so "*" is the only target that reaches it;
       // the window reference itself is what scopes delivery to this frame.
       post: (message) => target()?.postMessage(message, "*"),
@@ -328,6 +336,10 @@ export function McpAppFrame(props: {
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        // Tool metadata may have arrived after the destination grant was revoked.
+        if (!registry.get(mcpAppEnvironment.callTool.permissionAtom(environmentId))) {
+          throw new McpAppHostRefusal("This connection cannot call tools.");
+        }
         if (!info.value.readOnly) {
           const approved = await ask(
             `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
@@ -451,7 +463,7 @@ export function McpAppFrame(props: {
       hostRef.current = null;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A reopened document needs a new host.
-  }, [src, app, documentGeneration]);
+  }, [src, app, documentGeneration, registry]);
 
   // The host reads the context through `latest`; these only say when to resend.
   useEffect(() => {

@@ -780,6 +780,31 @@ describe("composer rich text document model", () => {
     expect(collapsedToFlat(map, flatToCollapsed(map, end))).toBe(end);
   });
 
+  it("restores code and following paragraph carets when a fence info string contains a mention", () => {
+    const value = "``` @a.md\nabc\n```\nafter";
+    const map = roundTrip(value);
+    for (let flat = 0; flat <= map.docLength; flat += 1) {
+      expect(flatToCollapsed(map, flat)).toBe(
+        collapseExpandedComposerCursor(value, flatToMarkdown(map, flat)),
+      );
+    }
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, () => ({ label: "", description: null })),
+    );
+    for (const sourceOffset of [value.indexOf("abc") + 1, value.indexOf("after") + 2]) {
+      const collapsed = collapseExpandedComposerCursor(value, sourceOffset);
+      const flat = collapsedToFlat(map, collapsed);
+      expect(flatToMarkdown(map, flat)).toBe(sourceOffset);
+      const caret = TextSelection.create(doc, flatToPm(map, flat));
+      expect(pmToFlat(map, caret.from)).toBe(flat);
+      expect(caret.$from.parent.type.name).toBe(
+        sourceOffset < value.indexOf("after") ? "codeBlock" : "paragraph",
+      );
+      expect(caret.$from.parentOffset).toBe(sourceOffset < value.indexOf("after") ? 1 : 2);
+    }
+  });
+
   it("keeps fences literal in plain mode", () => {
     const value = "```ts\nconst a = 1;\n```";
     expect(roundTripPlain(value).value).toBe(value);

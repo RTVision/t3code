@@ -417,3 +417,63 @@ describe("makeMcpAppHost", () => {
     }
   });
 });
+
+it("keeps read-only apps usable while refusing unavailable mutations before approval callbacks", async () => {
+  let allowed = false;
+  const callTool = vi.fn(async () => ({ content: [] }));
+  const updateModelContext = vi.fn(async () => undefined);
+  const readResource = vi.fn(async () => ({ contents: [] }));
+  const { host, sent } = setup({
+    canCallTool: () => allowed,
+    canUpdateModelContext: () => allowed,
+    callTool,
+    updateModelContext,
+    readResource,
+  });
+  initialize(host);
+  expect(sent[0]?.result).not.toHaveProperty("hostCapabilities.serverTools");
+  expect(sent[0]?.result).not.toHaveProperty("hostCapabilities.updateModelContext");
+  const tool = (id: number) =>
+    host.receive({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name: "mutate", arguments: {} },
+    });
+  const contextUpdate = (id: number) =>
+    host.receive({
+      jsonrpc: "2.0",
+      id,
+      method: "ui/update-model-context",
+      params: { content: [] },
+    });
+  tool(1);
+  contextUpdate(2);
+  host.receive({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "resources/read",
+    params: { uri: "ui://weather/data" },
+  });
+  await flush();
+  expect(sent.find((message) => message.id === 1)).toHaveProperty("error");
+  expect(sent.find((message) => message.id === 2)).toHaveProperty("error");
+  expect(callTool).not.toHaveBeenCalled();
+  expect(updateModelContext).not.toHaveBeenCalled();
+  expect(readResource).toHaveBeenCalledOnce();
+  allowed = true;
+  tool(4);
+  contextUpdate(5);
+  await flush();
+  expect(callTool).toHaveBeenCalledOnce();
+  expect(updateModelContext).toHaveBeenCalledOnce();
+  allowed = false;
+  tool(6);
+  contextUpdate(7);
+  await flush();
+  expect(sent.find((message) => message.id === 6)).toHaveProperty("error");
+  expect(sent.find((message) => message.id === 7)).toHaveProperty("error");
+  expect(callTool).toHaveBeenCalledOnce();
+  expect(updateModelContext).toHaveBeenCalledOnce();
+  host.dispose();
+});

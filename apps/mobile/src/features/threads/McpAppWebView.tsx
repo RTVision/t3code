@@ -1,3 +1,4 @@
+import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
@@ -20,7 +21,7 @@ import {
 import * as Predicate from "effect/Predicate";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -229,6 +230,7 @@ export function ThreadMcpApp(props: {
     };
   }, [storedItem]);
 
+  const registry = useContext(RegistryContext);
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfo = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
   const readResource = useAtomCommand(mcpAppEnvironment.readResource, { reportFailure: false });
@@ -319,6 +321,12 @@ export function ThreadMcpApp(props: {
     const next = makeMcpAppHost({
       app,
       hostVersion: Constants.expoConfig?.version ?? "0.0.0",
+      canCallTool: () =>
+        registry.get(mcpAppEnvironment.callTool.permissionAtom(latest.current.props.environmentId)),
+      canUpdateModelContext: () =>
+        registry.get(
+          mcpAppEnvironment.updateModelContext.permissionAtom(latest.current.props.environmentId),
+        ),
       post: (message) =>
         webView.current?.injectJavaScript(
           `window.__t3McpAppReceive&&window.__t3McpAppReceive(${JSON.stringify(message)});true;`,
@@ -329,6 +337,10 @@ export function ThreadMcpApp(props: {
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
+        // Tool metadata may have arrived after the destination grant was revoked.
+        if (!registry.get(mcpAppEnvironment.callTool.permissionAtom(environmentId))) {
+          throw new McpAppHostRefusal("This connection cannot call tools.");
+        }
         if (
           !info.value.readOnly &&
           !(await confirm(
@@ -486,7 +498,7 @@ export function ThreadMcpApp(props: {
       hostRef.current = null;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A restarted view needs a new host.
-  }, [uri, app, generation, documentKey]);
+  }, [uri, app, generation, documentKey, registry]);
 
   // The host reads the context through `latest`; these only say when to resend.
   useEffect(() => {
