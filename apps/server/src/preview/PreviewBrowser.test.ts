@@ -5,6 +5,7 @@ import {
   HostProcessEnvironment,
   HostProcessLinuxLibc,
   HostProcessPlatform,
+  HostProcessWorkingDirectory,
   type HostLinuxLibc,
 } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
@@ -198,6 +199,27 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         }),
     );
   }
+
+  it.effect("rejects an existing relative executable without native or download fallback", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relative-browser-" });
+      const executable = path.join(root, "chromium");
+      yield* fs.writeFileString(executable, "browser", { mode: 0o755 });
+      const configured = path.relative(yield* HostProcessWorkingDirectory, executable);
+      const { browser, requests } = yield* makeHarness({
+        executable: configured,
+        linuxLibc: "musl",
+      });
+
+      expect(yield* browser.installed).toEqual(Option.none());
+      const error = yield* browser.executable.pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewBrowserExecutableError");
+      expect(error.message).toContain("absolute Chromium executable");
+      expect(requests).toEqual([]);
+    }),
+  );
 
   for (const kind of ["missing", "directory", "non-executable", "empty"] as const) {
     it.effect.skipIf(hostPlatform === "win32" && kind === "non-executable")(

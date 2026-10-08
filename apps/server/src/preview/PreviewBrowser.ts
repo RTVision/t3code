@@ -146,7 +146,7 @@ export class PreviewBrowserExecutableError extends Schema.TaggedError<PreviewBro
   { executable: Schema.String },
 ) {
   override get message(): string {
-    return `T3CODE_PREVIEW_BROWSER_PATH points to a missing or non-executable file: ${this.executable}. Set it to a Chromium executable on the server host.`;
+    return `T3CODE_PREVIEW_BROWSER_PATH points to a missing, relative, or non-executable file: ${this.executable}. Set it to an absolute Chromium executable on the server host.`;
   }
 }
 
@@ -215,9 +215,10 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
     );
   const configured = (yield* HostProcessEnvironment).T3CODE_PREVIEW_BROWSER_PATH;
   if (configured !== undefined) {
-    const installed = isExecutable(configured).pipe(
-      Effect.map((valid) => (valid ? Option.some(configured) : Option.none<string>())),
-    );
+    const path = yield* Path.Path;
+    const installed = (
+      path.isAbsolute(configured) ? isExecutable(configured) : Effect.succeed(false)
+    ).pipe(Effect.map((valid) => (valid ? Option.some(configured) : Option.none<string>())));
     return PreviewBrowser.of({
       installed,
       executable: installed.pipe(
