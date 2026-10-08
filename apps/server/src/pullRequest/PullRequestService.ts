@@ -2306,7 +2306,12 @@ export const make = Effect.gen(function* () {
             // What the host can do and what this account may ask of it are two questions, and both
             // have to say yes. The second is asked last, because it costs a request and the checks
             // above do not.
-            return viewerPermissionsOf(project, input, "runAction").pipe(
+            return viewerPermissionsOf(
+              project,
+              input,
+              "runAction",
+              input.action === "update-branch",
+            ).pipe(
               Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
                 const stackRebase =
                   input.stackNumber !== undefined && input.action === "update-branch";

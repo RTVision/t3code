@@ -6085,6 +6085,57 @@ it.effect.each([false, true])(
     }),
 );
 
+it.effect("updates an authorized GitHub branch and refuses it after update access is revoked", () =>
+  Effect.gen(function* () {
+    const taken: string[] = [];
+    let canUpdateBranch = true;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["close", "update-branch"],
+            mergeMethods: [],
+            updateMethods: ["merge"],
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          // GitHub's light permission response cannot establish whether the branch is updatable.
+          getViewerPermissions: ({ includeUpdateBranch }) => {
+            const allowsUpdate = includeUpdateBranch === true && canUpdateBranch;
+            return Effect.succeed({
+              actions: allowsUpdate ? ["close", "update-branch"] : ["close"],
+              updateMethods: allowsUpdate ? ["merge"] : [],
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            });
+          },
+          runAction: ({ action }) =>
+            Effect.sync(() => {
+              taken.push(action);
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.runAction({ ...reference, action: "close" });
+    yield* service.runAction({ ...reference, action: "update-branch", updateMethod: "merge" });
+    assert.deepEqual(taken, ["close", "update-branch"]);
+    canUpdateBranch = false;
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "update-branch", updateMethod: "merge" }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.deepEqual(taken, ["close", "update-branch"]);
+  }),
+);
+
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>
   Effect.gen(function* () {
     let taken: string | null = null;
