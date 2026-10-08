@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessLinuxLibc,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -21,9 +26,9 @@ import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
-// The one browser T3 installs on a host. HTML render previews and server
-// browser tabs both run this pinned Chrome for Testing headless shell, so a host
-// downloads it once; neither uses a browser the user installed. To bump the pin, pick a version
+// HTML previews and server tabs share this pinned Chrome for Testing headless
+// shell by default. An explicit executable overrides it; musl Linux defaults to native Chromium.
+// To bump the pin, pick a version
 // from https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json,
 // download each platform's chrome-headless-shell zip, and replace the version
 // and every byte count and SHA-256 below. Hosts drop the old build after the
@@ -127,19 +132,48 @@ export class PreviewBrowserUnsupportedError extends Schema.TaggedError<PreviewBr
   }
 }
 
+export class PreviewBrowserNativeMissingError extends Schema.TaggedError<PreviewBrowserNativeMissingError>()(
+  "PreviewBrowserNativeMissingError",
+  {},
+) {
+  override get message(): string {
+    return "T3's browser on musl Linux needs native Chromium. Install Chromium with your package manager, or set T3CODE_PREVIEW_BROWSER_PATH to its executable. On Alpine, run `sudo apk add chromium chromium-swiftshader`, then try again.";
+  }
+}
+
+export class PreviewBrowserExecutableError extends Schema.TaggedError<PreviewBrowserExecutableError>()(
+  "PreviewBrowserExecutableError",
+  { executable: Schema.String },
+) {
+  override get message(): string {
+    return `T3CODE_PREVIEW_BROWSER_PATH points to a missing or non-executable file: ${this.executable}. Set it to a Chromium executable on the server host.`;
+  }
+}
+
+/** Chrome for Testing targets glibc; musl Linux needs a native build. */
+export const nativeChromiumRequired = Effect.gen(function* () {
+  if ((yield* HostProcessPlatform) !== "linux") return false;
+  return (yield* HostProcessLinuxLibc) === "musl";
+});
+
 export class PreviewBrowser extends Context.Service<
   PreviewBrowser,
   {
     /**
-     * Path to the installed headless shell. The first call starts the
+     * Path to the configured executable, native Chromium on musl Linux, or installed headless shell.
+     * For the headless shell, the first call starts the
      * install; callers wait for it up to a bound and then get its progress
      * instead, while the install keeps running.
      */
     readonly executable: Effect.Effect<
       string,
-      PreviewBrowserInstallError | PreviewBrowserInstallingError | PreviewBrowserUnsupportedError
+      | PreviewBrowserInstallError
+      | PreviewBrowserInstallingError
+      | PreviewBrowserUnsupportedError
+      | PreviewBrowserNativeMissingError
+      | PreviewBrowserExecutableError
     >;
-    /** The installed headless shell, if any. Never starts or waits on an install. */
+    /** The selected executable, if present. Never starts or waits on an install. */
     readonly installed: Effect.Effect<Option.Option<string>>;
   }
 >()("t3/preview/PreviewBrowser") {}
@@ -171,11 +205,51 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   options: PreviewBrowserOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
+  const isExecutable = (candidate: string) =>
+    fs.stat(candidate).pipe(
+      Effect.map(
+        (info) => info.type === "File" && (platform === "win32" || (info.mode & 0o111) !== 0),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  const configured = (yield* HostProcessEnvironment).T3CODE_PREVIEW_BROWSER_PATH;
+  if (configured !== undefined) {
+    const installed = isExecutable(configured).pipe(
+      Effect.map((valid) => (valid ? Option.some(configured) : Option.none<string>())),
+    );
+    return PreviewBrowser.of({
+      installed,
+      executable: installed.pipe(
+        Effect.flatMap((candidate) =>
+          Option.isSome(candidate)
+            ? Effect.succeed(candidate.value)
+            : Effect.fail(new PreviewBrowserExecutableError({ executable: configured })),
+        ),
+      ),
+    });
+  }
+  if (yield* nativeChromiumRequired) {
+    // Prefer Alpine's binary over its wrapper, which adds flags from system config.
+    const installed = Effect.findFirst(
+      ["/usr/lib/chromium/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
+      isExecutable,
+    );
+    return PreviewBrowser.of({
+      installed,
+      executable: installed.pipe(
+        Effect.flatMap((candidate) =>
+          Option.isSome(candidate)
+            ? Effect.succeed(candidate.value)
+            : Effect.fail(new PreviewBrowserNativeMissingError()),
+        ),
+      ),
+    });
+  }
   const path = yield* Path.Path;
   const http = yield* HttpClient.HttpClient;
   // Installs belong to the service, so they finish even when no caller is still waiting.
   const serviceScope = yield* Effect.scope;
-  const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
   const release =
     options.release === undefined ? previewBrowserRelease(platform, arch) : options.release;

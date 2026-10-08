@@ -192,8 +192,8 @@ connected, and `localhost` addresses reach servers on the host.
 
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
-only once. Some Linux hosts need [setup](#browser-host-setup) before it can
-start.
+only once. Musl Linux hosts use native Chromium instead.
+Some Linux hosts need [setup](#browser-host-setup) before it can start.
 
 Agent tabs have separate storage and share a Chromium process. Take control before
 typing into an agent's tab, then release control when you want the agent to
@@ -210,6 +210,19 @@ On a phone, tap the floating preview's corner dot to show its controls, then
 apps.
 
 ### Browser host setup
+
+On Alpine, install native Chromium and its software renderer with
+`sudo apk add chromium chromium-swiftshader`. T3 uses it for
+browser tabs and HTML previews because the downloaded Chrome requires glibc.
+On other musl Linux hosts, install Chromium with your package manager.
+
+To use a particular Chromium installation on any host, set
+`T3CODE_PREVIEW_BROWSER_PATH` to its absolute executable path in the server's
+environment, then restart that server. T3 uses that browser for both tabs and
+HTML previews without downloading Chrome. An invalid path reports an error.
+The selected browser needs working dependencies and sandbox support; keep it
+updated through your package manager. Alpine hosts running a glibc version of
+Node also need this override to select native Chromium.
 
 macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
 one-time setup: Ubuntu 23.10 and later block the sandbox the browser runs in,
