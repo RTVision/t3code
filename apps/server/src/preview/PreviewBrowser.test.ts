@@ -1,6 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessLinuxLibc,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+  type HostLinuxLibc,
+} from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
@@ -82,11 +89,15 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     readonly body?: Stream.Stream<Uint8Array>;
     readonly wait?: Duration.Input;
     readonly unsupported?: boolean;
+    readonly platform?: NodeJS.Platform;
+    readonly linuxLibc?: HostLinuxLibc;
+    readonly executable?: string;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-browser-test-" });
+  const systemRoot = path.join(baseDir, "system");
   const archive = options.archive ?? browserArchive;
   const crypto = yield* Crypto.Crypto;
   const sha256 =
@@ -105,8 +116,18 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
         },
     ...(options.wait === undefined ? {} : { wait: options.wait }),
   }).pipe(
-    Effect.provideService(HostProcessPlatform, hostPlatform),
+    Effect.provideService(HostProcessPlatform, options.platform ?? hostPlatform),
     Effect.provideService(HostProcessArchitecture, "x64"),
+    Effect.provideService(
+      HostProcessEnvironment,
+      options.executable === undefined ? {} : { T3CODE_PREVIEW_BROWSER_PATH: options.executable },
+    ),
+    Effect.provideService(HostProcessLinuxLibc, options.linuxLibc ?? "gnu"),
+    Effect.provideService(FileSystem.FileSystem, {
+      ...fs,
+      stat: (file) =>
+        fs.stat(file.startsWith("/usr/") ? path.join(systemRoot, file.slice(1)) : file),
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -121,10 +142,164 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     ),
   );
   const installRoot = path.join(baseDir, "tools", "chrome-headless-shell", "fixture");
-  return { browser, fs, path, baseDir, installRoot, requests };
+  return { browser, fs, path, baseDir, systemRoot, installRoot, requests };
 });
 
 it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
+  it.effect.skipIf(hostPlatform === "win32")(
+    "uses native Chromium on musl Linux even with a downloaded browser present",
+    () =>
+      Effect.gen(function* () {
+        const { browser, fs, path, systemRoot, installRoot, requests } = yield* makeHarness({
+          platform: "linux",
+          linuxLibc: "musl",
+        });
+        const native = path.join(systemRoot, "usr/lib/chromium/chromium");
+        yield* fs.makeDirectory(path.dirname(native), { recursive: true });
+        yield* fs.writeFileString(native, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.makeDirectory(path.join(installRoot, "1.2.3"), { recursive: true });
+        const downloaded = path.join(installRoot, "1.2.3", executableName);
+        yield* fs.writeFileString(downloaded, "old browser", { mode: 0o755 });
+
+        expect(yield* browser.installed).toEqual(Option.some("/usr/lib/chromium/chromium"));
+        expect(yield* browser.executable).toBe("/usr/lib/chromium/chromium");
+        expect(requests).toEqual([]);
+        expect(yield* fs.readFileString(downloaded)).toBe("old browser");
+      }),
+  );
+
+  for (const platform of ["linux", "darwin", "win32", "freebsd"] as const) {
+    it.effect.skipIf(hostPlatform === "win32" && platform !== "win32")(
+      `uses the explicit executable before native or downloaded browsers on ${platform}`,
+      () =>
+        Effect.gen(function* () {
+          const configured = "/usr/local/bin/custom-chromium";
+          const { browser, fs, path, systemRoot, installRoot, requests } = yield* makeHarness({
+            platform,
+            linuxLibc: "musl",
+            executable: configured,
+            unsupported: platform === "freebsd",
+          });
+          const custom = path.join(systemRoot, configured.slice(1));
+          yield* fs.makeDirectory(path.dirname(custom), { recursive: true });
+          yield* fs.writeFileString(custom, "browser", {
+            mode: platform === "win32" ? 0o644 : 0o755,
+          });
+          const native = path.join(systemRoot, "usr/lib/chromium/chromium");
+          yield* fs.makeDirectory(path.dirname(native), { recursive: true });
+          yield* fs.writeFileString(native, "native", { mode: 0o755 });
+          const downloaded = path.join(installRoot, "1.2.3", executableName);
+          yield* fs.makeDirectory(path.dirname(downloaded), { recursive: true });
+          yield* fs.writeFileString(downloaded, "cached browser", { mode: 0o755 });
+
+          expect(yield* browser.executable).toBe(configured);
+          expect(yield* browser.installed).toEqual(Option.some(configured));
+          expect(requests).toEqual([]);
+          expect(yield* fs.readFileString(downloaded)).toBe("cached browser");
+        }),
+    );
+  }
+
+  it.effect("rejects an existing relative executable without native or download fallback", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* HostProcessWorkingDirectory;
+      const root = yield* fs.makeTempDirectoryScoped({
+        directory: cwd,
+        prefix: "t3-relative-browser-",
+      });
+      const executable = path.join(root, "chromium");
+      yield* fs.writeFileString(executable, "browser", { mode: 0o755 });
+      const configured = path.relative(cwd, executable);
+      const { browser, requests } = yield* makeHarness({
+        executable: configured,
+        linuxLibc: "musl",
+      });
+
+      expect(yield* browser.installed).toEqual(Option.none());
+      const error = yield* browser.executable.pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewBrowserExecutableError");
+      expect(error.message).toContain("absolute Chromium executable");
+      expect(requests).toEqual([]);
+    }),
+  );
+
+  for (const kind of ["missing", "directory", "non-executable", "empty"] as const) {
+    it.effect.skipIf(hostPlatform === "win32" && kind === "non-executable")(
+      `rejects a ${kind} override without native or download fallback`,
+      () =>
+        Effect.gen(function* () {
+          const configured = kind === "empty" ? "" : "/usr/local/bin/custom-chromium";
+          const { browser, fs, path, systemRoot, installRoot, requests } = yield* makeHarness({
+            platform: hostPlatform,
+            linuxLibc: kind === "missing" ? "gnu" : "musl",
+            executable: configured,
+          });
+          const native = path.join(systemRoot, "usr/lib/chromium/chromium");
+          yield* fs.makeDirectory(path.dirname(native), { recursive: true });
+          yield* fs.writeFileString(native, "native", { mode: 0o755 });
+          const downloaded = path.join(installRoot, "1.2.3", executableName);
+          yield* fs.makeDirectory(path.dirname(downloaded), { recursive: true });
+          yield* fs.writeFileString(downloaded, "cached browser", { mode: 0o755 });
+          const custom = path.join(systemRoot, configured.slice(1));
+          if (kind === "directory") yield* fs.makeDirectory(custom, { recursive: true });
+          if (kind === "non-executable") {
+            yield* fs.makeDirectory(path.dirname(custom), { recursive: true });
+            yield* fs.writeFileString(custom, "browser", { mode: 0o644 });
+          }
+
+          expect(yield* browser.installed).toEqual(Option.none());
+          const error = yield* browser.executable.pipe(Effect.flip);
+          expect(error._tag).toBe("PreviewBrowserExecutableError");
+          expect(error.message).toContain("T3CODE_PREVIEW_BROWSER_PATH");
+          expect(requests).toEqual([]);
+        }),
+    );
+  }
+
+  it.effect.skipIf(hostPlatform === "win32")(
+    "reports missing native Chromium and finds it after installation without a restart",
+    () =>
+      Effect.gen(function* () {
+        const { browser, fs, path, systemRoot, requests } = yield* makeHarness({
+          platform: "linux",
+          linuxLibc: "musl",
+        });
+        expect(yield* browser.installed).toEqual(Option.none());
+        const error = yield* browser.executable.pipe(Effect.flip);
+        expect(error._tag).toBe("PreviewBrowserNativeMissingError");
+        expect(error.message).toContain("apk add chromium");
+        const native = path.join(systemRoot, "usr/bin/chromium");
+        yield* fs.makeDirectory(path.dirname(native), { recursive: true });
+        yield* fs.writeFileString(native, "#!/bin/sh\n", { mode: 0o755 });
+
+        expect(yield* browser.executable).toBe("/usr/bin/chromium");
+        expect(yield* browser.installed).toEqual(Option.some("/usr/bin/chromium"));
+        expect(requests).toEqual([]);
+      }),
+  );
+
+  it.effect.skipIf(hostPlatform === "win32")(
+    "skips a non-executable native browser and uses the alternative launcher",
+    () =>
+      Effect.gen(function* () {
+        const { browser, fs, path, systemRoot, requests } = yield* makeHarness({
+          platform: "linux",
+          linuxLibc: "musl",
+        });
+        const unusable = path.join(systemRoot, "usr/lib/chromium/chromium");
+        const launcher = path.join(systemRoot, "usr/bin/chromium-browser");
+        yield* fs.makeDirectory(path.dirname(unusable), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+        yield* fs.writeFileString(unusable, "not executable", { mode: 0o644 });
+        yield* fs.writeFileString(launcher, "#!/bin/sh\n", { mode: 0o755 });
+
+        expect(yield* browser.executable).toBe("/usr/bin/chromium-browser");
+        expect(requests).toEqual([]);
+      }),
+  );
+
   it.effect("installs a verified download with its file modes and then reuses it", () =>
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness();
