@@ -176,7 +176,7 @@ export function MermaidDiagram({
   if (result.status === "error") {
     return (
       <div>
-        <div className="flex items-center justify-between gap-2">
+        <div data-thread-find-ignore className="flex items-center justify-between gap-2">
           <p className="m-0 text-xs text-destructive">Unable to render diagram: {result.message}</p>
           {result.retryable ? (
             <Button

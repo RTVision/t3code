@@ -1076,7 +1076,10 @@ function MarkdownMermaidCodeBlock({
         <RenderErrorBoundary resetKeys={[code, theme]} fallback={children}>
           <Suspense
             fallback={
-              <div className="flex min-h-36 items-center justify-center text-xs text-muted-foreground">
+              <div
+                data-thread-find-ignore
+                className="flex min-h-36 items-center justify-center text-xs text-muted-foreground"
+              >
                 Rendering diagram
               </div>
             }

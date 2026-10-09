@@ -18,10 +18,23 @@ import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
-vi.mock("./chat/MermaidDiagram", () => ({
-  // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
-  MermaidDiagram: () => <svg aria-label="Diagram" />,
+const mermaidTest = vi.hoisted(() => ({ realRenderer: false, render: vi.fn() }));
+vi.mock("mermaid", () => ({
+  default: { initialize: vi.fn(), render: mermaidTest.render },
 }));
+vi.mock("./chat/MermaidDiagram", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./chat/MermaidDiagram")>();
+  return {
+    // Successful diagram tests avoid the layout APIs jsdom lacks. Error and
+    // loading tests keep the real renderer and suspend at its library boundary.
+    MermaidDiagram: (props: ComponentProps<typeof actual.MermaidDiagram>) =>
+      mermaidTest.realRenderer ? (
+        <actual.MermaidDiagram {...props} />
+      ) : (
+        <svg aria-label="Diagram" />
+      ),
+  };
+});
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
@@ -1182,6 +1195,97 @@ it("keeps Mermaid diagrams rendered until find selects a match in their source",
     vi.unstubAllGlobals();
   }
 });
+
+it.each(["loading", "error"] as const)(
+  "selects Mermaid source rather than %s chrome when both contain the Find query",
+  async (state) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    const highlights = new Map<string, Set<Range>>();
+    vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let resolveRendering!: (result: { svg: string }) => void;
+    let rejectRendering!: (error: Error) => void;
+    const rendering = new Promise<{ svg: string }>((resolve, reject) => {
+      resolveRendering = resolve;
+      rejectRendering = reject;
+    });
+    mermaidTest.render.mockImplementation(() => {
+      resolveStarted();
+      return rendering;
+    });
+    mermaidTest.realRenderer = true;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const text = `Needle first.\n\n\`\`\`mermaid\ngraph TD; diagram-->${state}\n\`\`\``;
+    function Probe({ query }: { query: string }) {
+      useThreadFindHighlights({
+        container,
+        query,
+        activeRowId: "row",
+        activeOccurrence: 0,
+        onActiveRange: () => {},
+      });
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={true}>
+              <ChatMarkdown cwd={undefined} text={text} />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    const frame = () =>
+      act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    try {
+      await act(() => root.render(<Probe query="Needle" />));
+      await act(async () => {
+        await started;
+        if (state === "error") {
+          rejectRendering(
+            new Error("Failed to fetch a dynamically imported module: diagram Retry."),
+          );
+        }
+      });
+      expect(container.textContent).toContain(
+        state === "loading" ? "Rendering diagram" : "Unable to render diagram",
+      );
+      const indexed = (
+        searchableMessageSegments({ role: "assistant", text, streaming: false }) ?? []
+      ).reduce((total, segment) => total + countThreadSearchOccurrences(segment, "diagram"), 0);
+      expect(indexed).toBe(1);
+      await act(() => root.render(<Probe query="diagram" />));
+      await frame();
+      await frame();
+      expect(container.querySelector('button[aria-label="Show diagram"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("Rendering diagram");
+      expect(container.textContent).not.toContain("Unable to render diagram");
+      expect(
+        [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+      ).toEqual(["diagram"]);
+    } finally {
+      await act(async () => {
+        resolveRendering({ svg: "<svg/>" });
+        root.unmount();
+      });
+      mermaidTest.realRenderer = false;
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it.each([
   {
