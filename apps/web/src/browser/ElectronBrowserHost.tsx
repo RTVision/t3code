@@ -109,7 +109,7 @@ export function ElectronBrowserHost() {
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
-    return preview.onOpenLink(({ tabId, url, background }) => {
+    return preview.onOpenLink?.(({ tabId, url, background }) => {
       const source = sessionByRuntimeTabId.current.get(tabId);
       if (!source) return;
       // The new tab keeps the source tab's profile so its cookies carry over.
