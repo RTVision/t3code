@@ -1,3 +1,7 @@
+// FileSystem.access has no executable flag; X_OK follows the current user's Unix permissions.
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -141,7 +145,18 @@ export const make = Effect.gen(function* () {
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, "t3");
-      if (yield* exists(candidate)) return Option.some(candidate);
+      const regularFile = yield* fs.stat(candidate).pipe(
+        Effect.map((info) => info.type === "File"),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!regularFile) continue;
+      const executable = yield* Effect.tryPromise(() =>
+        NodeFSP.access(candidate, NodeFS.constants.X_OK),
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (executable) return Option.some(candidate);
     }
     return Option.none<string>();
   });
@@ -216,10 +231,6 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous T3 home's launcher: point it at this one instead.
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     // A link behind another `t3` never runs, so installing one would only hide the problem.
     const shadowedBy = yield* foreignFirstOnPath;
@@ -227,6 +238,12 @@ export const make = Effect.gen(function* () {
       return yield* fail(
         `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
+    }
+    if (Option.isSome(existing)) {
+      // Check precedence while the previous home's launcher still occupies its PATH slot.
+      yield* fs
+        .remove(existing.value)
+        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
