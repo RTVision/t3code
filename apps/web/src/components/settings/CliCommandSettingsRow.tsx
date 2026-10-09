@@ -51,13 +51,15 @@ export function CliCommandSettingsRow() {
 
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
-  const description = !installed
-    ? "Run T3 Code's CLI as `t3` from any terminal."
-    : state.installedPath?.toLowerCase().endsWith(".cmd")
-      ? `Installed at ${state.installedPath}. Its folder was added to your user PATH. Other t3 commands may take precedence; run this full path to use the desktop version.`
-      : state.onPath
-        ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;
+  const description = state.shadowedBy
+    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    : !installed
+      ? "Run T3 Code's CLI as `t3` from any terminal."
+      : state.installedPath?.toLowerCase().endsWith(".cmd")
+        ? `Installed at ${state.installedPath}. Its folder was added to your user PATH. Other t3 commands may take precedence; run this full path to use the desktop version.`
+        : state.onPath
+          ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
+          : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;
 
   return (
     <SettingsRow

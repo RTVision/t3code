@@ -7,7 +7,7 @@ import { Command, Flag } from "effect/cli";
 
 import { runServicePreflight } from "../cloud/servicePreflight.ts";
 import * as NodePtyAdapter from "../terminal/NodePtyAdapter.ts";
-import * as PtyAdapter from "../terminal/PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 /**
  * A native PTY addon built for the wrong libc can load and then segfault on its

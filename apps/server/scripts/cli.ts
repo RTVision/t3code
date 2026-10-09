@@ -16,7 +16,10 @@ import {
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
-import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
+import {
+  resolveCatalogDependencies,
+  resolveServerPublishDependencies,
+} from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -363,10 +366,9 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
-            dependencies: resolveCatalogDependencies(
+            dependencies: resolveServerPublishDependencies(
               serverPackageJson.dependencies,
               workspaceCatalog,
-              "apps/server",
             ),
             overrides: resolveCatalogDependencies(
               workspaceOverrides,
