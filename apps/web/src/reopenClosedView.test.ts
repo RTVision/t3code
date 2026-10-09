@@ -1,11 +1,17 @@
 import {
   DEFAULT_CLIENT_SETTINGS,
+  type PreviewOpenInput,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { previewRuntimeFor } from "./browser/previewRuntime";
+import { closePreviewSession } from "./components/preview/closePreviewSession";
+import * as previewStateStore from "./previewStateStore";
+import * as entities from "./state/entities";
 
 import { type ClosedViewEntry, useClosedViewStore } from "./closedViewStore";
 import { __setClientSettingsForTests } from "./hooks/useSettings";
@@ -42,6 +48,10 @@ beforeEach(() => {
   resetPreviewStateForTests();
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("reopenClosedView", () => {
@@ -128,6 +138,65 @@ describe("reopenClosedView", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
     ).toEqual([]);
   });
+
+  it.each(
+    (["desktop", "web"] as const).flatMap((client) =>
+      (["server", "desktop", undefined] as const).map((runtime) => ({ client, runtime })),
+    ),
+  )(
+    "keeps a closed $runtime browser on its original machine in $client",
+    async ({ client, runtime }) => {
+      vi.spyOn(previewStateStore, "isPreviewSupportedInRuntime").mockReturnValue(
+        client === "desktop",
+      );
+      vi.spyOn(entities, "readEnvironmentSupportsServerBrowser").mockReturnValue(true);
+      const remoteRef = {
+        ...threadRef,
+        environmentId: "remote" as ScopedThreadRef["environmentId"],
+      };
+      const closedSnapshot = {
+        ...snapshot,
+        runtime,
+        navStatus: { _tag: "Success", url: "http://localhost:3000/", title: "Host page" } as const,
+      };
+      expect(previewRuntimeFor(remoteRef.environmentId)).toBe(
+        client === "desktop" ? undefined : "server",
+      );
+
+      await closePreviewSession({
+        closePreview: async () => AsyncResult.success(undefined),
+        snapshot: closedSnapshot,
+        tabId: closedSnapshot.tabId,
+        threadRef: remoteRef,
+      });
+      const closed = useClosedViewStore.getState().entries[0]!;
+      const openPreview = vi.fn(async ({ input }: { input: PreviewOpenInput }) =>
+        AsyncResult.success({ ...closedSnapshot, tabId: "restored-tab", runtime: input.runtime }),
+      );
+
+      expect(await reopenClosedView(closed, { openPreview, workspaceAvailable: false })).toBe(true);
+      const restoredRuntime = runtime === "server" ? "server" : undefined;
+      expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+        environmentId: remoteRef.environmentId,
+        input: {
+          threadId: remoteRef.threadId,
+          url: closedSnapshot.navStatus.url,
+          viewport: snapshot.viewport,
+          profileId: "work",
+          ...(restoredRuntime === undefined ? {} : { runtime: restoredRuntime }),
+        },
+      });
+      expect(readThreadPreviewState(remoteRef).snapshot).toMatchObject({
+        tabId: "restored-tab",
+        runtime: restoredRuntime,
+        navStatus: closedSnapshot.navStatus,
+      });
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, remoteRef)
+          .activeSurfaceId,
+      ).toBe("browser:restored-tab");
+    },
+  );
 });
 
 describe("planNextReopen", () => {

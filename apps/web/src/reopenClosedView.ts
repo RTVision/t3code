@@ -114,6 +114,8 @@ export async function reopenClosedView(
       ...(url === undefined ? {} : { url }),
       ...(view.snapshot.viewport === undefined ? {} : { viewport: view.snapshot.viewport }),
       ...(view.snapshot.profileId === undefined ? {} : { profileId: view.snapshot.profileId }),
+      // Older snapshots omit runtime for desktop tabs; reopening must not apply a new default.
+      runtime: view.snapshot.runtime ?? "desktop",
     });
     if (result._tag === "Failure") return false;
     panels.openBrowser(ref, result.value.tabId);
