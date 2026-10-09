@@ -46,7 +46,12 @@ vi.mock("../../state/server", async (original) => ({
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironments: () => ({ environments: [] }),
-  usePrimaryEnvironment: () => ({ environmentId: "primary", label: "Primary", serverConfig: null }),
+  usePrimaryEnvironment: () => ({
+    environmentId: "primary",
+    label: "Primary",
+    connection: { phase: "connected", error: null, traceId: null },
+    serverConfig: null,
+  }),
   usePrimaryEnvironmentId: () => "primary",
   useRelayEnvironmentDiscovery: () => ({ environments: new Map() }),
 }));
