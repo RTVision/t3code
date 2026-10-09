@@ -803,6 +803,81 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("settles a joined report's background workflow after its user turn ends", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered = yield* Deferred.make<void>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: () => Deferred.succeed(offered, undefined) } },
+      );
+      yield* fake.emit("turn/started", { turnId: "report-1" });
+      yield* Deferred.await(offered);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const workflow = {
+        itemId: "report-workflow",
+        kind: "workflow",
+        revision: 1,
+        status: "inProgress",
+        turnId: "report-1",
+        entryId: "follow-up",
+      };
+      yield* fake.emit("item/started", { item: workflow });
+      const started = yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) => event.turnItem.nativeItemRef?.nativeId === workflow.itemId,
+      );
+      assert.strictEqual(started.turnItem.status, "running");
+      yield* fake.emit("turn/completed", { turnId: "report-1", terminal: "completed" });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      // A matching item ID on an unrelated native turn must not settle this work.
+      yield* fake.emit("item/completed", {
+        item: { ...workflow, revision: 2, status: "completed", turnId: "unrelated-turn" },
+      });
+      yield* fake.emit("session/contextUsage", { usedTokens: 41 });
+      yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.tokenUsage?.usedTokens === 41,
+      );
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      yield* fake.emit("item/completed", {
+        item: { ...workflow, revision: 2, status: "completed" },
+      });
+      // The ordered notification stream's usage event is a completion barrier,
+      // including in the broken case where the workflow event is discarded.
+      yield* fake.emit("session/contextUsage", { usedTokens: 42 });
+      yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.tokenUsage?.usedTokens === 42,
+      );
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      assert.isTrue(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.id === started.turnItem.id &&
+            event.turnItem.status === "completed",
+        ),
+      );
+      assert.isTrue(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.pendingBackgroundTasks?.length === 0,
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("approves a workflow child's approval in full access after its turn ended", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

@@ -1032,7 +1032,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           : undefined;
         if (itemEvent) {
           const owner = observedChildren.get(itemEvent.itemId);
-          if (owner && owner !== active && itemEvent.turnId === owner.nativeId) {
+          if (owner && owner !== active && itemEvent.turnId && owns(owner, itemEvent.turnId)) {
             const previous = owner.items.get(itemEvent.itemId);
             if (!previous || itemEvent.revision > previous.revision) {
               owner.items.set(itemEvent.itemId, itemEvent);
