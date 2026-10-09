@@ -14,6 +14,8 @@ import {
   applyPreviewServerSnapshot,
   beginPreviewSessionClose,
   cancelPreviewSessionClose,
+  clearThreadPreviewState,
+  pinPreviewDesktopProfile,
   previewStateAtom,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
@@ -58,6 +60,69 @@ const applyPreviewServerEvent = (eventRef: typeof ref, event: PreviewEventDraft)
 beforeEach(() => {
   nextServerRevision = 0;
   resetPreviewStateForTests();
+});
+
+describe("desktop preview profile lifetime", () => {
+  it("keeps a guest's profile across omitted-profile updates and rejects old-epoch pins", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 1 });
+    pinPreviewDesktopProfile(ref, serverEpoch, snapshot.tabId, "work");
+    pinPreviewDesktopProfile(ref, serverEpoch, snapshot.tabId, "personal");
+    updatePreviewServerSnapshot(ref, { ...snapshot, updatedAt: "2026-10-09T00:00:00.000Z" });
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 2 });
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({ tab_a: "work" });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [snapshot],
+      serverEpoch: "server-b",
+      revision: 0,
+    });
+    pinPreviewDesktopProfile(ref, serverEpoch, snapshot.tabId, "work");
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({});
+    pinPreviewDesktopProfile(ref, "server-b", snapshot.tabId, "personal");
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({ tab_a: "personal" });
+  });
+
+  it("retains the partition during close recovery and forgets it on confirmed close", () => {
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 0 });
+    pinPreviewDesktopProfile(ref, serverEpoch, snapshot.tabId, "work");
+    beginPreviewSessionClose(ref, snapshot.tabId);
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 1 });
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({ tab_a: "work" });
+    beginPreviewSessionClose(ref, snapshot.tabId);
+    applyPreviewServerEventImpl(ref, {
+      type: "closed",
+      threadId: snapshot.threadId,
+      tabId: snapshot.tabId,
+      createdAt: snapshot.updatedAt,
+      serverEpoch,
+      revision: 2,
+    });
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({});
+    applyPreviewServerSnapshot(ref, snapshot);
+    pinPreviewDesktopProfile(ref, serverEpoch, snapshot.tabId, "personal");
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({ tab_a: "personal" });
+  });
+
+  it("isolates explicit profiles by thread and cleans suppressed tabs when their thread is deleted", () => {
+    applyPreviewServerSnapshot(ref, makeSnapshot({ profileId: "work" }));
+    applyPreviewServerSnapshot(otherRef, makeSnapshot({ threadId: "thread-2" }));
+    pinPreviewDesktopProfile(ref, null, "tab_a", "personal");
+    pinPreviewDesktopProfile(otherRef, null, "tab_a", "personal");
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({ tab_a: "work" });
+    expect(readThreadPreviewState(otherRef).desktopProfileByTabId).toEqual({ tab_a: "personal" });
+    beginPreviewSessionClose(ref, "tab_a");
+    clearThreadPreviewState(ref);
+    expect(readThreadPreviewState(ref).desktopProfileByTabId).toEqual({});
+    expect(readThreadPreviewState(otherRef).desktopProfileByTabId).toEqual({ tab_a: "personal" });
+    reconcilePreviewServerSessions(otherRef, {
+      sessions: [],
+      serverEpoch: "other-server",
+      revision: 0,
+    });
+    expect(readThreadPreviewState(otherRef).desktopProfileByTabId).toEqual({});
+  });
 });
 
 describe("previewStateStore (single-tab)", () => {

@@ -241,14 +241,15 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // A tab created before profiles existed carries no profile of its own. It
-  // runs in the built-in `default` partition — the scope the browser used
-  // before profiles — not in whatever profile is configured as the default
-  // now, so that is what its label names and its clear actions target.
-  // Passing the snapshot's raw `undefined` through would reach the IPC layer
-  // as "every profile".
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
+  // Native guests pin their partition once settings hydrate. Never pass an
+  // unresolved profile to clear-data IPC: undefined means every profile there.
+  const activeProfileId = isServerTab
+    ? (snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID)
+    : ((tabId ? previewState.desktopProfileByTabId?.[tabId] : undefined) ?? snapshot?.profileId);
+  const activeProfileName =
+    activeProfileId === undefined
+      ? undefined
+      : previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -459,7 +460,7 @@ export function PreviewView({
   const moveLabel =
     moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
   const handleMoveTab = useCallback(async () => {
-    if (!moveTarget || !tabId || !snapshot) return;
+    if (!moveTarget || !tabId || !snapshot || activeProfileId === undefined) return;
     const result = await openPreviewSession({
       openPreview: open,
       threadRef,
@@ -473,7 +474,7 @@ export function PreviewView({
           }
         : {}),
       viewport,
-      ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
+      profileId: activeProfileId,
       runtime: moveTarget,
     });
     if (result._tag === "Failure") {
@@ -488,7 +489,7 @@ export function PreviewView({
     }
     useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
     await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
-  }, [closePreview, moveTarget, open, snapshot, tabId, threadRef, url, viewport]);
+  }, [activeProfileId, closePreview, moveTarget, open, snapshot, tabId, threadRef, url, viewport]);
 
   const handlePictureInPicture = useCallback(() => {
     if (!tabId) return;
@@ -534,14 +535,18 @@ export function PreviewView({
           zoomIn: handleZoomIn,
           zoomOut: handleZoomOut,
           resetZoom: handleResetZoom,
-          clearCookies: () =>
-            void previewBridge
-              ?.clearCookies(threadRef.environmentId, activeProfileId)
-              .catch(() => undefined),
-          clearCache: () =>
-            void previewBridge
-              ?.clearCache(threadRef.environmentId, activeProfileId)
-              .catch(() => undefined),
+          clearCookies: () => {
+            if (activeProfileId !== undefined)
+              void previewBridge
+                ?.clearCookies(threadRef.environmentId, activeProfileId)
+                .catch(() => undefined);
+          },
+          clearCache: () => {
+            if (activeProfileId !== undefined)
+              void previewBridge
+                ?.clearCache(threadRef.environmentId, activeProfileId)
+                .catch(() => undefined);
+          },
           openDevTools: desktopCall(previewBridge.openDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
         }
@@ -1028,6 +1033,7 @@ export function PreviewView({
             <PreviewMoreMenu
               enabled={
                 runtimeTabId !== null &&
+                activeProfileId !== undefined &&
                 (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
               }
               actions={moreMenuActions}
