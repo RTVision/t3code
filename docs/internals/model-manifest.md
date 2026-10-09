@@ -25,8 +25,9 @@ released after the installed build. Snapshots report those models in
 `currentModels.claudeAgent` is the current-model classification overlay for
 releases that predate catalog discovery; it does not add models to their catalogs.
 Catalog-aware releases use `providers.claudeAgent.models[].status` instead.
-Codex uses `currentModels.codex` as a legacy-classification overlay for discovered
-models.
+Codex uses `providers.codex.models[].status` to classify discovered models as
+legacy. Models absent from that catalog remain non-legacy. `currentModels.codex`
+remains compatibility data for older releases.
 
 Model data is schema-validated configuration. Tests should cover resolver, cache,
 and adapter semantics with synthetic model names, so adding a model never requires

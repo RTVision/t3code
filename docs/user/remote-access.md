@@ -191,22 +191,28 @@ For Antigravity's Google callback on a remote host, see
 
 ## Browser on a remote environment
 
-Browser tabs belong to the environment, so you and your agents see the same
-tabs from any device. The desktop app shows its own environment's tabs
-directly. Every other device, and the desktop app for other environments,
-streams them from the host. Agents keep using them while no device is
-connected, and `localhost` addresses reach servers on the host.
+On desktop, tabs you open for a remote environment run on your computer by
+default. `localhost` reaches your computer. To reach a service available only
+on the remote host, choose **Open in [environment]'s browser**. Choose
+**Open on this computer** to switch back.
 
-The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
-is the same browser [HTML renders](html-renders.md) use, so a host downloads it
-only once. Musl Linux hosts use native Chromium instead.
-Some Linux hosts need [setup](#browser-host-setup) before it can start.
+Tabs opened from web or mobile, and tabs created by agents, run on the
+environment's host. These tabs are shared across devices, remain available to
+agents when no device is connected, and resolve `localhost` on the host. The
+desktop app renders its own environment's tabs directly; other clients stream
+host tabs, including desktop when connected to a remote environment.
+
+The first host-rendered tab downloads a headless Chrome, about 120 MB, into the
+host's T3 home. It is the same browser [HTML renders](html-renders.md) use, so
+the host downloads it only once. Musl Linux hosts use native Chromium instead.
+Some Linux hosts need [setup](#browser-host-setup) before it can start. Tabs
+running on your desktop use its bundled browser.
 
 Agent tabs have separate storage and share a Chromium process. Take control before
 typing into an agent's tab, then release control when you want the agent to
 continue. Read-only connections can watch without changing the page.
 
-While you have control, the tab works with your device: text the page copies or
+While you have control of a host tab, it works with your device: text the page copies or
 cuts goes to your clipboard, a file picker on the page opens your device's
 picker, and a finished download is offered for you to save. Popups such as
 sign-in windows open as their own tabs. Downloads stay on the host until the

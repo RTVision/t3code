@@ -46,7 +46,7 @@ capabilities, never the driver kind.
 - **T3 MCP tools.** Inject the thread's MCP server so agents can use T3's tools, and make a turn
   survive when that server is unreachable.
 - **Updates.** Run an update only through the installer that provably owns the binary; otherwise
-  leave it manual. See [`maintenance.ts`](../../packages/provider-core/src/server/maintenance.ts).
+  leave it manual. See the [ownership resolver](../../packages/provider-core/src/server/maintenanceResolver.ts).
 
 ## Tests
 

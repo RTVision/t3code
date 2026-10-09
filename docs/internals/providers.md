@@ -93,7 +93,7 @@ manual-only because their version is pinned in mise's config. npm updates pin `-
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.
-See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+See the [resolver](../../packages/provider-core/src/server/maintenanceResolver.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
