@@ -3,6 +3,7 @@ import {
   EventId,
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2ThreadHistoryPage,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -20,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -54,6 +56,7 @@ const TARGET = new PrimaryConnectionTarget({
 });
 const THREAD_ID = v2ThreadId;
 const CACHED_SNAPSHOT_SEQUENCE = 7;
+const encodeHistoryPage = Schema.encodeSync(OrchestrationV2ThreadHistoryPage);
 const PREPARED: PreparedConnection = {
   environmentId: TARGET.environmentId,
   label: TARGET.label,
@@ -846,6 +849,146 @@ describe("EnvironmentThreads", () => {
       ).toBe(true);
       expect(expanded.history.hasMoreHistory).toBe(false);
     }),
+  );
+
+  it.effect.each(["retry", "replacement snapshot"] as const)(
+    "keeps expanded Find history chronological after %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+        const messages = Array.from(
+          { length: 41 },
+          (_, index) =>
+            ({
+              id: TurnItemId.make(`item:history-${index + 1}`),
+              threadId: THREAD_ID,
+              ordinal: index * 2 + 1,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              inputIntent: "turn_start",
+              attachments: [],
+              status: "completed",
+              title: null,
+              messageId: MessageId.make(`message:history-${index + 1}`),
+              text: `Turn ${index + 1}`,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            }) satisfies Extract<OrchestrationV2TurnItem, { type: "user_message" }>,
+        );
+        const activities = messages.slice(0, 40).map(
+          (message) =>
+            ({
+              ...message,
+              id: TurnItemId.make(`item:activity-${message.ordinal}`),
+              ordinal: message.ordinal + 1,
+              type: "command_execution",
+              input: "pwd",
+              output: "",
+              exitCode: 0,
+            }) satisfies OrchestrationV2TurnItem,
+        );
+        const projected = (item: OrchestrationV2TurnItem, position: number) => ({
+          position,
+          visibility: "local" as const,
+          sourceThreadId: THREAD_ID,
+          sourceItemId: item.id,
+          item,
+        });
+        const recent = {
+          ...BASE_PROJECTION,
+          turnItems: [messages[40]!],
+          visibleTurnItems: [projected(messages[40]!, 0)],
+        };
+        const requestedTargets: Array<string | null> = [];
+        let completeRequests = 0;
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            const target = url.searchParams.get("throughEntryId");
+            requestedTargets.push(target);
+            const conversationOnly = url.searchParams.get("view") === "conversation";
+            if (!conversationOnly && completeRequests++ === 0)
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("Unavailable", { status: 503 })),
+              );
+            // Server paging expands a targeted range to 40 turns; ordinary loads use 20.
+            const first = target === messages[0]!.messageId ? 0 : 20;
+            const page = messages
+              .slice(first, 40)
+              .flatMap((message, index) =>
+                conversationOnly ? [message] : [message, activities[first + index]!],
+              );
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  encodeHistoryPage({
+                    snapshotSequence: 14,
+                    items: page.map(projected),
+                    nextCursor: first === 0 ? null : "before-turn-21",
+                    hasMoreHistory: first !== 0,
+                  }),
+                ),
+              ),
+            );
+          }),
+        });
+        const bounded = {
+          ...snapshot(recent, 14),
+          historyCursor: "before-turn-41",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 81,
+          payloadBudgetExceeded: false,
+        };
+        yield* Queue.offer(harness.inputs, bounded);
+        yield* awaitThreadState(
+          harness.observed,
+          (state) => state.history.historyCursor === "before-turn-41",
+        );
+        expect(yield* harness.loadEarlier(messages[0]!.messageId!)).toMatchObject({
+          _tag: "error",
+          message: expect.stringContaining("503"),
+        });
+        const partial = yield* SubscriptionRef.get(harness.threadState);
+        expect(
+          Option.getOrThrow(partial.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual(messages.map((message) => message.id));
+        expect(partial.history.historyCursor).toBe("before-turn-41");
+        if (mode === "replacement snapshot") {
+          yield* Queue.offer(harness.inputs, {
+            ...bounded,
+            snapshotSequence: 15,
+            projection: { ...recent, thread: { ...recent.thread, title: "Replacement" } },
+          });
+          yield* awaitThreadState(
+            harness.observed,
+            (state) => Option.getOrThrow(state.data).thread.title === "Replacement",
+          );
+        }
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+        const final = yield* SubscriptionRef.get(harness.threadState);
+        const first = mode === "retry" ? 0 : 20;
+        const expected = messages
+          .slice(first, 40)
+          .flatMap((message, index) => [message.id, activities[first + index]!.id]);
+        expect(
+          Option.getOrThrow(final.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual([...expected, messages[40]!.id]);
+        expect(final.history).toMatchObject({
+          loading: false,
+          error: null,
+          historyCursor: first === 0 ? null : "before-turn-21",
+          hasMoreHistory: first !== 0,
+        });
+        expect(requestedTargets.at(-1)).toBe(mode === "retry" ? messages[0]!.messageId : null);
+      }),
   );
 
   it.effect.each(["complete", "replacement snapshot", "retry"] as const)(

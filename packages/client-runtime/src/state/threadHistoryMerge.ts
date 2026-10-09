@@ -9,6 +9,8 @@ export type ThreadHistoryMeta = {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
+  /** Finish the expanded Find range before accepting another paging target. */
+  readonly pendingThroughEntryId?: string;
   /** True after at least one older page was merged; skip monolithic cache growth. */
   readonly expanded: boolean;
   /**

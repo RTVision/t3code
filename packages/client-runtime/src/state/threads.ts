@@ -653,9 +653,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // Capture the cursor that initiated this request. Completions/failures must
     // no-op if a socket or new bounded snapshot replaced progressive meta mid-flight.
     const requestCursor = current.history.historyCursor;
+    // A conversation-only page can expose more than the ordinary page size.
+    // Retry its full range so a smaller overlapping page cannot reorder it.
+    const requestThroughEntryId = current.history.pendingThroughEntryId ?? throughEntryId;
     yield* patchHistoryMeta((history) =>
       isActiveHistoryRequestCursor(requestCursor, history)
-        ? { ...history, loading: true, error: null }
+        ? {
+            ...history,
+            loading: true,
+            error: null,
+            ...(requestThroughEntryId === undefined
+              ? {}
+              : { pendingThroughEntryId: requestThroughEntryId }),
+          }
         : history,
     );
 
@@ -685,13 +695,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         return yield* failLoad("Environment is not connected.");
 
       const views =
-        throughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
+        requestThroughEntryId === undefined ? [undefined] : ["conversation" as const, undefined];
       for (const view of views) {
         const pageResult = yield* fetchEnvironmentThreadHistoryPage({
           prepared: preparedOption.value,
           threadId,
           cursor: requestCursor,
-          throughEntryId,
+          throughEntryId: requestThroughEntryId,
           view,
           signer: dpopSigner,
           remoteAuthorization,
