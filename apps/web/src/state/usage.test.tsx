@@ -1,4 +1,5 @@
 import {
+  AuthDiagnosticsReadScope,
   EnvironmentId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
@@ -33,6 +34,7 @@ function environment(
     label: id,
     isPending: cost === null,
     canReadDiagnostics: true,
+    session: null,
     isConnected: true,
     error: null,
     needsCursorKeychainAccess: false,
@@ -124,6 +126,66 @@ afterEach(async () => {
 });
 
 describe("usage environment selection", () => {
+  it("does not reuse retained totals across an authenticated session replacement", async () => {
+    const session: NonNullable<EnvironmentUsageStatus["session"]> = {
+      authenticated: true,
+      scopes: [AuthDiagnosticsReadScope],
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: [],
+        sessionMethods: ["bearer-access-token"],
+        sessionCookieName: "t3-test",
+      },
+    };
+    testState.environments = [{ ...environment("a", 10), session }];
+    await act(() => renderer?.update(<Probe selected={null} />));
+    expect(latest.shown?.merged.costUsd).toBe(10);
+
+    testState.environments = [{ ...environment("a", null), session }];
+    await act(() => renderer?.update(<Probe selected={null} />));
+    expect(latest.shown?.merged.costUsd).toBe(10);
+
+    testState.environments = [{ ...environment("a", null), session: { ...session } }];
+    await act(() => renderer?.update(<Probe selected={null} />));
+    expect(latest.merged.costUsd).toBe(0);
+    expect(latest.shown).toBeNull();
+
+    testState.environments = [{ ...environment("a", null), session }];
+    await act(() => renderer?.update(<Probe selected={null} />));
+    expect(latest.shown).toBeNull();
+  });
+
+  it.each(["denied", "failed", "removed"] as const)(
+    "drops retained usage when its environment is %s while another is pending",
+    async (change) => {
+      testState.environments = [environment("a", 10), environment("b", null)];
+      await act(() => renderer?.update(<Probe selected={null} />));
+      expect(latest.shown?.merged.costUsd).toBe(10);
+
+      testState.environments = [
+        ...(change === "removed"
+          ? []
+          : [
+              {
+                ...environment("a", null),
+                canReadDiagnostics: false,
+                isPending: false,
+                error: change === "denied" ? "Access denied" : "Session check failed",
+              },
+            ]),
+        environment("b", null),
+      ];
+      await act(() => renderer?.update(<Probe selected={null} />));
+      expect(latest.merged.costUsd).toBe(0);
+      expect(latest.shown).toBeNull();
+
+      // Restoring membership or access cannot resurrect the revoked contribution.
+      testState.environments = [environment("a", null), environment("b", null)];
+      await act(() => renderer?.update(<Probe selected={null} />));
+      expect(latest.shown).toBeNull();
+    },
+  );
+
   it("starts with all environments and adds results as they arrive", async () => {
     expect(latest.merged.costUsd).toBe(30);
     expect(latest.isPending).toBe(false);

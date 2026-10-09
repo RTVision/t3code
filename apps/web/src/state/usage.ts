@@ -10,6 +10,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
+  type AuthSessionState,
   type EnvironmentId,
   type UsageBucket,
   type UsageSummary,
@@ -33,6 +34,7 @@ export interface EnvironmentUsageStatus {
   readonly label: string;
   readonly isPending: boolean;
   readonly canReadDiagnostics: boolean;
+  readonly session: AuthSessionState | null;
   readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
@@ -55,9 +57,10 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     for (const [environmentId, presentation] of presentations) {
       const isConnected = presentation.connection.phase === "connected";
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
+      const session = Option.getOrNull(AsyncResult.value(sessionResult));
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
-        session: Option.getOrNull(AsyncResult.value(sessionResult)),
+        session,
         hasSessionError: sessionResult._tag === "Failure",
       });
       if (!access.canReadDiagnostics) {
@@ -65,6 +68,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           environmentId,
           label: presentation.entry.target.label,
           isConnected,
+          session,
           ...access,
           summary: null,
           needsCursorKeychainAccess: false,
@@ -78,6 +82,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         label: presentation.entry.target.label,
         isPending: result.waiting,
         canReadDiagnostics: true,
+        session,
         isConnected,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary,
@@ -236,6 +241,15 @@ export function useUsage(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
+  const readableSessions = useMemo(
+    () =>
+      new Map(
+        selectedEnvironments
+          .filter((environment) => environment.canReadDiagnostics)
+          .map(({ environmentId, session }) => [environmentId, session]),
+      ),
+    [selectedEnvironments],
+  );
 
   // Stored during render, as React recommends for state that follows props, so
   // the kept usage is on screen in the same frame the new window starts pending.
@@ -243,26 +257,42 @@ export function useUsage(
     | (NonNullable<UsageView["shown"]> & {
         readonly selection: typeof selectedEnvironmentIds;
         readonly hidden: typeof hiddenProviders;
+        readonly readableSessions: typeof readableSessions;
       })
     | null
   >(null);
+  const sameAccess =
+    lastAnswered !== null &&
+    lastAnswered.readableSessions.size === readableSessions.size &&
+    [...readableSessions].every(
+      ([environmentId, session]) =>
+        lastAnswered.readableSessions.has(environmentId) &&
+        lastAnswered.readableSessions.get(environmentId) === session,
+    );
   if (
     answeredCount > 0 &&
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
       lastAnswered.selection !== selectedEnvironmentIds ||
-      lastAnswered.hidden !== hiddenProviders)
+      lastAnswered.hidden !== hiddenProviders ||
+      !sameAccess)
   ) {
     setLastAnswered({
       window: input,
       merged,
       selection: selectedEnvironmentIds,
       hidden: hiddenProviders,
+      readableSessions,
     });
+  } else if (lastAnswered !== null && !sameAccess) {
+    // Removed contributors and changed sessions must not return if access is restored.
+    setLastAnswered(null);
   }
-  // Kept usage only stands in for the same environments and provider filter.
+  // Kept usage only stands in for the same readable sessions and provider filter.
   const kept =
-    lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
+    sameAccess &&
+    lastAnswered?.selection === selectedEnvironmentIds &&
+    lastAnswered.hidden === hiddenProviders
       ? lastAnswered
       : null;
   // With no answers, even failed ones keep the last answered usage on screen.
