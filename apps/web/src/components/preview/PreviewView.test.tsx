@@ -7,7 +7,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, createElement, Profiler } from "react";
+import { act, createElement, Profiler, useEffect, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -40,6 +40,14 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  useRealPreviewState: false,
+  clearCookies: vi.fn(async (_environmentId: string, _profileId: string) => undefined),
+  openPreview: vi.fn(),
+  getPreviewConfig: vi.fn(async (_environmentId: string, profileId: string | undefined) => ({
+    partition: profileId ?? "default",
+  })),
+  clearDataAction: null as (() => void) | null,
+  moveTab: null as (() => void) | null,
 }));
 
 const EMPTY_HISTORY: never[] = [];
@@ -82,7 +90,8 @@ vi.mock("~/browser/browserDefaults", () => ({
   useBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
   getBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
   browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
-  browserDefaultOpenProfileId: () => DEFAULT_BROWSER_PROFILE_ID,
+  browserDefaultOpenProfileId: () => STUB_BROWSER_DEFAULTS.profileId,
+  resolveBrowserDefaults: async () => STUB_BROWSER_DEFAULTS,
   browserDefaultTabState: () => ({
     zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
     colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -108,57 +117,96 @@ vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(),
 }));
 
-vi.mock("~/previewStateStore", () => ({
-  rememberPreviewUrl: mocks.rememberPreviewUrl,
-  updatePreviewServerSnapshot: vi.fn(),
-  useThreadPreviewState: () => ({
-    activeTabId: "tab-1",
-    serverEpoch: mocks.serverEpoch,
-    desktopByTabId: {
-      "tab-1": {
-        hasWebContents: true,
-        canGoBack: false,
-        canGoForward: false,
-        loading: mocks.loading,
-        zoomFactor: 1,
-        pictureInPicture: mocks.pictureInPicture,
-        colorScheme: "system",
-        audioMuted: false,
-        audible: false,
-        controller: "none",
-      },
-    },
-    recentlySeenUrls: [],
-    sessions: mocks.showEmptyState
-      ? {}
-      : {
-          "tab-1": {
-            threadId: "thread-1",
-            tabId: "tab-1",
-            navStatus: {
-              _tag: "Success",
-              url: "http://example.com/",
-              title: "Example",
+vi.mock("~/previewStateStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/previewStateStore")>();
+  return {
+    ...actual,
+    rememberPreviewUrl: mocks.rememberPreviewUrl,
+    updatePreviewServerSnapshot: vi.fn(),
+    useThreadPreviewState: (ref: Parameters<typeof actual.useThreadPreviewState>[0]) =>
+      mocks.useRealPreviewState
+        ? actual.useThreadPreviewState(ref)
+        : {
+            activeTabId: "tab-1",
+            serverEpoch: mocks.serverEpoch,
+            desktopByTabId: {
+              "tab-1": {
+                hasWebContents: true,
+                canGoBack: false,
+                canGoForward: false,
+                loading: mocks.loading,
+                zoomFactor: 1,
+                pictureInPicture: mocks.pictureInPicture,
+                colorScheme: "system",
+                audioMuted: false,
+                audible: false,
+                controller: "none",
+              },
             },
-            canGoBack: false,
-            canGoForward: false,
-            updatedAt: "2026-07-13T00:00:00.000Z",
+            recentlySeenUrls: [],
+            sessions: mocks.showEmptyState
+              ? {}
+              : {
+                  "tab-1": {
+                    threadId: "thread-1",
+                    tabId: "tab-1",
+                    navStatus: {
+                      _tag: "Success",
+                      url: "http://example.com/",
+                      title: "Example",
+                    },
+                    canGoBack: false,
+                    canGoForward: false,
+                    updatedAt: "2026-07-13T00:00:00.000Z",
+                  },
+                },
           },
-        },
-  }),
-}));
+  };
+});
 
 vi.mock("~/state/environments", () => ({
   useEnvironment: () => ({ label: "WSL" }),
   useEnvironmentHttpBaseUrl: () => "http://172.25.85.75:3773",
+  usePrimaryEnvironmentId: () => null,
 }));
+vi.mock("~/state/entities", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/state/entities")>();
+  return {
+    ...actual,
+    useEnvironmentSupportsServerBrowser: (
+      environmentId: Parameters<typeof actual.useEnvironmentSupportsServerBrowser>[0],
+    ) =>
+      mocks.useRealPreviewState ? true : actual.useEnvironmentSupportsServerBrowser(environmentId),
+  };
+});
 
 vi.mock("~/state/preview", () => ({
-  previewEnvironment: { open: {}, resize: {} },
+  previewEnvironment: { open: {}, close: {}, resize: {} },
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => vi.fn(),
+  useAtomCommand: () => (mocks.useRealPreviewState ? mocks.openPreview : vi.fn()),
+}));
+vi.mock("~/env", () => ({
+  get isElectron() {
+    return mocks.useRealPreviewState;
+  },
+}));
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useSettings")>()),
+  useClientSettingsHydrated: () => true,
+}));
+vi.mock("~/browser/HostedBrowserWebview", () => ({
+  HostedBrowserWebview: (props: {
+    threadRef: { environmentId: string };
+    profileId: string | undefined;
+  }) => {
+    useEffect(() => {
+      void mocks.getPreviewConfig(props.threadRef.environmentId, props.profileId);
+    }, [props.threadRef.environmentId, props.profileId]);
+    return null;
+  },
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
@@ -205,8 +253,9 @@ vi.mock("~/previewMiniPlayerStore", () => {
 });
 
 vi.mock("~/rightPanelStore", () => ({
+  selectSelectedRightPanelSurface: () => null,
   useRightPanelStore: {
-    getState: () => ({ close: mocks.closeRightPanel }),
+    getState: () => ({ close: mocks.closeRightPanel, openBrowser: vi.fn(), byThreadKey: {} }),
   },
 }));
 
@@ -218,6 +267,7 @@ vi.mock("~/components/ui/toast", () => ({
 vi.mock("./previewBridge", () => ({
   previewBridge: {
     navigate: mocks.navigate,
+    clearCookies: mocks.clearCookies,
     pickElement: mocks.pickElement,
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
@@ -234,9 +284,7 @@ vi.mock("./PreviewChromeRow", () => ({
     onPickElement?: () => void;
     onPictureInPicture?: () => void;
     pictureInPicture?: boolean;
-    trailingActions?: {
-      props: { actions?: { toggleNativePictureInPicture?: () => void } };
-    };
+    trailingActions?: ReactElement<{ actions?: { toggleNativePictureInPicture?: () => void } }>;
   }) => {
     mocks.submittedUrl = props.onSubmit;
     mocks.toggleAnnotation = props.onPickElement ?? null;
@@ -244,7 +292,7 @@ vi.mock("./PreviewChromeRow", () => ({
     mocks.toggleNativePictureInPicture =
       props.trailingActions?.props.actions?.toggleNativePictureInPicture ?? null;
     mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
-    return null;
+    return mocks.useRealPreviewState ? (props.trailingActions ?? null) : null;
   },
 }));
 
@@ -255,8 +303,13 @@ vi.mock("./PreviewEmptyState", () => ({
   },
 }));
 vi.mock("./PreviewMoreMenu", () => ({
-  PreviewMoreMenu: (props: { actions: { toggleNativePictureInPicture?: () => void } }) => {
+  PreviewMoreMenu: (props: {
+    actions: { toggleNativePictureInPicture?: () => void; clearCookies: () => void };
+    move?: { onMove: () => void };
+  }) => {
     mocks.toggleNativePictureInPicture = props.actions.toggleNativePictureInPicture ?? null;
+    mocks.clearDataAction = props.actions.clearCookies;
+    mocks.moveTab = props.move?.onMove ?? null;
     return null;
   },
 }));
@@ -277,6 +330,123 @@ const TEST_THREAD_REF = {
   threadId: ThreadId.make("thread-1"),
 } as const;
 const TEST_RUNTIME_TAB_ID = previewRuntimeTabId(TEST_THREAD_REF, null, "tab-1");
+
+it.each(["clear", "link", "move"] as const)(
+  "keeps an unprofiled desktop tab in Work after defaults change: %s",
+  async (operation) => {
+    const previewState =
+      await vi.importActual<typeof import("~/previewStateStore")>("~/previewStateStore");
+    const { ElectronBrowserHost } = await import("~/browser/ElectronBrowserHost");
+    const { AppAtomRegistryProvider } = await import("~/rpc/atomRegistry");
+    const document = installTestDom();
+    Object.assign(window, {
+      requestAnimationFrame: () => 0,
+      cancelAnimationFrame: () => undefined,
+    });
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const { createRoot } = await import("react-dom/client");
+    const container = document.createElement("div");
+    const root = createRoot(container as unknown as Element);
+    const previousDefaults = { ...STUB_BROWSER_DEFAULTS };
+    let openLink:
+      | ((event: { tabId: string; url: string; background: boolean }) => void)
+      | undefined;
+    mocks.useRealPreviewState = true;
+    mocks.getPreviewConfig.mockClear();
+    STUB_BROWSER_DEFAULTS.profiles = [
+      ...BUILT_IN_BROWSER_PROFILES,
+      { id: "work", name: "Work", kind: "persistent" },
+      { id: "personal", name: "Personal", kind: "persistent" },
+    ];
+    STUB_BROWSER_DEFAULTS.profileId = "work";
+    Object.assign(window, {
+      desktopBridge: {
+        preview: {
+          setAnnotationTheme: async () => undefined,
+          onPointerEvent: () => () => undefined,
+          onOpenLink: (listener: typeof openLink) => {
+            openLink = listener;
+            return () => {
+              openLink = undefined;
+            };
+          },
+        },
+      },
+    });
+    previewState.resetPreviewStateForTests();
+    previewState.applyPreviewServerSnapshot(TEST_THREAD_REF, {
+      threadId: "thread-1",
+      tabId: "tab-1",
+      runtime: "desktop",
+      navStatus: { _tag: "Success", url: "https://example.com", title: "Example" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-10-09T00:00:00.000Z",
+    });
+    mocks.openPreview.mockReset().mockImplementation(async ({ input }) => ({
+      _tag: "Success",
+      value: {
+        ...previewState.readThreadPreviewState(TEST_THREAD_REF).snapshot,
+        tabId: "new-tab",
+        profileId: input.profileId,
+        runtime: input.runtime,
+      },
+    }));
+    const cookies = { default: true, work: true, personal: true };
+    mocks.clearCookies.mockImplementation(async (_environmentId, profileId) => {
+      cookies[profileId as keyof typeof cookies] = false;
+    });
+    const render = () =>
+      root.render(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+          <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />
+        </AppAtomRegistryProvider>,
+      );
+    try {
+      await act(async () => render());
+      expect(mocks.getPreviewConfig.mock.results[0]?.type).toBe("return");
+      expect(await mocks.getPreviewConfig.mock.results[0]?.value).toEqual({ partition: "work" });
+      STUB_BROWSER_DEFAULTS.profileId = "personal";
+      await act(async () => render());
+      expect(await mocks.getPreviewConfig.mock.results.at(-1)?.value).toEqual({
+        partition: "work",
+      });
+      if (operation === "clear") {
+        await act(async () => mocks.clearDataAction?.());
+        expect(cookies).toEqual({ default: true, work: false, personal: true });
+      } else {
+        await act(async () => {
+          if (operation === "link")
+            openLink?.({
+              tabId: TEST_RUNTIME_TAB_ID,
+              url: "https://example.com/next",
+              background: false,
+            });
+          else await mocks.moveTab?.();
+        });
+        expect(mocks.openPreview).toHaveBeenCalledWith(
+          expect.objectContaining({
+            environmentId: TEST_THREAD_REF.environmentId,
+            input: expect.objectContaining({ profileId: "work" }),
+          }),
+        );
+      }
+    } finally {
+      await act(async () => root.unmount());
+      mocks.useRealPreviewState = false;
+      Object.assign(STUB_BROWSER_DEFAULTS, previousDefaults);
+      previewState.resetPreviewStateForTests();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 // ReactDOM needs a host, but this unit suite intentionally has no DOM dependency.
 class TestNode {

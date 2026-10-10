@@ -53,3 +53,17 @@ export function resolveCatalogDependencies(
     }),
   );
 }
+
+/** The server bundle includes private workspace packages; npm installs only external dependencies. */
+export function resolveServerPublishDependencies(
+  dependencies: Record<string, string>,
+  catalog: Record<string, string>,
+): Record<string, string> {
+  return resolveCatalogDependencies(
+    Object.fromEntries(
+      Object.entries(dependencies).filter(([, spec]) => !spec.startsWith("workspace:")),
+    ),
+    catalog,
+    "apps/server",
+  );
+}

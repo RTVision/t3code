@@ -42,6 +42,8 @@ export interface ThreadPreviewState {
   activeTabId: string | null;
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
+  /** Local guest partitions are fixed for a tab's lifetime, including unprofiled agent opens. */
+  desktopProfileByTabId: Record<string, string>;
   recentlySeenUrls: string[];
   /** Whether the first authoritative tab list has arrived. */
   listLoaded: boolean;
@@ -58,6 +60,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   activeTabId: null,
   desktopOverlay: null,
   desktopByTabId: {},
+  desktopProfileByTabId: {},
   recentlySeenUrls: [] as string[],
   listLoaded: false,
   serverEpoch: null,
@@ -145,10 +148,16 @@ const latestSnapshot = (
     .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
     .at(-1) ?? null;
 
-const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPreviewState => {
-  if (!current.sessions[tabId]) return current;
+const removeSession = (
+  current: ThreadPreviewState,
+  tabId: string,
+  retainDesktopProfile = false,
+): ThreadPreviewState => {
+  if (!current.sessions[tabId] && current.desktopProfileByTabId[tabId] === undefined)
+    return current;
   const { [tabId]: _closed, ...sessions } = current.sessions;
   const { [tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
+  const { [tabId]: _profile, ...remainingProfiles } = current.desktopProfileByTabId;
   const nextSnapshot = latestSnapshot(sessions);
   const activeTabId =
     current.activeTabId === tabId ? (nextSnapshot?.tabId ?? null) : current.activeTabId;
@@ -157,6 +166,7 @@ const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPrevie
     ...current,
     sessions,
     desktopByTabId,
+    desktopProfileByTabId: retainDesktopProfile ? current.desktopProfileByTabId : remainingProfiles,
     activeTabId: snapshot?.tabId ?? null,
     snapshot,
     desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
@@ -174,6 +184,32 @@ export function useActivePreviewSessions(): Record<string, ThreadPreviewState> {
 
 export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState {
   return appAtomRegistry.get(previewStateAtom(scopedThreadKey(ref)));
+}
+
+/** Share the attached guest's profile with controls and link/runtime-open consumers. */
+export function pinPreviewDesktopProfile(
+  ref: ScopedThreadRef,
+  serverEpoch: string | null,
+  tabId: string,
+  profileId: string,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    const snapshot = current.sessions[tabId];
+    if (
+      current.serverEpoch !== serverEpoch ||
+      !snapshot ||
+      current.suppressedTabIds.has(tabId) ||
+      current.desktopProfileByTabId[tabId] !== undefined
+    )
+      return current;
+    return {
+      ...current,
+      desktopProfileByTabId: {
+        ...current.desktopProfileByTabId,
+        [tabId]: snapshot.profileId ?? profileId,
+      },
+    };
+  });
 }
 
 export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
@@ -214,6 +250,7 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
               title: event.title,
               code: event.code,
               description: event.description,
+              ...(event.download === undefined ? {} : { download: event.download }),
             },
             updatedAt: event.createdAt,
           };
@@ -248,7 +285,12 @@ export function applyPreviewServerSnapshot(
   snapshot: PreviewSessionSnapshot | null,
 ): void {
   updateThreadPreviewState(ref, (current) => {
-    if (!snapshot && current.snapshot === null) return current;
+    if (
+      !snapshot &&
+      current.snapshot === null &&
+      Object.keys(current.desktopProfileByTabId).length === 0
+    )
+      return current;
     if (!snapshot) {
       return {
         ...current,
@@ -257,6 +299,7 @@ export function applyPreviewServerSnapshot(
         activeTabId: null,
         desktopOverlay: null,
         desktopByTabId: {},
+        desktopProfileByTabId: {},
       };
     }
     if (current.suppressedTabIds.has(snapshot.tabId)) return current;
@@ -352,6 +395,13 @@ export function reconcilePreviewServerSessions(
       activeTabId,
       snapshot,
       desktopByTabId,
+      desktopProfileByTabId: sameServer
+        ? Object.fromEntries(
+            Object.entries(current.desktopProfileByTabId).filter(
+              ([tabId]) => sessions[tabId] !== undefined || suppressedTabIds.has(tabId),
+            ),
+          )
+        : {},
       desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
       recentlySeenUrls,
       listLoaded: true,
@@ -410,7 +460,7 @@ export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): v
     const suppressedTabIds = new Set(current.suppressedTabIds);
     suppressedTabIds.add(tabId);
     return {
-      ...removeSession(current, tabId),
+      ...removeSession(current, tabId, true),
       suppressedTabIds,
     };
   });
@@ -457,6 +507,35 @@ export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
   });
 }
 
+/**
+ * Runs `action` once the thread's preview state has the tab, which a popup's
+ * `opened` event may deliver after the stream that announced it. Gives up
+ * after `timeoutMs`. Returns a cancel function.
+ */
+export function whenPreviewTabKnown(
+  ref: ScopedThreadRef,
+  tabId: string,
+  action: () => void,
+  timeoutMs = 5_000,
+): () => void {
+  const atom = previewStateAtom(scopedThreadKey(ref));
+  if (appAtomRegistry.get(atom).sessions[tabId]) {
+    action();
+    return () => {};
+  }
+  const stop = () => {
+    clearTimeout(timer);
+    unsubscribe();
+  };
+  const unsubscribe = appAtomRegistry.subscribe(atom, (state) => {
+    if (!state.sessions[tabId]) return;
+    stop();
+    action();
+  });
+  const timer = setTimeout(stop, timeoutMs);
+  return stop;
+}
+
 export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
   if (url.trim().length === 0) return;
   updateThreadPreviewState(ref, (current) => ({
@@ -468,6 +547,19 @@ export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
 export function isPreviewSupportedInRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(window.desktopBridge?.preview);
+}
+
+/**
+ * Forgets a deleted thread's previews. The server closes their sessions too,
+ * but the desktop host keeps a page for every session held here.
+ */
+export function clearThreadPreviewState(ref: ScopedThreadRef): void {
+  updateThreadPreviewState(ref, (current) =>
+    Object.keys(current.sessions).length === 0 &&
+    Object.keys(current.desktopProfileByTabId).length === 0
+      ? current
+      : EMPTY_THREAD_PREVIEW_STATE,
+  );
 }
 
 export function resetPreviewStateForTests(): void {

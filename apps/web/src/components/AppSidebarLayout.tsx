@@ -144,9 +144,14 @@ function SidebarControl() {
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     const unsubscribeCommand = onAppCommand(onKeyDown);
     window.addEventListener("keydown", onKeyDown, true);
+    // A focused desktop browser page forwards the chord as a menu action.
+    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
+      if (action === "sidebar.toggle") toggleSidebar();
+    });
     return () => {
-      unsubscribeCommand();
       window.removeEventListener("keydown", onKeyDown, true);
+      unsubscribe?.();
+      unsubscribeCommand();
     };
   }, [keybindings, toggleSidebar, usagePageOpen]);
 

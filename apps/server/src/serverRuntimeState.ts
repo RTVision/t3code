@@ -11,7 +11,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
-import { writeFileStringAtomically } from "./atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 

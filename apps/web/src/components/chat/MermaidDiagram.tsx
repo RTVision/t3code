@@ -176,7 +176,7 @@ export function MermaidDiagram({
   if (result.status === "error") {
     return (
       <div>
-        <div className="flex items-center justify-between gap-2">
+        <div data-thread-find-ignore className="flex items-center justify-between gap-2">
           <p className="m-0 text-xs text-destructive">Unable to render diagram: {result.message}</p>
           {result.retryable ? (
             <Button
@@ -192,7 +192,11 @@ export function MermaidDiagram({
             </Button>
           ) : null}
         </div>
-        <pre className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap">
+        {/* Find matches the source through the hidden copy beside the diagram. */}
+        <pre
+          data-thread-find-ignore
+          className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap"
+        >
           {source}
         </pre>
       </div>

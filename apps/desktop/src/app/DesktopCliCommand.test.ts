@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -85,6 +85,15 @@ const fakePowerShell = (initial: string) => {
   return { registry, spawner };
 };
 
+// The machine's own PATH may already hold a t3; each test sets the PATH it means.
+const machinePath = process.env.PATH;
+beforeEach(() => {
+  process.env.PATH = "";
+});
+afterEach(() => {
+  process.env.PATH = machinePath;
+});
+
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   it.effect("links the launcher onto PATH and removes only that link", () =>
     Effect.gen(function* () {
@@ -148,6 +157,73 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("replaces an owned launcher before a later foreign PATH command", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const foreignDirectory = path.join(home, "foreign");
+      const foreign = path.join(foreignDirectory, "t3");
+      yield* fs.makeDirectory(foreignDirectory);
+      yield* fs.writeFileString(foreign, "#!/bin/sh\n", { mode: 0o755 });
+      process.env.PATH = [path.dirname(link), foreignDirectory].join(":");
+
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
+      expect(yield* after.install).toMatchObject({ installedPath: link, onPath: true });
+      expect(yield* fs.readLink(link)).toBe(path.join(home, "new-t3", "bin", "t3"));
+      expect(yield* fs.readFileString(foreign)).toBe("#!/bin/sh\n");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves the old launcher when an earlier foreign command rejects migration", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const original = yield* fs.readLink(link);
+      const foreignDirectory = path.join(home, "foreign");
+      const foreign = path.join(foreignDirectory, "t3");
+      yield* fs.makeDirectory(foreignDirectory);
+      yield* fs.writeFileString(foreign, "#!/bin/sh\n", { mode: 0o755 });
+      process.env.PATH = [foreignDirectory, path.dirname(link)].join(":");
+
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
+      expect((yield* Effect.flip(after.install)).message).toContain(foreign);
+      expect(yield* fs.readLink(link)).toBe(original);
+      expect(yield* fs.readFileString(foreign)).toBe("#!/bin/sh\n");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["non-executable file", "directory"] as const)(
+    "skips a %s named t3 earlier on PATH",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const skippedDirectory = path.join(home, "skipped");
+        const skipped = path.join(skippedDirectory, "t3");
+        yield* fs.makeDirectory(skippedDirectory);
+        if (kind === "directory") {
+          yield* fs.makeDirectory(skipped);
+        } else {
+          yield* fs.writeFileString(skipped, "not a command\n", { mode: 0o644 });
+        }
+        const link = path.join(home, ".local", "bin", "t3");
+        process.env.PATH = [skippedDirectory, path.dirname(link)].join(":");
+
+        const command = yield* commandIn({ home });
+        expect((yield* command.state).shadowedBy).toBeUndefined();
+        expect(yield* command.install).toMatchObject({ installedPath: link, onPath: true });
+        expect(yield* fs.exists(skipped)).toBe(true);
+        expect((yield* fs.stat(skipped)).type).toBe(kind === "directory" ? "Directory" : "File");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("does not read a large binary another t3 links to", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -165,7 +241,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports when another t3 earlier on PATH would run instead", () =>
+  it.effect("refuses to install behind another t3 that runs first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -173,16 +249,23 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
       yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
-      const previous = process.env.PATH;
       process.env.PATH = [shadow, path.join(home, ".local", "bin")].join(":");
-      yield* Effect.addFinalizer(() => Effect.sync(() => (process.env.PATH = previous)));
 
       const command = yield* commandIn({ home });
+      const theirs = path.join(shadow, "t3");
+      expect((yield* command.state).shadowedBy).toBe(theirs);
+      // A link behind it would never run, so nothing is created.
+      const error = yield* Effect.flip(command.install);
+      expect(error.message).toContain(theirs);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+
+      yield* fs.remove(theirs);
       const installed = yield* command.install;
-      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "t3"));
-      expect(installed.onPath).toBe(false);
-      yield* fs.remove(path.join(shadow, "t3"));
-      expect((yield* command.state).onPath).toBe(true);
+      expect(installed).toMatchObject({
+        onPath: true,
+        installedPath: path.join(home, ".local", "bin", "t3"),
+      });
+      expect(installed.shadowedBy).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 

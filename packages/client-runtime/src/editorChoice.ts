@@ -7,7 +7,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import type { ConnectionTarget } from "./connection/model.ts";
-import { splitFilePathPosition, formatFilePathPosition } from "./markdownLinks.ts";
+import { splitFilePathPosition, formatFilePathPosition } from "@t3tools/shared/fileLinks";
 
 export function terminalEditorConnectionRef(
   target: ConnectionTarget | null,

@@ -1,8 +1,24 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { resolveCatalogDependencies } from "./resolve-catalog.ts";
+import { resolveCatalogDependencies, resolveServerPublishDependencies } from "./resolve-catalog.ts";
 
 const catalog = { effect: "4.0.0-rc.115", "@clerk/backend": "3.18.1", react: "19.2.0" };
+
+it("omits bundled private providers from npm metadata while retaining native and catalog dependencies", () => {
+  const dependencies = {
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/provider-opencode": "workspace:*",
+    effect: "catalog:",
+    "node-pty": "1.2.0-beta.15",
+    "@cursor/sdk": "0.9.2",
+  };
+  assert.deepStrictEqual(resolveServerPublishDependencies(dependencies, catalog), {
+    effect: catalog.effect,
+    "node-pty": "1.2.0-beta.15",
+    "@cursor/sdk": "0.9.2",
+  });
+  assert.strictEqual(dependencies["@t3tools/provider-core"], "workspace:*");
+});
 
 describe("resolveCatalogDependencies", () => {
   it("resolves bare, named and override-selector catalog specs like pnpm", () => {

@@ -9,6 +9,7 @@ import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   TurnItemId,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -60,6 +61,35 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "checks preview profile reports against the destination and rejects a revoked grant",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const report = createCommandPermissions(runtime, WS_METHODS.previewReportProfiles);
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          registry.set(
+            sessions(other),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthPreviewOperateScope],
+              permissions: [AuthPreviewOperateScope],
+            }),
+          );
+          expect(registry.get(report.permissionAtom(env))).toBe(false);
+          expect(
+            (yield* report.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthPreviewOperateScope);
+          yield* report.authorize(registry, other);
+          expect(registry.get(report.permissionAtom(other))).toBe(true);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect((yield* report.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+        }),
+      ),
+  );
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
