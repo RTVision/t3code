@@ -157,8 +157,26 @@ export class ThreadLaunchService extends Context.Service<
     readonly retryPreparation: (
       input: ThreadLaunchRetryInput,
     ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+    /**
+     * Checks a worktree base before it is stored for later, unattended launches.
+     * A requested base must exist locally or on origin; without one, this is
+     * origin's default branch, else the branch the project has checked out.
+     */
+    readonly resolveWorktreeBaseRef: (input: {
+      readonly projectId: ProjectId;
+      readonly baseRef?: string | undefined;
+    }) => Effect.Effect<string, WorktreeBaseRefError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
+
+export class WorktreeBaseRefError extends Schema.TaggedError<WorktreeBaseRefError>()(
+  "WorktreeBaseRefError",
+  {
+    projectId: ProjectId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
@@ -977,7 +995,54 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, retryPreparation });
+  const resolveWorktreeBaseRef: ThreadLaunchService["Service"]["resolveWorktreeBaseRef"] =
+    Effect.fn("ThreadLaunchService.resolveWorktreeBaseRef")(function* (input) {
+      const fail = (message: string) => (cause?: unknown) =>
+        new WorktreeBaseRefError({
+          projectId: input.projectId,
+          message,
+          ...(cause === undefined ? {} : { cause }),
+        });
+      const project = yield* projects.getById(input.projectId).pipe(
+        Effect.mapError(fail("Unable to read the project.")),
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(fail("Project no longer exists.")()),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+      const cwd = project.workspaceRoot;
+      const readFailed = fail(`Unable to read git branches in ${cwd}.`);
+      const hasOrigin = yield* git
+        .remoteExists({ cwd, remoteName: "origin" })
+        .pipe(Effect.mapError(readFailed));
+      if (input.baseRef !== undefined) {
+        const refName = input.baseRef;
+        const exists =
+          (yield* git.hasCommit({ cwd, refName }).pipe(Effect.mapError(readFailed))) ||
+          (hasOrigin &&
+            (yield* git
+              .remoteBranchExists({ cwd, remoteName: "origin", refName })
+              .pipe(Effect.mapError(readFailed))));
+        if (exists) return refName;
+        return yield* fail(`Base branch '${refName}' does not exist in ${cwd}.`)();
+      }
+      const defaultBranch = hasOrigin
+        ? yield* git
+            .resolveDefaultBranchName({ cwd, remoteName: "origin" })
+            .pipe(Effect.mapError(readFailed))
+        : null;
+      if (defaultBranch !== null) return defaultBranch;
+      // origin/HEAD is only recorded by clone; fall back to what the project has checked out.
+      const status = yield* git.localStatus({ cwd }).pipe(Effect.mapError(readFailed));
+      if (status.refName !== null) return status.refName;
+      return yield* fail(
+        `Could not determine a base branch for ${cwd} (no origin default branch and HEAD is detached).`,
+      )();
+    });
+
+  return ThreadLaunchService.of({ launch, retryPreparation, resolveWorktreeBaseRef });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

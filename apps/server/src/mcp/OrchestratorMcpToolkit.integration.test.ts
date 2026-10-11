@@ -503,6 +503,7 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
     list: () => Effect.succeed({ tasks: [] }),
     subscribeList: () => Stream.succeed({ tasks: [] }),
     upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
+    defaultWorkspaceStrategy: () => Effect.die("unused in this test"),
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
@@ -660,6 +661,8 @@ describe("orchestrator MCP toolkit", () => {
                   ]);
                   return { task };
                 }),
+              defaultWorkspaceStrategy: () =>
+                Effect.succeed({ type: "worktree", baseRef: "develop", startFromOrigin: true }),
               setEnabled: () =>
                 Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
               delete: (input) =>
@@ -1548,13 +1551,21 @@ describe("orchestrator MCP toolkit", () => {
             const serializedScheduleCall = yield* invoke("schedule_task", {
               prompt: "check for new pull requests",
               schedule: '{"type":"interval","everyMs":3600000}',
+              bindToCurrentThread: false,
               clientRequestId: "schedule-opencode-compat-1",
             });
             expect(serializedScheduleCall.isError).toBe(false);
             expect(serializedScheduleCall.structuredContent).toMatchObject({
               schedule: { type: "interval", everyMs: 3_600_000 },
-              boundThreadId: parentThreadId,
+              boundThreadId: null,
             });
+            // A fresh-thread task gets a new worktree from the project's default branch.
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              {
+                threadId: null,
+                workspaceStrategy: { type: "worktree", baseRef: "develop", startFromOrigin: true },
+              },
+            ]);
             const serializedScheduledTaskId = (
               serializedScheduleCall.structuredContent as { scheduledTaskId: string }
             ).scheduledTaskId;

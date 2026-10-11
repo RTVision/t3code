@@ -221,19 +221,6 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
- */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
-/**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
  * run it: a webhook's URL carries the secret that starts the task's runs, so
  * only such a caller sees it.
@@ -864,6 +851,28 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
+
+  /**
+   * Workspace strategy for a scheduled task created/updated over MCP: bound runs
+   * post into the existing thread (the strategy is unused, keep root); unbound
+   * runs launch a fresh worktree per run from the project's default branch.
+   */
+  const scheduledTaskWorkspaceStrategy = (
+    projectId: ProjectId,
+    boundToThread: boolean,
+  ): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> =>
+    boundToThread
+      ? Effect.succeed({ type: "root" })
+      : scheduledTasks
+          .defaultWorkspaceStrategy(projectId)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Could not choose a base branch for scheduled runs: ${error.message}`,
+              ),
+            ),
+          );
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1521,7 +1530,7 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(projectId, bindToCurrentThread),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -1590,11 +1599,13 @@ const make = Effect.gen(function* () {
               : null;
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+        // prompts in the shared project checkout. A task that already starts
+        // fresh threads keeps the workspace it was given.
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          input.bindToCurrentThread === undefined ||
+          (!input.bindToCurrentThread && existing.threadId === null)
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(existing.projectId, input.bindToCurrentThread);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
