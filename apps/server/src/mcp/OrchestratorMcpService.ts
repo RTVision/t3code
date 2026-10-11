@@ -225,19 +225,6 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
- */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
-/**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
  * run it: a webhook's URL carries the secret that starts the task's runs, so
  * only such a caller sees it.
@@ -934,6 +921,28 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
+
+  /**
+   * Workspace strategy for a scheduled task created/updated over MCP: bound runs
+   * post into the existing thread (the strategy is unused, keep root); unbound
+   * runs launch a fresh worktree per run from the project's default branch.
+   */
+  const scheduledTaskWorkspaceStrategy = (
+    projectId: ProjectId,
+    boundToThread: boolean,
+  ): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> =>
+    boundToThread
+      ? Effect.succeed({ type: "root" })
+      : scheduledTasks
+          .defaultWorkspaceStrategy(projectId)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Could not choose a base branch for scheduled runs: ${error.message}`,
+              ),
+            ),
+          );
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1634,6 +1643,30 @@ const make = Effect.gen(function* () {
         }
         const modelSelection =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        // Scope the idempotency key by provider session so two callers
+        // reusing the same clientRequestId cannot collide on one task row.
+        const commandId =
+          input.clientRequestId === undefined
+            ? undefined
+            : stableCommandId({
+                scope,
+                requestKey: input.clientRequestId,
+                operation: "schedule-task",
+              });
+        // A retry keeps the base branch its first attempt resolved, even if the
+        // project checkout has moved since.
+        let replayed: ScheduledTask | undefined;
+        if (commandId !== undefined && !bindToCurrentThread) {
+          const { tasks } = yield* scheduledTasks
+            .list()
+            .pipe(
+              Effect.mapError((error) =>
+                failure("orchestration_error", `Could not load scheduled tasks: ${error.message}`),
+              ),
+            );
+          const replayedId = ScheduledTaskService.scheduledTaskIdForCommand(commandId);
+          replayed = tasks.find((task) => task.id === replayedId && task.threadId === null);
+        }
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1644,23 +1677,15 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy:
+            replayed?.workspaceStrategy ??
+            (yield* scheduledTaskWorkspaceStrategy(projectId, bindToCurrentThread)),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
-          // Scope the idempotency key by provider session so two callers
-          // reusing the same clientRequestId cannot collide on one task row.
-          ...(input.clientRequestId === undefined
-            ? {}
-            : {
-                commandId: stableCommandId({
-                  scope,
-                  requestKey: input.clientRequestId,
-                  operation: "schedule-task",
-                }),
-              }),
+          ...(commandId === undefined ? {} : { commandId }),
         };
         const { task } = yield* scheduledTasks
           .upsert(upsertInput)
@@ -1713,11 +1738,13 @@ const make = Effect.gen(function* () {
               : null;
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+        // prompts in the shared project checkout. A task that already starts
+        // fresh threads keeps the workspace it was given.
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          input.bindToCurrentThread === undefined ||
+          (!input.bindToCurrentThread && existing.threadId === null)
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(existing.projectId, input.bindToCurrentThread);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,

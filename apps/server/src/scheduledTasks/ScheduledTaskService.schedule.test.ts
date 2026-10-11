@@ -108,3 +108,69 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("checks a new or changed worktree base branch, but not an unchanged one", () =>
+  Effect.gen(function* () {
+    const existingBranches = new Set(["develop"]);
+    const checked: Array<string> = [];
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: ({ projectId, workspaceStrategy }) => {
+          const baseRef = workspaceStrategy.type === "worktree" ? workspaceStrategy.baseRef : "";
+          checked.push(baseRef);
+          return existingBranches.has(baseRef)
+            ? Effect.void
+            : Effect.fail(
+                new ThreadLaunchService.ThreadLaunchBaseRefError({
+                  projectId,
+                  projectTitle: "Project",
+                  workspaceRoot: "/repo",
+                  baseRef,
+                }),
+              );
+        },
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = yield* decodeUpsertInput({
+        commandId: "schedule-base-branch",
+        title: "Nightly",
+        prompt: "Check the nightly build.",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+        projectId: "project-base-branch",
+        workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const rejected = yield* service.upsert(input).pipe(Effect.flip);
+      expect(rejected.message).toBe(
+        'Base ref "main" does not resolve to a commit in project "Project" (/repo).',
+      );
+      expect((yield* service.list()).tasks).toEqual([]);
+
+      const created = yield* service.upsert({
+        ...input,
+        workspaceStrategy: { type: "worktree", baseRef: "develop", startFromOrigin: true },
+      });
+
+      // A base deleted after saving must not block pausing or editing the task.
+      existingBranches.delete("develop");
+      const paused = yield* service.upsert({
+        ...input,
+        id: created.task.id,
+        enabled: false,
+        workspaceStrategy: { type: "worktree", baseRef: "develop", startFromOrigin: true },
+      });
+      expect(paused.task.enabled).toBe(false);
+      expect(checked).toEqual(["main", "develop"]);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

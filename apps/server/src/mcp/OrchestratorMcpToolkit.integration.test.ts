@@ -505,6 +505,7 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
     list: () => Effect.succeed({ tasks: [] }),
     subscribeList: () => Stream.succeed({ tasks: [] }),
     upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
+    defaultWorkspaceStrategy: () => Effect.die("unused in this test"),
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
@@ -654,6 +655,7 @@ describe("orchestrator MCP toolkit", () => {
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+          const defaultBaseRef = yield* Ref.make("develop");
           const layerScheduledTaskStub = Layer.succeed(
             ScheduledTaskService.ScheduledTaskService,
             ScheduledTaskService.ScheduledTaskService.of({
@@ -668,6 +670,14 @@ describe("orchestrator MCP toolkit", () => {
                   ]);
                   return { task };
                 }),
+              defaultWorkspaceStrategy: () =>
+                Ref.get(defaultBaseRef).pipe(
+                  Effect.map((baseRef) => ({
+                    type: "worktree" as const,
+                    baseRef,
+                    startFromOrigin: true,
+                  })),
+                ),
               setEnabled: () =>
                 Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
               delete: (input) =>
@@ -1558,13 +1568,33 @@ describe("orchestrator MCP toolkit", () => {
             const serializedScheduleCall = yield* invoke("schedule_task", {
               prompt: "check for new pull requests",
               schedule: '{"type":"interval","everyMs":3600000}',
+              bindToCurrentThread: false,
               clientRequestId: "schedule-opencode-compat-1",
             });
             expect(serializedScheduleCall.isError).toBe(false);
             expect(serializedScheduleCall.structuredContent).toMatchObject({
               schedule: { type: "interval", everyMs: 3_600_000 },
-              boundThreadId: parentThreadId,
+              boundThreadId: null,
             });
+            // A fresh-thread task gets a new worktree from the project's default branch.
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              {
+                threadId: null,
+                workspaceStrategy: { type: "worktree", baseRef: "develop", startFromOrigin: true },
+              },
+            ]);
+            // A retry keeps the branch the first attempt resolved after the checkout moves.
+            yield* Ref.set(defaultBaseRef, "feature/after");
+            const replayedScheduleCall = yield* invoke("schedule_task", {
+              prompt: "check for new pull requests",
+              schedule: '{"type":"interval","everyMs":3600000}',
+              bindToCurrentThread: false,
+              clientRequestId: "schedule-opencode-compat-1",
+            });
+            expect(replayedScheduleCall.isError).toBe(false);
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              { workspaceStrategy: { type: "worktree", baseRef: "develop" } },
+            ]);
             const serializedScheduledTaskId = (
               serializedScheduleCall.structuredContent as { scheduledTaskId: string }
             ).scheduledTaskId;

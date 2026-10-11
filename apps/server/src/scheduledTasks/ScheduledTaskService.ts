@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ProjectId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -225,6 +226,10 @@ export class ScheduledTaskService extends Context.Service<
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /** A fresh worktree per run, branched from the project's default branch. */
+    readonly defaultWorkspaceStrategy: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ScheduledTask["workspaceStrategy"], ScheduledTaskError>;
     /** Partial update flipping only the enabled flag; never touches other fields. */
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -255,6 +260,11 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
+
+/** The id an idempotent create with this commandId gets, so a retry finds its task. */
+export function scheduledTaskIdForCommand(commandId: CommandId): ScheduledTaskId {
+  return ScheduledTaskId.make(`scheduled-task:${commandId}`);
+}
 
 function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
@@ -1011,13 +1021,28 @@ export const layer = Layer.effect(
             : null;
         const id =
           input.id ??
-          ScheduledTaskId.make(
-            input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
-          );
+          (input.commandId
+            ? scheduledTaskIdForCommand(input.commandId)
+            : ScheduledTaskId.make(`scheduled-task:${uuid}`));
         // Look up by the *resolved* id so idempotent creates (commandId replays)
         // keep their run history, and so real load failures propagate instead
         // of silently resetting an existing row.
         const existingTask = yield* findTask(id);
+        // Runs launch unattended, so a new or changed worktree base must name
+        // a real branch now rather than fail at its first run. An unchanged
+        // one is left alone so a task whose branch was deleted can still be
+        // edited or paused.
+        const strategy = input.workspaceStrategy;
+        const existingStrategy = existingTask?.workspaceStrategy;
+        if (
+          (input.threadId ?? null) === null &&
+          strategy.type === "worktree" &&
+          !(existingStrategy?.type === "worktree" && existingStrategy.baseRef === strategy.baseRef)
+        ) {
+          yield* threadLaunch
+            .checkWorktreeBase({ projectId: input.projectId, workspaceStrategy: strategy })
+            .pipe(Effect.mapError((cause) => taskError(cause.message, { taskId: id, cause })));
+        }
         // Keep the existing next_run_at when the schedule itself is untouched:
         // editing a title or prompt must not postpone (or resurrect) a due
         // run — only schedule/enabled changes restart the clock.
@@ -1106,6 +1131,14 @@ export const layer = Layer.effect(
         yield* notifyChanged;
         return { task: (yield* findTask(id)) ?? task };
       });
+
+    const defaultWorkspaceStrategy: ScheduledTaskService["Service"]["defaultWorkspaceStrategy"] = (
+      projectId,
+    ) =>
+      threadLaunch.resolveDefaultWorktreeBase(projectId).pipe(
+        Effect.map((baseRef) => ({ type: "worktree" as const, baseRef, startFromOrigin: true })),
+        Effect.mapError((cause) => taskError(cause.message, { cause })),
+      );
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
       Effect.gen(function* () {
@@ -1663,6 +1696,7 @@ export const layer = Layer.effect(
       list,
       subscribeList,
       upsert,
+      defaultWorkspaceStrategy,
       setEnabled,
       delete: deleteTask,
       runNow,

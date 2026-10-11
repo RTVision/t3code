@@ -25,6 +25,7 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -101,6 +102,10 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
+  readonly remoteExists?: boolean;
+  readonly remoteBranchExists?: boolean;
+  readonly defaultBranch?: string | null;
+  readonly checkedOutBranch?: string | null;
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -176,8 +181,11 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      remoteExists: () => Effect.succeed(true),
-      remoteBranchExists: () => Effect.succeed(true),
+      remoteExists: () => Effect.succeed(options.remoteExists ?? true),
+      remoteBranchExists: () => Effect.succeed(options.remoteBranchExists ?? true),
+      resolveDefaultBranchName: () => Effect.succeed(options.defaultBranch ?? null),
+      localStatus: () =>
+        Effect.succeed({ refName: options.checkedOutBranch ?? null } as VcsStatusLocalResult),
       removeWorktree,
       resolveRemoteTrackingCommit: () =>
         Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
@@ -1222,6 +1230,39 @@ it.effect("provisions under t3-<hash> when a plain t3 branch blocks t3/*", () =>
   }),
 );
 
+it.effect.each([
+  {
+    name: "uses origin's default branch",
+    options: { defaultBranch: "rtvision", checkedOutBranch: "feature/x" },
+    expected: "rtvision",
+  },
+  {
+    name: "falls back to the checked-out branch when origin's default was deleted",
+    options: { defaultBranch: "gone", remoteBranchExists: false, checkedOutBranch: "trunk" },
+    expected: "trunk",
+  },
+  {
+    name: "falls back to the checked-out branch when origin records no default",
+    options: { remoteExists: false, checkedOutBranch: "trunk" },
+    expected: "trunk",
+  },
+  {
+    name: "fails without a default branch on a detached checkout",
+    options: { defaultBranch: null, checkedOutBranch: null },
+    expected: null,
+  },
+] satisfies ReadonlyArray<{
+  name: string;
+  options: HarnessOptions;
+  expected: string | null;
+}>)("resolveDefaultWorktreeBase $name", ({ options, expected }) =>
+  Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const resolved = yield* launches.resolveDefaultWorktreeBase(projectId).pipe(Effect.option);
+    assert.deepEqual(resolved, Option.fromNullOr(expected));
+  }).pipe(Effect.provide(makeHarness(options).layer)),
+);
+
 it.effect("keeps an explicit branch name instead of generating one", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
@@ -2263,6 +2304,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
         retryPreparation: launches.retryPreparation,
+        resolveDefaultWorktreeBase: launches.resolveDefaultWorktreeBase,
       }),
       Effect.flip,
     );
