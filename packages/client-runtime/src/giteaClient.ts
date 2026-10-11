@@ -10,5 +10,6 @@ export const definition = defineSourceControlClient({
   icon: "gitea",
   publishDescription: "Configured server",
   repositoryPathHint: "owner/repository",
+  defaultCloneTransport: "ssh",
   checkoutCommand: () => null,
 });

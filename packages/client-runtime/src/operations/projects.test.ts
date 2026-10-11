@@ -101,7 +101,7 @@ describe("add project shared logic", () => {
   it("offers Gitea as an API-configured clone source", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "gitea",
+        provider: SourceControlProviderKind.make("gitea"),
         url: "https://gitea.example.test/acme/repository.git",
         sshUrl: "git@gitea.example.test:acme/repository.git",
       }),
