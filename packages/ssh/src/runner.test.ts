@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -63,7 +63,7 @@ describe("WSL SSH runner", () => {
         T3_SSH_AUTH_SECRET: "test secret",
       });
       assert.equal(environment.WSLENV, "EXISTING/u:SSH_ASKPASS_REQUIRE:T3_SSH_AUTH_SECRET");
-    }).pipe(Effect.provideService(HostProcessEnvironment, { WSLENV: "EXISTING/u" })),
+    }).pipe(Effect.provideService(HostProcess.Environment, { WSLENV: "EXISTING/u" })),
   );
 
   it.effect("preserves arguments and stdin and runs POSIX askpass inside the distro", () =>

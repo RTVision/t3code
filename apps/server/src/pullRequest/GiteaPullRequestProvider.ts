@@ -1,5 +1,9 @@
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type PullRequestCapabilities,
+  type PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as GiteaPullRequestApi from "./GiteaPullRequestApi.ts";
 import { giteaForkCapabilities } from "./GiteaForkCapabilities.ts";
@@ -10,7 +14,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
-} from "./PullRequestProvider.ts";
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 const CAPABILITIES: PullRequestCapabilities = {
   ciRuns: true,
@@ -132,7 +136,7 @@ export const make = Effect.gen(function* () {
 
   const fail = (operation: string) => (error: GiteaPullRequestApi.GiteaPullRequestApiError) =>
     new PullRequestProviderError({
-      provider: "gitea",
+      provider: SourceControlProviderKind.make("gitea"),
       operation,
       ...giteaProviderFailure(error),
       detail: error.detail,
@@ -156,7 +160,7 @@ export const make = Effect.gen(function* () {
     });
 
   const provider: PullRequestProviderApi = {
-    kind: "gitea",
+    kind: SourceControlProviderKind.make("gitea"),
     capabilities: CAPABILITIES,
     getCiRuns: (input) => api.getCiRuns(input).pipe(Effect.mapError(fail("getCiRuns"))),
     getCiJobs: (input) => api.getCiJobs(input).pipe(Effect.mapError(fail("getCiJobs"))),

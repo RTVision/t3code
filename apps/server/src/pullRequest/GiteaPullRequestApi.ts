@@ -35,8 +35,8 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GiteaCli from "../sourceControl/GiteaCli.ts";
-import { makeActionsCi, resolveCheckUrl } from "./ActionsCi.ts";
-import type { ProviderCiApi } from "./PullRequestProvider.ts";
+import { makeActionsCi, resolveCheckUrl } from "@t3tools/source-control-core/server/ActionsCi";
+import type { ProviderCiApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as GiteaLifecycle from "./GiteaLifecycle.ts";
 import * as GiteaWorkflows from "./GiteaWorkflows.ts";
 import {
@@ -47,9 +47,9 @@ import {
   reactionsForViewer,
   reactionTarget,
 } from "./GiteaConversation.ts";
-import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as GiteaSearch from "./GiteaSearch.ts";
-import { dedupeChecks } from "./pullRequestChecks.ts";
+import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 const PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 4;

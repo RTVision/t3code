@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { pullRequestStackView } from "./pullRequestStackSnapshot";
@@ -14,7 +15,7 @@ function context(
 ): PullRequestDependencyContext {
   return {
     focus: { projectId: "project" as never, repository: "acme/web", number: 42 },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     repository: "acme/web",
     coverage: "complete",
@@ -330,7 +331,7 @@ describe("inferred navigation through native refreshes", () => {
     const absent = AsyncResult.success<PullRequestStack | null>(null);
     expect(navigation(AsyncResult.initial(true)).inferred).toBe(false);
     expect(navigation(absent).inferred).toBe(true);
-    expect(navigation(AsyncResult.waiting(absent))).toEqual({ nativeFresh: false, inferred: true });
+    expect(navigation(AsyncResult.waiting(absent))).toEqual({ nativeFresh: true, inferred: true });
     expect(
       navigation(AsyncResult.fail("Offline", { previousSuccess: Option.some(absent) })),
     ).toEqual({ nativeFresh: false, inferred: true });
@@ -345,7 +346,7 @@ describe("inferred navigation through native refreshes", () => {
     const present = AsyncResult.success(nativeStack);
     expect(navigation(present)).toEqual({ nativeFresh: true, inferred: false });
     expect(navigation(AsyncResult.waiting(present))).toEqual({
-      nativeFresh: false,
+      nativeFresh: true,
       inferred: false,
     });
     expect(

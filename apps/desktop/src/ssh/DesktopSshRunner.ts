@@ -1,5 +1,5 @@
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
-import { HostProcessAddresses, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SshCommandError } from "@t3tools/ssh/errors";
 import { collectProcessOutput } from "@t3tools/ssh/command";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -101,7 +101,7 @@ export const preflightWslSsh = Effect.fn("desktop.ssh.preflightWsl")(function* (
 export const resolveDesktopSshRunner = Effect.fn("desktop.ssh.resolveRunner")(function* (
   settings: DesktopSettings,
 ) {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (selectSshRunner(platform, settings) === "native") return { kind: "native" } as const;
   const wsl = yield* DesktopWslEnvironment;
   const distros = yield* wsl.probeDistros.pipe(
@@ -135,7 +135,7 @@ export const resolveDesktopSshRunner = Effect.fn("desktop.ssh.resolveRunner")(fu
     });
   }
   const account = yield* preflightWslSsh(distro);
-  const addresses = yield* yield* HostProcessAddresses;
+  const addresses = yield* yield* HostProcess.Addresses;
   return {
     kind: "wsl",
     distro,

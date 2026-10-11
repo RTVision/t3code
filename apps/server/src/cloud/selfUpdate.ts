@@ -6,13 +6,7 @@ import {
   type ServerSelfUpdateResult,
   type ThreadId,
 } from "@t3tools/contracts";
-import {
-  HostProcessArchitecture,
-  HostProcessPlatform,
-  HostProcessIsExecutable,
-  HostProcessLinuxLibc,
-  HostProcessExecutablePath,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -182,11 +176,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
-  const linuxLibc = yield* HostProcessLinuxLibc;
-  const nodeExecutable = yield* HostProcessExecutablePath;
-  const distribution = (yield* HostProcessIsExecutable) ? "archive" : "npm";
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
+  const linuxLibc = yield* HostProcess.LinuxLibc;
+  const nodeExecutable = yield* HostProcess.ExecutablePath;
+  const distribution = (yield* HostProcess.IsExecutable) ? "archive" : "npm";
   // Standalone executables download from GitHub; Node daemons keep the npm layout.
   const httpClient = yield* HttpClient.HttpClient;
   const releaseBaseUrl = Option.getOrUndefined(

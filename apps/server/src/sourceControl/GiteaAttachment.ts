@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as GiteaCli from "./GiteaCli.ts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import { ServerConfig } from "../config.ts";
 import { HttpServerResponse } from "effect/http";
 

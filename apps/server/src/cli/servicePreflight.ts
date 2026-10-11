@@ -1,4 +1,4 @@
-import { HostProcessEnvironment, isHostWindows } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -16,7 +16,7 @@ import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
  * runtime is rejected before it replaces a working one.
  */
 export const checkPtySpawns = Effect.gen(function* () {
-  if (yield* isHostWindows) return;
+  if (yield* HostProcess.isWindows) return;
   const pty = yield* PtyAdapter.PtyAdapter;
   const exited = yield* Deferred.make<void>();
   const child = yield* pty.spawn({
@@ -25,7 +25,7 @@ export const checkPtySpawns = Effect.gen(function* () {
     cwd: "/",
     cols: 80,
     rows: 24,
-    env: yield* HostProcessEnvironment,
+    env: yield* HostProcess.Environment,
   });
   child.onExit(() => Deferred.doneUnsafe(exited, Effect.void));
   // Stays under the self-update caller's 30s limit so a stalled PTY fails here,

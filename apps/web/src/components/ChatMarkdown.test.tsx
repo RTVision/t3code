@@ -17,6 +17,7 @@ import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
+vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 const mermaidTest = vi.hoisted(() => ({ realRenderer: false, render: vi.fn() }));
 vi.mock("mermaid", () => ({

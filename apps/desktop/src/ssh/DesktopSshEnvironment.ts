@@ -3,7 +3,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SshRunner } from "@t3tools/ssh/runner";
 import { matchesSshRunner, sshRunnerIdentity } from "./DesktopSshRunner.ts";
 
@@ -158,7 +158,7 @@ export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
     const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
     const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
     const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const resolveRunner = options.resolveSshRunner ?? Effect.succeed({ kind: "native" } as const);
     const withRunner = Effect.fn("desktop.ssh.withRunner")(function* <A, E, R>(
       operation: (runner: SshRunner) => Effect.Effect<A, E, R>,

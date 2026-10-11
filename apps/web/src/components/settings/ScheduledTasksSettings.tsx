@@ -797,13 +797,6 @@ function ScheduledTaskEditorDialog({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
-      ),
-    [providers, settings],
-  );
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
@@ -820,14 +813,30 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  // The task runs in selectedProject, so its model picker should reflect that
+  // project's effective enablement, not just the machine's.
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providers),
+          settings,
+          selectedProject?.id ?? null,
+        ),
+      ),
+    [providers, settings, selectedProject?.id],
+  );
 
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
   // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
-  const activeSelection = draftModelSelection(
-    draft,
-    scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries),
-  );
+  // A picked model whose provider is off for this project falls back to the default.
+  const draftSelection = draftModelSelection(draft, null);
+  const activeSelection =
+    draftSelection &&
+    instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
+      ? draftSelection
+      : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
@@ -1121,6 +1130,7 @@ function ScheduledTaskEditorDialog({
             <Field label="Model">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <ProviderModelPicker
+                  environmentId={environmentId}
                   disabled={saving || !connected}
                   activeInstanceId={activeInstanceId}
                   model={activeModel}

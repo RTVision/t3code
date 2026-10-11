@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HostProcessAddresses, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/DesktopAppSettings.ts";
 import { layerTest as wslTestLayer } from "../wsl/DesktopWslEnvironment.ts";
 import * as Result from "effect/Result";
@@ -62,8 +62,8 @@ describe("desktop SSH runner selection", () => {
               getDistroIp: () => Option.some("172.20.0.2"),
             }),
           ),
-          Effect.provideService(HostProcessPlatform, "win32"),
-          Effect.provideService(HostProcessAddresses, Effect.succeed(new Set<string>())),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Addresses, Effect.succeed(new Set<string>())),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner(0)),
         );
         assert.deepEqual(runner, {
