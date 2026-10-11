@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpServerResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GiteaAttachment from "./GiteaAttachment.ts";
 
 const url = "https://forge.test/gitea/attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83";

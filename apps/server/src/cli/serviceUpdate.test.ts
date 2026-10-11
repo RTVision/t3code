@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ServerSelfUpdateError, type ServerConfig } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -122,7 +122,7 @@ it.effect.each(["archive", "npm"] as const)(
       const archivedEntry = path.join(
         baseDir,
         "runtime/versions/0.0.41",
-        (yield* HostProcessPlatform) === "win32" ? "t3.exe" : "t3",
+        (yield* HostProcess.Platform) === "win32" ? "t3.exe" : "t3",
       );
       if (distribution === "archive") {
         yield* fs.makeDirectory(path.dirname(archivedEntry), { recursive: true });

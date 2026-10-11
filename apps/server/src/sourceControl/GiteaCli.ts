@@ -5,10 +5,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type SourceControlProviderAuth, TrimmedNonEmptyString } from "@t3tools/contracts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import { ServerConfig } from "../config.ts";
 
-import { providerAuth } from "./SourceControlProviderDiscovery.ts";
+import { providerAuth } from "@t3tools/source-control-core/server/discovery";
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const decodeRequestBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));

@@ -18,7 +18,7 @@ import {
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
 
-import type { HostLinuxLibc } from "@t3tools/shared/hostProcess";
+import type { HostLinuxLibc } from "@t3tools/shared/HostProcess";
 import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import * as ProcessRunner from "../processRunner.ts";
 

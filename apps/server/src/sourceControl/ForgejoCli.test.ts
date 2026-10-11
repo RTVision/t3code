@@ -1,6 +1,7 @@
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { afterEach, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,12 +10,12 @@ import { FetchHttpClient } from "effect/http";
 
 import { fixPath } from "../os-jank.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 
 afterEach(() => vi.unstubAllEnvs());
 
 const layer = Layer.mergeAll(
-  VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)),
+  Layer.unwrap(Effect.map(VcsProcess.VcsProcess, (process) => TestSourceControlHost.layer({ process: { run: process.run } }))).pipe(Layer.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)))),
   NodeServices.layer,
   FetchHttpClient.layer,
 );
@@ -68,7 +69,7 @@ printf '%s\\n' '__T3CODE_ENV_PATH_START__' '${binaries}' '__T3CODE_ENV_PATH_END_
   return { root, personal };
 });
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "keeps the managed tea login after startup bypasses the PATH wrapper",
   () =>
     Effect.gen(function* () {
@@ -86,7 +87,7 @@ it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
     }).pipe(Effect.provide(layer), Effect.scoped),
 );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "uses the normal tea configuration when no managed config is selected",
   () =>
     Effect.gen(function* () {

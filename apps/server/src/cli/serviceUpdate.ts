@@ -13,11 +13,7 @@ import * as Schema from "effect/Schema";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
-import {
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
@@ -92,12 +88,12 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
     "runtime",
     "versions",
     state.activeVersion,
-    (yield* HostProcessPlatform) === "win32" ? "t3.exe" : "t3",
+    (yield* HostProcess.Platform) === "win32" ? "t3.exe" : "t3",
   );
   const archived = yield* fs.exists(executablePath);
-  const nodeExecutable = (yield* HostProcessIsExecutable)
+  const nodeExecutable = (yield* HostProcess.IsExecutable)
     ? "node"
-    : yield* HostProcessExecutablePath;
+    : yield* HostProcess.ExecutablePath;
   const result = yield* runner.run({
     command: archived ? executablePath : nodeExecutable,
     args: [

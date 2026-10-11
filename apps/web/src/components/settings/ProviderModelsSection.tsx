@@ -132,6 +132,7 @@ interface ProviderModelsSectionProps {
    */
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
   readonly canManageCustomModels: boolean;
+  readonly canWritePreferences?: boolean;
   /** Server-returned model slugs hidden from the model picker. */
   readonly hiddenModels: ReadonlyArray<string>;
   /** Model slugs favorited for this provider instance. */
@@ -144,8 +145,12 @@ interface ProviderModelsSectionProps {
    * `providerInstances[id].config`).
    */
   readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onHiddenModelsChange: (
+    next: ReadonlyArray<string>,
+    affectedModels?: ReadonlyArray<string>,
+  ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onToggleFavorite: (model: string) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
@@ -166,12 +171,14 @@ export function ProviderModelsSection({
   models,
   customModels,
   canManageCustomModels,
+  canWritePreferences = true,
   hiddenModels,
   favoriteModels,
   modelOrder,
   onChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
+  onToggleFavorite,
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
@@ -277,18 +284,16 @@ export function ProviderModelsSection({
   };
 
   const setHidden = (slug: string, hidden: boolean) => {
-    if (hidden === hiddenModelSet.has(slug)) return;
+    if (!canWritePreferences || hidden === hiddenModelSet.has(slug)) return;
     onHiddenModelsChange(
       hidden ? [...hiddenModels, slug] : hiddenModels.filter((model) => model !== slug),
+      [slug],
     );
   };
 
   const handleToggleFavorite = (slug: string) => {
-    if (favoriteModelSet.has(slug)) {
-      onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
-      return;
-    }
-    onFavoriteModelsChange([...favoriteModels, slug]);
+    if (!canWritePreferences) return;
+    onToggleFavorite(slug);
   };
 
   // Rows only trade places with a neighbour in the same group (favorites,
@@ -300,6 +305,7 @@ export function ProviderModelsSection({
         ? "hidden"
         : "visible";
   const handleMove = (slug: string, direction: -1 | 1) => {
+    if (!canWritePreferences) return;
     const index = displayModels.findIndex((model) => model.slug === slug);
     const nextIndex = index + direction;
     if (index < 0 || nextIndex < 0 || nextIndex >= displayModels.length) return;
@@ -318,6 +324,7 @@ export function ProviderModelsSection({
           <Button
             size="icon-micro"
             variant="ghost-muted"
+            disabled={!canWritePreferences}
             onClick={() => handleToggleFavorite(model.slug)}
             aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${
               isFavorite ? "from" : "to"
@@ -352,7 +359,7 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  disabled={!options.canMoveUp}
+                  disabled={!canWritePreferences || !options.canMoveUp}
                   onClick={() => handleMove(model.slug, -1)}
                   aria-label={`Move ${model.name} up`}
                 />
@@ -368,7 +375,7 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  disabled={!options.canMoveDown}
+                  disabled={!canWritePreferences || !options.canMoveDown}
                   onClick={() => handleMove(model.slug, 1)}
                   aria-label={`Move ${model.name} down`}
                 />
@@ -437,7 +444,7 @@ export function ProviderModelsSection({
         <Switch
           size="sm"
           checked={!isHidden}
-          disabled={model.isCustom}
+          disabled={!canWritePreferences || model.isCustom}
           onCheckedChange={(checked) => setHidden(model.slug, !checked)}
           aria-label={`Show ${model.name} in the model picker`}
         />
@@ -528,7 +535,10 @@ export function ProviderModelsSection({
               size="xs"
               variant="ghost-muted"
               onClick={() =>
-                onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
+                onHiddenModelsChange(
+                  nextHiddenModelsForBulkToggle(models, hiddenModels),
+                  builtInModels.map((model) => model.slug),
+                )
               }
             >
               {allBuiltInModelsHidden ? "Enable all" : "Disable all"}

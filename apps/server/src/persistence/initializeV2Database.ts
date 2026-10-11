@@ -1,7 +1,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -71,7 +71,7 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
   const path = yield* Path.Path;
   const directory = path.dirname(destinationPath);
   const sourcePath = path.join(directory, "state.sqlite");
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
   const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
   const pending =
@@ -193,7 +193,7 @@ export const completeV2DatabaseTrial = Effect.fn("completeV2DatabaseTrial")(func
 ) {
   const path = yield* Path.Path;
   const sourcePath = path.join(path.dirname(destinationPath), "state.sqlite");
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
   const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);
   const mark = (outcome?: ServerSelfUpdateOutcome) =>

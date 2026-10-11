@@ -1,4 +1,4 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -58,7 +58,7 @@ fi
 
 export const describeSshRunner = Effect.gen(function* () {
   const runner = yield* SshRunner;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   return runner.kind === "wsl"
     ? `WSL (${runner.distro})`
     : platform === "win32"
@@ -68,14 +68,14 @@ export const describeSshRunner = Effect.gen(function* () {
 
 export const sshCommandForRunner = Effect.gen(function* () {
   const runner = yield* SshRunner;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   return runner.kind === "wsl" ? "wsl.exe" : platform === "win32" ? "ssh.exe" : "ssh";
 });
 
 export const buildWslSshEnvironment = Effect.fn("ssh/runner.buildWslSshEnvironment")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const hostEnvironment = yield* HostProcess.Environment;
   const forwarded = new Set(
     (environment.WSLENV ?? hostEnvironment.WSLENV ?? "").split(":").filter(Boolean),
   );

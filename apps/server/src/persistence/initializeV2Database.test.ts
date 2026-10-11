@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeEvents from "node:events";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -54,7 +54,7 @@ const withTrialDatabase = <E>(
   }
   return run({ directory, sourcePath, destinationPath }).pipe(
     Effect.provide(NodeServices.layer),
-    Effect.provideService(HostProcessEnvironment, {}),
+    Effect.provideService(HostProcess.Environment, {}),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
   );
 };
@@ -69,7 +69,7 @@ const trialUpdate = (sourcePath: string, id: string) => ({
 
 const duringTrial = <A, E, R>(effect: Effect.Effect<A, E, R>, update: ServiceUpdateRecord) =>
   effect.pipe(
-    Effect.provideService(HostProcessEnvironment, {
+    Effect.provideService(HostProcess.Environment, {
       [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         childVersion:
@@ -390,7 +390,7 @@ it.effect(
         assert.equal(
           (yield* Effect.result(
             initializeV2Database(destinationPath).pipe(
-              Effect.provideService(HostProcessEnvironment, {
+              Effect.provideService(HostProcess.Environment, {
                 [SERVICE_LAUNCHER_CONTEXT_ENV]: "invalid context",
               }),
             ),

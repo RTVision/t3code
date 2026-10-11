@@ -120,6 +120,7 @@ function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
     showReviewRequest: false,
     onSelect: () => {},
     speedMode: false,
+    hostActions: new Set(),
     onActed: () => {},
   });
 }

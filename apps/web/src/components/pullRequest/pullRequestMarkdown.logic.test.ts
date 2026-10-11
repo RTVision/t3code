@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolvePullRequestImageAsset, splitPullRequestBody } from "./pullRequestMarkdown.logic";
@@ -7,28 +8,28 @@ describe("pull request image assets", () => {
 
   it("routes a Gitea upload through the environment's signed image assets", () => {
     expect(
-      resolvePullRequestImageAsset(source, "gitea", "https://forge.test/rtvision/monorepo"),
+      resolvePullRequestImageAsset(source, SourceControlProviderKind.make("gitea"), "https://forge.test/rtvision/monorepo"),
     ).toEqual({
       _tag: "source-control-image",
-      provider: "gitea",
+      provider: SourceControlProviderKind.make("gitea"),
       url: `https://forge.test/${source}`,
     });
   });
 
   it("retains a Gitea installation's subpath", () => {
     expect(
-      resolvePullRequestImageAsset(source, "gitea", "https://forge.test/gitea/acme/web/")?.url,
+      resolvePullRequestImageAsset(source, SourceControlProviderKind.make("gitea"), "https://forge.test/gitea/acme/web/")?.url,
     ).toBe(`https://forge.test/gitea/${source}`);
   });
 
   it("keeps workspace and other providers' images on their existing paths", () => {
     expect(
-      resolvePullRequestImageAsset("src/image.png", "gitea", "https://forge.test/acme/web"),
+      resolvePullRequestImageAsset("src/image.png", SourceControlProviderKind.make("gitea"), "https://forge.test/acme/web"),
     ).toBeNull();
     expect(
-      resolvePullRequestImageAsset(source, "github", "https://github.com/acme/web"),
+      resolvePullRequestImageAsset(source, SourceControlProviderKind.make("github"), "https://github.com/acme/web"),
     ).toBeNull();
-    expect(resolvePullRequestImageAsset(source, "gitea", null)).toBeNull();
+    expect(resolvePullRequestImageAsset(source, SourceControlProviderKind.make("gitea"), null)).toBeNull();
   });
 });
 

@@ -2,11 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestDependencyContext,
   type ProjectId,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import type { ProviderChangeRequest } from "./PullRequestProvider.ts";
+import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { buildPullRequestDependencyContext } from "./pullRequestDependencyTopology.ts";
 
 const projectId = "project-1" as ProjectId;
@@ -41,7 +41,7 @@ function context(
   rows: ReadonlyArray<ProviderChangeRequest>,
   focus = 2,
   complete = true,
-  provider: SourceControlProviderKind = "github",
+  provider: SourceControlProviderKind = SourceControlProviderKind.make("github"),
 ) {
   return buildPullRequestDependencyContext({
     projectId,
@@ -77,7 +77,7 @@ describe("pull request dependency topology", () => {
       [row(1, "migration", "main"), row(2, "api", "migration")],
       2,
       false,
-      "gitea",
+      SourceControlProviderKind.make("gitea"),
     );
 
     expect(result.edges).toEqual([{ child: 2, parent: 1, certainty: "candidate" }]);
@@ -107,7 +107,7 @@ describe("pull request dependency topology", () => {
   ])("matches Gitea repository %s against source identity %s", (repository, sourceRepository) => {
     const result = buildPullRequestDependencyContext({
       projectId,
-      provider: "gitea",
+      provider: SourceControlProviderKind.make("gitea"),
       host: "gitea.example.test",
       repository,
       focus: 2,
@@ -130,7 +130,7 @@ describe("pull request dependency topology", () => {
     (repositoryPath) => {
       const result = buildPullRequestDependencyContext({
         projectId,
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         host: "dev.azure.com",
         repository: "web",
         repositoryPath,
@@ -156,7 +156,7 @@ describe("pull request dependency topology", () => {
     (repositoryPath) => {
       const result = buildPullRequestDependencyContext({
         projectId,
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         host: "dev.azure.com",
         repository: "web",
         repositoryPath,

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { pullRequestStackView } from "./pullRequestStackSnapshot";
@@ -14,7 +15,7 @@ function context(
 ): PullRequestDependencyContext {
   return {
     focus: { projectId: "project" as never, repository: "acme/web", number: 42 },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     repository: "acme/web",
     coverage: "complete",
