@@ -1,11 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessLinuxLibc,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -152,8 +147,8 @@ export class PreviewBrowserExecutableError extends Schema.TaggedError<PreviewBro
 
 /** Chrome for Testing targets glibc; musl Linux needs a native build. */
 export const nativeChromiumRequired = Effect.gen(function* () {
-  if ((yield* HostProcessPlatform) !== "linux") return false;
-  return (yield* HostProcessLinuxLibc) === "musl";
+  if ((yield* HostProcess.Platform) !== "linux") return false;
+  return (yield* HostProcess.LinuxLibc) === "musl";
 });
 
 export class PreviewBrowser extends Context.Service<
@@ -205,7 +200,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   options: PreviewBrowserOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const isExecutable = (candidate: string) =>
     fs.stat(candidate).pipe(
       Effect.map(
@@ -213,7 +208,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
       ),
       Effect.orElseSucceed(() => false),
     );
-  const configured = (yield* HostProcessEnvironment).T3CODE_PREVIEW_BROWSER_PATH;
+  const configured = (yield* HostProcess.Environment).T3CODE_PREVIEW_BROWSER_PATH;
   if (configured !== undefined) {
     const path = yield* Path.Path;
     const installed = (
@@ -251,7 +246,7 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   const http = yield* HttpClient.HttpClient;
   // Installs belong to the service, so they finish even when no caller is still waiting.
   const serviceScope = yield* Effect.scope;
-  const arch = yield* HostProcessArchitecture;
+  const arch = yield* HostProcess.Architecture;
   const release =
     options.release === undefined ? previewBrowserRelease(platform, arch) : options.release;
   const wait = options.wait ?? "45 seconds";

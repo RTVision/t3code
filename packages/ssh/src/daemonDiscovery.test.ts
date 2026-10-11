@@ -5,13 +5,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { describe, expect, it } from "vite-plus/test";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { buildRemoteLaunchScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const version = "1.2.3";
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32").each(["node", "archive"] as const)(
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "archive"] as const)(
   "%s daemon discovery",
   (mode) => {
     const runner =
