@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -15,8 +15,8 @@ import { checkPtySpawns } from "./servicePreflight.ts";
 const withNodePty = (load: () => Promise<typeof import("node-pty")>) =>
   Layer.mergeAll(
     NodeServices.layer,
-    Layer.succeed(HostProcessPlatform, "linux"),
-    Layer.succeed(HostProcessArchitecture, "x64"),
+    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(HostProcess.Architecture, "x64"),
     Layer.succeed(NodePtyModuleLoaderRef, load),
   );
 

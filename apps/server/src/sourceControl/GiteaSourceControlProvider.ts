@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
+  SourceControlProviderKind,
   PositiveInt,
   SourceControlProviderError,
   TrimmedNonEmptyString,
@@ -20,8 +21,8 @@ import {
   giteaRepositoryPath,
   parseGiteaRepository,
 } from "./giteaRepository.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
-import type { SourceControlApiDiscoverySpec } from "./SourceControlProviderDiscovery.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import type { SourceControlApiDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
 
 const Repository = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -67,7 +68,7 @@ function sameRepositoryIdentity(left: string | undefined, right: string | undefi
 
 function toChangeRequest(pull: typeof PullRequest.Type): ChangeRequest {
   return {
-    provider: "gitea",
+    provider: SourceControlProviderKind.make("gitea"),
     number: pull.number,
     title: pull.title,
     url: pull.html_url,
@@ -91,7 +92,7 @@ export const makeDiscovery = Effect.map(
   GiteaCli.GiteaCli,
   (api): SourceControlApiDiscoverySpec => ({
     type: "api",
-    kind: "gitea",
+    kind: SourceControlProviderKind.make("gitea"),
     label: "Gitea",
     installHint: GiteaCli.GITEA_SETUP_HINT,
     probeAuth: api.probeAuth,
@@ -101,7 +102,11 @@ export const makeDiscovery = Effect.map(
         giteaRepositoryFromRemote(context.remoteUrl, api.baseUrl.value, api.sshHosts) === null
       )
         return null;
-      return { kind: "gitea", name: "Gitea", baseUrl: api.baseUrl.value };
+      return {
+        kind: SourceControlProviderKind.make("gitea"),
+        name: "Gitea",
+        baseUrl: api.baseUrl.value,
+      };
     },
   }),
 );
@@ -114,7 +119,7 @@ export const make = Effect.gen(function* () {
 
   const failure = (operation: string, cwd: string, detail: string) =>
     new SourceControlProviderError({
-      provider: "gitea",
+      provider: SourceControlProviderKind.make("gitea"),
       operation,
       cwd,
       detail,
@@ -238,7 +243,7 @@ export const make = Effect.gen(function* () {
   });
 
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "gitea",
+    kind: SourceControlProviderKind.make("gitea"),
     listChangeRequests: Effect.fn("GiteaSourceControlProvider.listChangeRequests")(
       function* (input) {
         const { repository } = yield* resolveRepository(input);

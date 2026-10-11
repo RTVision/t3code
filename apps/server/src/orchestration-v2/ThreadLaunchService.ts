@@ -147,30 +147,58 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   }
 }
 
+/** A new worktree was asked to start from a ref that gives it no commit. */
+export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBaseRefError>()(
+  "ThreadLaunchBaseRefError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+    baseRef: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Base ref "${this.baseRef}" does not resolve to a commit in project "${this.projectTitle}" (${this.workspaceRoot}).`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
     readonly launch: (
       input: ThreadLaunchInput,
-    ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
-    /** Dispatches prepared-run.retry and prepares the run's workspace again. */
-    readonly retryPreparation: (
-      input: ThreadLaunchRetryInput,
-    ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+    ) => Effect.Effect<
+      ThreadLaunchResult,
+      ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
     /**
-     * Checks a worktree base before it is stored for later, unattended launches.
-     * A requested base must exist locally or on origin; without one, this is
-     * origin's default branch, else the branch the project has checked out.
+     * Fails when a new worktree's base ref cannot give provisioning a commit.
+     * `launch` accepts such a launch and reports the failure inside the
+     * thread; a caller that needs it before a thread exists checks first.
      */
-    readonly resolveWorktreeBaseRef: (input: {
-      readonly projectId: ProjectId;
-      readonly baseRef?: string | undefined;
-    }) => Effect.Effect<string, WorktreeBaseRefError>;
+    readonly checkWorktreeBase: (
+      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
+    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    /** Dispatches prepared-run.retry and prepares the run's workspace again. */
+    readonly retryPreparation: (input: ThreadLaunchRetryInput) => Effect.Effect<
+      Orchestrator.OrchestratorV2DispatchResult,
+      // Dispatches prepared-run.retry, a command the enablement chokepoint
+      // never gates; the type stays accurate anyway.
+      | Orchestrator.OrchestratorV2Error
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
+    /**
+     * The branch a new worktree starts from when no base was chosen: origin's
+     * default branch, else the branch the project has checked out.
+     */
+    readonly resolveDefaultWorktreeBase: (
+      projectId: ProjectId,
+    ) => Effect.Effect<string, DefaultWorktreeBaseError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
-export class WorktreeBaseRefError extends Schema.TaggedError<WorktreeBaseRefError>()(
-  "WorktreeBaseRefError",
+export class DefaultWorktreeBaseError extends Schema.TaggedError<DefaultWorktreeBaseError>()(
+  "DefaultWorktreeBaseError",
   {
     projectId: ProjectId,
     message: Schema.String,
@@ -247,6 +275,43 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const checkWorktreeBase: ThreadLaunchService["Service"]["checkWorktreeBase"] = Effect.fn(
+    "ThreadLaunchService.checkWorktreeBase",
+  )(function* (input) {
+    const strategy = input.workspaceStrategy;
+    // `:/text` is a commit search, which cannot be asked for a commit type.
+    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
+    const { baseRef } = strategy;
+    // Anything this cannot establish is left for the launch to report: a
+    // missing project, a folder that is not a repository, a failing Git.
+    const unresolved = yield* Effect.gen(function* () {
+      const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
+      if (project === undefined) return undefined;
+      const cwd = project.workspaceRoot;
+      // `git worktree add` reads `-` as the previous checkout.
+      if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
+        return undefined;
+      // Provisioning fetches the base from origin when it can, and runs a
+      // repository with no commits yet without a worktree.
+      if (
+        strategy.startFromOrigin === true &&
+        (yield* git.remoteExists({ cwd, remoteName: "origin" }))
+      )
+        return undefined;
+      // `git worktree add` also starts from a remote-tracking branch of that
+      // name; any ref carrying it is reason enough to let Git decide.
+      if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
+      return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    if (unresolved !== undefined)
+      return yield* new ThreadLaunchBaseRefError({
+        projectId: unresolved.id,
+        projectTitle: unresolved.title,
+        workspaceRoot: unresolved.workspaceRoot,
+        baseRef,
+      });
+  });
+
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: PreparationInput,
     threadId: ThreadId,
@@ -299,6 +364,7 @@ const make = Effect.gen(function* () {
               : ServerSettings.resolveSourceControlWriterModelSelection(
                   settings,
                   yield* providerRegistry.getProviders,
+                  input.projectId,
                 );
           return yield* textGeneration
             .generateBranchName({
@@ -722,6 +788,11 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      yield* threads.assertProviderInstanceEnabled({
+        projectId: input.projectId,
+        commandId: input.commandId,
+        instanceId: input.modelSelection.instanceId,
+      });
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before
@@ -995,15 +1066,15 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const resolveWorktreeBaseRef: ThreadLaunchService["Service"]["resolveWorktreeBaseRef"] =
-    Effect.fn("ThreadLaunchService.resolveWorktreeBaseRef")(function* (input) {
+  const resolveDefaultWorktreeBase: ThreadLaunchService["Service"]["resolveDefaultWorktreeBase"] =
+    Effect.fn("ThreadLaunchService.resolveDefaultWorktreeBase")(function* (projectId) {
       const fail = (message: string) => (cause?: unknown) =>
-        new WorktreeBaseRefError({
-          projectId: input.projectId,
+        new DefaultWorktreeBaseError({
+          projectId,
           message,
           ...(cause === undefined ? {} : { cause }),
         });
-      const project = yield* projects.getById(input.projectId).pipe(
+      const project = yield* projects.getById(projectId).pipe(
         Effect.mapError(fail("Unable to read the project.")),
         Effect.flatMap(
           Option.match({
@@ -1017,24 +1088,23 @@ const make = Effect.gen(function* () {
       const hasOrigin = yield* git
         .remoteExists({ cwd, remoteName: "origin" })
         .pipe(Effect.mapError(readFailed));
-      const exists = (refName: string) =>
-        Effect.gen(function* () {
-          if (yield* git.hasCommit({ cwd, refName })) return true;
-          return (
-            hasOrigin && (yield* git.remoteBranchExists({ cwd, remoteName: "origin", refName }))
-          );
-        }).pipe(Effect.mapError(readFailed));
-      if (input.baseRef !== undefined) {
-        if (yield* exists(input.baseRef)) return input.baseRef;
-        return yield* fail(`Base branch '${input.baseRef}' does not exist in ${cwd}.`)();
-      }
       const defaultBranch = hasOrigin
         ? yield* git
             .resolveDefaultBranchName({ cwd, remoteName: "origin" })
             .pipe(Effect.mapError(readFailed))
         : null;
       // origin/HEAD can still name a branch that was deleted since the clone.
-      if (defaultBranch !== null && (yield* exists(defaultBranch))) return defaultBranch;
+      if (
+        defaultBranch !== null &&
+        ((yield* git
+          .hasCommit({ cwd, refName: defaultBranch })
+          .pipe(Effect.mapError(readFailed))) ||
+          (yield* git
+            .remoteBranchExists({ cwd, remoteName: "origin", refName: defaultBranch })
+            .pipe(Effect.mapError(readFailed))))
+      ) {
+        return defaultBranch;
+      }
       // origin/HEAD is only recorded by clone; fall back to what the project has checked out.
       const status = yield* git.localStatus({ cwd }).pipe(Effect.mapError(readFailed));
       if (status.refName !== null) return status.refName;
@@ -1043,7 +1113,12 @@ const make = Effect.gen(function* () {
       )();
     });
 
-  return ThreadLaunchService.of({ launch, retryPreparation, resolveWorktreeBaseRef });
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    retryPreparation,
+    resolveDefaultWorktreeBase,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

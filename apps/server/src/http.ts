@@ -31,7 +31,7 @@ import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import * as GiteaCli from "./sourceControl/GiteaCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GiteaAttachment from "./sourceControl/GiteaAttachment.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {

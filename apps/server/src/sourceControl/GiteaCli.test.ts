@@ -1,3 +1,4 @@
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -10,7 +11,7 @@ import { FetchHttpClient } from "effect/http";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GiteaCli from "./GiteaCli.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -159,7 +160,7 @@ function transportFixture(status = 200) {
       }),
     ),
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-tea-transport-test-" }),
-    ForgejoCli.layer.pipe(Layer.provide(Layer.mock(VcsProcess.VcsProcess)({ run }))),
+    ForgejoCli.layer.pipe(Layer.provide(TestSourceControlHost.layer({ process: { run } }))),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)));
   return { layer, run };
 }

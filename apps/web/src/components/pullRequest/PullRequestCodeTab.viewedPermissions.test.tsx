@@ -217,6 +217,7 @@ async function mount(allowed: boolean, viewed = false) {
     renderer = create(
       <RegistryContext.Provider value={registry}>
         <PullRequestCodeTab
+          scrollerRef={() => undefined}
           environmentId={environmentId}
           reference={reference}
           detail={detail}

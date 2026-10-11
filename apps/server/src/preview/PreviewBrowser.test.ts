@@ -1,13 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessLinuxLibc,
-  HostProcessPlatform,
-  HostProcessWorkingDirectory,
-  type HostLinuxLibc,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import type { HostLinuxLibc } from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
@@ -27,7 +21,7 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 // POSIX modes cannot be checked on NTFS, so follow the host like the Antigravity suite.
 const hostPlatform: NodeJS.Platform =
-  HostProcessPlatform.defaultValue() === "win32" ? "win32" : "linux";
+  HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const executableName =
   hostPlatform === "win32" ? "chrome-headless-shell.exe" : "chrome-headless-shell";
 const ROOT = "chrome-headless-shell-fixture/";
@@ -116,13 +110,13 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
         },
     ...(options.wait === undefined ? {} : { wait: options.wait }),
   }).pipe(
-    Effect.provideService(HostProcessPlatform, options.platform ?? hostPlatform),
-    Effect.provideService(HostProcessArchitecture, "x64"),
+    Effect.provideService(HostProcess.Platform, options.platform ?? hostPlatform),
+    Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provideService(
-      HostProcessEnvironment,
+      HostProcess.Environment,
       options.executable === undefined ? {} : { T3CODE_PREVIEW_BROWSER_PATH: options.executable },
     ),
-    Effect.provideService(HostProcessLinuxLibc, options.linuxLibc ?? "gnu"),
+    Effect.provideService(HostProcess.LinuxLibc, options.linuxLibc ?? "gnu"),
     Effect.provideService(FileSystem.FileSystem, {
       ...fs,
       stat: (file) =>
@@ -204,7 +198,7 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const cwd = yield* HostProcessWorkingDirectory;
+      const cwd = yield* HostProcess.WorkingDirectory;
       const root = yield* fs.makeTempDirectoryScoped({
         directory: cwd,
         prefix: "t3-relative-browser-",

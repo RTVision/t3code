@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProjectId,
@@ -58,6 +59,9 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
     detail: () => "detail",
     activity: () => "activity",
     setReaction: { permissionAtom: () => Atom.make(true) },
+    // The header menu reads the stored guide to label "Write guide" or "Rewrite guide".
+    reviewGuide: () => "review-guide",
+    generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
   },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
@@ -113,6 +117,8 @@ vi.mock("./PullRequestMarkdown", () => ({
 }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestThreadLinks", () => ({ PullRequestThreadLinks: () => null }));
+vi.mock("./PullRequestGuideTab", () => ({ PullRequestGuideTab: () => null }));
+
 vi.mock("./PullRequestSummaryTab", async () => {
   const { PullRequestReactionBar } = await import("./PullRequestReactions");
   const { pullRequestCanReact } = await import("@t3tools/contracts");
@@ -155,27 +161,30 @@ vi.mock("./PullRequestSummaryTab", async () => {
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
     onAddToAgentSelection,
+    scrollerRef,
   }: ComponentProps<typeof import("./PullRequestCodeTab").default>) => (
-    <button
-      onClick={() =>
-        onAddToAgentSelection?.({
-          request: "Fix this line",
-          comment: {
-            id: "note-1",
-            sectionId: "file:a.ts",
-            sectionTitle: "a.ts",
-            filePath: "a.ts",
-            startIndex: 0,
-            endIndex: 0,
-            rangeLabel: "L1",
-            text: "Please fix",
-            diff: "+broken()",
-          },
-        })
-      }
-    >
-      Add to agent
-    </button>
+    <div ref={scrollerRef} data-test-scroll="code">
+      <button
+        onClick={() =>
+          onAddToAgentSelection?.({
+            request: "Fix this line",
+            comment: {
+              id: "note-1",
+              sectionId: "file:a.ts",
+              sectionTitle: "a.ts",
+              filePath: "a.ts",
+              startIndex: 0,
+              endIndex: 0,
+              rangeLabel: "L1",
+              text: "Please fix",
+              diff: "+broken()",
+            },
+          })
+        }
+      >
+        Add to agent
+      </button>
+    </div>
   ),
 }));
 
@@ -183,7 +192,7 @@ import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
 const detail: PullRequestDetailView = {
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
   workspaceRoot: "/workspace",

@@ -8,7 +8,7 @@ import * as NodeUtil from "node:util";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { buildRemoteT3RunnerScript } from "./tunnel.ts";
 
@@ -82,7 +82,7 @@ fs.writeFileSync(path.join(dir, "dist/bin.mjs"), 'process.stdout.write(process.a
   }
 }
 
-describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("installed remote CLI", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installed remote CLI", () => {
   it("pairs using the complete matching runtime without npm, preserving arguments and spaces", () =>
     fixture(async ({ root, execute }) => {
       expect(JSON.parse(await execute())).toEqual({
@@ -125,8 +125,8 @@ describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("installed remot
       const stage = NodePath.join(root, "archive-stage");
       await NodeFSP.mkdir(stage);
       await NodeFSP.writeFile(NodePath.join(stage, "t3"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
-      const platform = HostProcessPlatform.defaultValue() === "darwin" ? "darwin" : "linux";
-      const name = `t3-${version}-${platform}-${HostProcessArchitecture.defaultValue()}.tar.gz`;
+      const platform = HostProcess.Platform.defaultValue() === "darwin" ? "darwin" : "linux";
+      const name = `t3-${version}-${platform}-${HostProcess.Architecture.defaultValue()}.tar.gz`;
       const archive = NodePath.join(root, name);
       await execFile("tar", ["-czf", archive, "-C", root, "archive-stage"]);
       const checksum = NodeCrypto.createHash("sha256")

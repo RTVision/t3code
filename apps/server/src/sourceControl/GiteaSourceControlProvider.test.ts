@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,7 +20,11 @@ const repository = {
   default_branch: "develop",
 };
 const context = {
-  provider: { kind: "gitea" as const, name: "Gitea", baseUrl: "https://forge.example.test" },
+  provider: {
+    kind: SourceControlProviderKind.make("gitea"),
+    name: "Gitea",
+    baseUrl: "https://forge.example.test",
+  },
   remoteName: "origin",
   remoteUrl: repository.ssh_url,
 };

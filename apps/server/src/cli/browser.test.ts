@@ -1,10 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  HostProcessEnvironment,
-  HostProcessLinuxLibc,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,7 +9,7 @@ import { Command } from "effect/cli";
 
 import { browserCommand } from "./browser.ts";
 
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 it.layer(NodeServices.layer)("t3 browser setup", (it) => {
   for (const platform of ["linux", "win32"] as const) {
@@ -41,9 +37,9 @@ it.layer(NodeServices.layer)("t3 browser setup", (it) => {
               return (yield* TestConsole.logLines).slice(previous.length);
             }).pipe(
               Effect.provide(TestConsole.layer),
-              Effect.provideService(HostProcessPlatform, platform),
-              Effect.provideService(HostProcessLinuxLibc, "gnu"),
-              Effect.provideService(HostProcessEnvironment, {
+              Effect.provideService(HostProcess.Platform, platform),
+              Effect.provideService(HostProcess.LinuxLibc, "gnu"),
+              Effect.provideService(HostProcess.Environment, {
                 T3CODE_PREVIEW_BROWSER_PATH: executable,
               }),
             );
@@ -83,9 +79,9 @@ it.layer(NodeServices.layer)("t3 browser setup", (it) => {
             return (yield* TestConsole.logLines).slice(previous.length);
           }).pipe(
             Effect.provide(TestConsole.layer),
-            Effect.provideService(HostProcessPlatform, "linux"),
-            Effect.provideService(HostProcessEnvironment, {}),
-            Effect.provideService(HostProcessLinuxLibc, "musl"),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, {}),
+            Effect.provideService(HostProcess.LinuxLibc, "musl"),
             Effect.provideService(FileSystem.FileSystem, {
               ...fs,
               stat: (file) =>

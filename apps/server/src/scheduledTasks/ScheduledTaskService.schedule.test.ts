@@ -112,19 +112,22 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
 it.effect("checks a new or changed worktree base branch, but not an unchanged one", () =>
   Effect.gen(function* () {
     const existingBranches = new Set(["develop"]);
-    const checked: Array<string | undefined> = [];
+    const checked: Array<string> = [];
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-        resolveWorktreeBaseRef: ({ projectId, baseRef }) => {
+        checkWorktreeBase: ({ projectId, workspaceStrategy }) => {
+          const baseRef = workspaceStrategy.type === "worktree" ? workspaceStrategy.baseRef : "";
           checked.push(baseRef);
-          return baseRef !== undefined && existingBranches.has(baseRef)
-            ? Effect.succeed(baseRef)
+          return existingBranches.has(baseRef)
+            ? Effect.void
             : Effect.fail(
-                new ThreadLaunchService.WorktreeBaseRefError({
+                new ThreadLaunchService.ThreadLaunchBaseRefError({
                   projectId,
-                  message: `Base branch '${baseRef}' does not exist.`,
+                  projectTitle: "Project",
+                  workspaceRoot: "/repo",
+                  baseRef,
                 }),
               );
         },
@@ -148,7 +151,9 @@ it.effect("checks a new or changed worktree base branch, but not an unchanged on
       });
 
       const rejected = yield* service.upsert(input).pipe(Effect.flip);
-      expect(rejected.message).toBe("Base branch 'main' does not exist.");
+      expect(rejected.message).toBe(
+        'Base ref "main" does not resolve to a commit in project "Project" (/repo).',
+      );
       expect((yield* service.list()).tasks).toEqual([]);
 
       const created = yield* service.upsert({

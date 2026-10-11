@@ -1040,7 +1040,7 @@ export const layer = Layer.effect(
           !(existingStrategy?.type === "worktree" && existingStrategy.baseRef === strategy.baseRef)
         ) {
           yield* threadLaunch
-            .resolveWorktreeBaseRef({ projectId: input.projectId, baseRef: strategy.baseRef })
+            .checkWorktreeBase({ projectId: input.projectId, workspaceStrategy: strategy })
             .pipe(Effect.mapError((cause) => taskError(cause.message, { taskId: id, cause })));
         }
         // Keep the existing next_run_at when the schedule itself is untouched:
@@ -1135,7 +1135,7 @@ export const layer = Layer.effect(
     const defaultWorkspaceStrategy: ScheduledTaskService["Service"]["defaultWorkspaceStrategy"] = (
       projectId,
     ) =>
-      threadLaunch.resolveWorktreeBaseRef({ projectId }).pipe(
+      threadLaunch.resolveDefaultWorktreeBase(projectId).pipe(
         Effect.map((baseRef) => ({ type: "worktree" as const, baseRef, startFromOrigin: true })),
         Effect.mapError((cause) => taskError(cause.message, { cause })),
       );
