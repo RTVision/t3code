@@ -376,7 +376,7 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it.each(["favorite", "visibility", "order"] as const)(
-    "keeps the actual device-local %s control editable without server writes",
+    "prevents shared %s changes without settings write permission",
     (action) => {
       commands.canWriteSettings = false;
       commands.canManageProviders = false;
@@ -414,22 +414,11 @@ describe("EnvironmentProviderSettings routing", () => {
             : "Move First down";
       const control = visitElements(controls, (element) => element.props["aria-label"] === label);
       if (!control) throw new Error(`Missing ${label}`);
-      expect(control.props.disabled).toBeFalsy();
+      expect(control.props.disabled).toBe(true);
       if (action === "visibility")
         (control.props.onCheckedChange as (value: boolean) => void)(false);
       else (control.props.onClick as () => void)();
-      expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(
-        action === "favorite"
-          ? { favorites: [{ provider: codexId, model: "first" }] }
-          : {
-              providerModelPreferences: {
-                [codexId]: {
-                  hiddenModels: action === "visibility" ? ["first"] : [],
-                  modelOrder: action === "order" ? ["second", "first"] : [],
-                },
-              },
-            },
-      );
+      expect(settingsState.updateClientSettings).not.toHaveBeenCalled();
       expect(settingsState.updateSettings).not.toHaveBeenCalled();
       expect(settingsState.mutateProviderInstance).not.toHaveBeenCalled();
       expect(models.props.canManageCustomModels).toBe(false);

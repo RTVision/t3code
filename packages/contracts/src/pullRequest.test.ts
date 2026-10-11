@@ -94,12 +94,16 @@ describe("PullRequestListResult", () => {
       canonicalKey: "forge.example/team/repo",
       locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
     };
-    expect(pullRequestHostOf(identity, kind)).toBe("forge.example:3000");
-    expect(pullRequestHostOf(identity, "gitlab")).toBe("forge.example");
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make(kind))).toBe(
+      "forge.example:3000",
+    );
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(
+      "forge.example",
+    );
     expect(
       pullRequestHostOf(
         { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        kind,
+        SourceControlProviderKind.make(kind),
       ),
     ).toBe("forge.example");
   });
@@ -311,7 +315,7 @@ describe("PullRequestDependencyContext", () => {
     const projectId = "p1" as PullRequestDependencyContext["focus"]["projectId"];
     const value: PullRequestDependencyContext = {
       focus: { projectId, repository: "acme/web", number: 2 },
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       host: "github.com",
       repository: "acme/web",
       nodes: [

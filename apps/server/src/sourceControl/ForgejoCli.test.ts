@@ -15,7 +15,11 @@ import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 afterEach(() => vi.unstubAllEnvs());
 
 const layer = Layer.mergeAll(
-  Layer.unwrap(Effect.map(VcsProcess.VcsProcess, (process) => TestSourceControlHost.layer({ process: { run: process.run } }))).pipe(Layer.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)))),
+  Layer.unwrap(
+    Effect.map(VcsProcess.VcsProcess, (process) =>
+      TestSourceControlHost.layer({ process: { run: process.run } }),
+    ),
+  ).pipe(Layer.provide(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)))),
   NodeServices.layer,
   FetchHttpClient.layer,
 );

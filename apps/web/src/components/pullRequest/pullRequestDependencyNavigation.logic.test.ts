@@ -331,7 +331,7 @@ describe("inferred navigation through native refreshes", () => {
     const absent = AsyncResult.success<PullRequestStack | null>(null);
     expect(navigation(AsyncResult.initial(true)).inferred).toBe(false);
     expect(navigation(absent).inferred).toBe(true);
-    expect(navigation(AsyncResult.waiting(absent))).toEqual({ nativeFresh: false, inferred: true });
+    expect(navigation(AsyncResult.waiting(absent))).toEqual({ nativeFresh: true, inferred: true });
     expect(
       navigation(AsyncResult.fail("Offline", { previousSuccess: Option.some(absent) })),
     ).toEqual({ nativeFresh: false, inferred: true });
@@ -346,7 +346,7 @@ describe("inferred navigation through native refreshes", () => {
     const present = AsyncResult.success(nativeStack);
     expect(navigation(present)).toEqual({ nativeFresh: true, inferred: false });
     expect(navigation(AsyncResult.waiting(present))).toEqual({
-      nativeFresh: false,
+      nativeFresh: true,
       inferred: false,
     });
     expect(

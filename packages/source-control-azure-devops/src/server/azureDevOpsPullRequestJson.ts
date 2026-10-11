@@ -14,7 +14,6 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import {
   azureDevOpsHeadRepositoryNameWithOwner,
-  azureDevOpsRepositoryNameWithOwner,
   azureDevOpsPullRequestWebUrl,
 } from "@t3tools/source-control-azure-devops/server/azureDevOpsPullRequests";
 
@@ -140,7 +139,7 @@ export interface AzureDevOpsPullRequest {
   readonly headBranch: string;
   /** The qualified source repository, or null if Azure did not resolve it. */
   readonly headRepositoryNameWithOwner: string | null;
-  /** Derived from the source and target repository identities when both are known. */
+  /** Azure marks fork sources; a deleted source repository leaves the answer unknown. */
   readonly isCrossRepository?: boolean;
   readonly baseBranch: string;
   readonly state: PullRequestState;
@@ -171,10 +170,6 @@ function trimmed(value: string | null | undefined): string | null {
 
 function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
-}
-
-function normalizeRepositoryIdentity(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 /** A login has to compare against `az account show`, which reports an email. */
@@ -249,14 +244,8 @@ function toPullRequest(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsPullRequest | null {
   const headRepositoryNameWithOwner = azureDevOpsHeadRepositoryNameWithOwner(raw);
-  const targetRepositoryNameWithOwner = azureDevOpsRepositoryNameWithOwner(raw.repository);
   const isCrossRepository =
-    headRepositoryNameWithOwner !== undefined &&
-    headRepositoryNameWithOwner !== null &&
-    targetRepositoryNameWithOwner !== null
-      ? normalizeRepositoryIdentity(headRepositoryNameWithOwner) !==
-        normalizeRepositoryIdentity(targetRepositoryNameWithOwner)
-      : undefined;
+    raw.forkSource == null ? false : raw.forkSource.repository == null ? undefined : true;
   const autoMergeMethod = toAutoMergeMethod(raw);
   const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
     const actor = toActor(reviewer);

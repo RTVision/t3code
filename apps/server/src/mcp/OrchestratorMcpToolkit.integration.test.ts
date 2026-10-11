@@ -4216,10 +4216,11 @@ describe("orchestrator MCP toolkit", () => {
           });
           expect(read.isError).not.toBe(true);
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
+          // Stopping the parent disposes delivery; reading stored results must not reactivate it.
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
               ?.completionDelivery?.state,
-          ).toBe("acknowledged");
+          ).toBe("disposed");
         }).pipe(Effect.provide(layerTest));
       }),
     ),

@@ -100,10 +100,6 @@ export function azureDevOpsHeadRepositoryNameWithOwner(input: {
   );
 }
 
-function normalizeRepositoryIdentity(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
 }
@@ -213,14 +209,8 @@ function normalizeAzureDevOpsPullRequestRecord(
   raw: Schema.Schema.Type<typeof AzureDevOpsPullRequestSchema>,
 ): NormalizedAzureDevOpsPullRequestRecord {
   const headRepositoryNameWithOwner = azureDevOpsHeadRepositoryNameWithOwner(raw);
-  const targetRepositoryNameWithOwner = azureDevOpsRepositoryNameWithOwner(raw.repository);
   const isCrossRepository =
-    headRepositoryNameWithOwner !== undefined &&
-    headRepositoryNameWithOwner !== null &&
-    targetRepositoryNameWithOwner !== null
-      ? normalizeRepositoryIdentity(headRepositoryNameWithOwner) !==
-        normalizeRepositoryIdentity(targetRepositoryNameWithOwner)
-      : undefined;
+    raw.forkSource == null ? false : raw.forkSource.repository == null ? undefined : true;
   const state = normalizeAzureDevOpsPullRequestState(raw.status);
   const terminalAt = Option.match(raw.closedDate ?? Option.none(), {
     onNone: () => null,

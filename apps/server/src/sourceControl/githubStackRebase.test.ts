@@ -1,3 +1,4 @@
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,6 +27,12 @@ const layer = Layer.mergeAll(
     Layer.provideMerge(VcsProcess.layer),
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
+
+const withHostProcess = (process: SourceControlHost.SourceControlHost["Service"]["process"]) =>
+  Effect.provideServiceEffect(
+    SourceControlHost.SourceControlHost,
+    Effect.map(SourceControlHost.SourceControlHost, (host) => ({ ...host, process })),
+  );
 
 /**
  * A bare "GitHub" holding the live-run stack: `main` moved ahead after the stack was cut, and a
@@ -223,7 +230,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
             layers: repo.layers,
             remote: repo.remote,
           }).pipe(
-            Effect.provideService(VcsProcess.VcsProcess, {
+            withHostProcess({
               run: (input) =>
                 process.run(input).pipe(
                   Effect.tap(() => {
@@ -235,7 +242,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
                           input.args.at(-1)?.endsWith(`:refs/heads/${triggerBranch}`);
                     if (injected || !trigger) return Effect.void;
                     injected = true;
-                    return repo.pushConcurrentChange(repo.layers[0]!.headBranch);
+                    return repo.pushConcurrentChange(repo.layers[0]!.headBranch).pipe(Effect.orDie);
                   }),
                 ),
             }),
@@ -277,7 +284,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
             layers: repo.layers,
             remote: repo.remote,
           }).pipe(
-            Effect.provideService(VcsProcess.VcsProcess, {
+            withHostProcess({
               run: (input) => {
                 if (input.args[0] === "rebase" && input.args[1] !== "--abort") rebases++;
                 return process.run({
@@ -324,7 +331,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
           layers: repo.layers,
           remote: repo.remote,
         }).pipe(
-          Effect.provideService(VcsProcess.VcsProcess, {
+          withHostProcess({
             run: (input) =>
               process.run(input).pipe(
                 Effect.tap(() => {
@@ -335,7 +342,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
                   )
                     return Effect.void;
                   injected = true;
-                  return repo.pushConcurrentChange(top.headBranch);
+                  return repo.pushConcurrentChange(top.headBranch).pipe(Effect.orDie);
                 }),
               ),
           }),
