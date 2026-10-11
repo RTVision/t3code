@@ -1,6 +1,8 @@
 import {
   EnvironmentId,
   type ProjectId,
+  ProviderInstanceId,
+  type ProviderOptionSelection,
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskUpsertSchedule,
@@ -10,6 +12,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { createModelSelection } from "@t3tools/shared/model";
 
 import {
   resolveProjectSettings,
@@ -63,16 +66,13 @@ export interface DraftState {
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
+  /** `${instanceId}:${model}`; empty follows the project's default model. */
   readonly modelKey: string;
-  /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
+  /** Provider options (reasoning effort, …) for `modelKey`; cleared when the model changes. */
+  readonly modelOptions: ReadonlyArray<ProviderOptionSelection>;
   readonly runtimeMode: RuntimeMode;
+  /** Not editable in the dialog, but preserved so editing an agent-created task keeps it. */
   readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The task's original model selection. The picker only edits
-   * `instanceId:model`; keeping the source object preserves provider options
-   * (reasoning, temperature, …) when the model itself is left unchanged.
-   */
-  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -151,9 +151,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? task.workspaceStrategy.worktreePath
         : "",
     modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    modelOptions: task.modelSelection.options ?? [],
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,
@@ -168,6 +168,26 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? String(schedule.maxDeliveryAgeMinutes)
         : "",
   };
+}
+
+function splitModelKey(value: string): { instanceId: ProviderInstanceId; model: string } | null {
+  const index = value.indexOf(":");
+  if (index <= 0 || index === value.length - 1) return null;
+  return {
+    instanceId: ProviderInstanceId.make(value.slice(0, index)),
+    model: value.slice(index + 1),
+  };
+}
+
+/** The selection a draft saves: its picked model and options, else the default model. */
+export function draftModelSelection(
+  draft: Pick<DraftState, "modelKey" | "modelOptions">,
+  fallback: ModelSelection | null,
+): ModelSelection | null {
+  const picked = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  return picked
+    ? createModelSelection(picked.instanceId, picked.model, draft.modelOptions)
+    : fallback;
 }
 
 /** Use configured defaults before the catalog's advertised default model. */

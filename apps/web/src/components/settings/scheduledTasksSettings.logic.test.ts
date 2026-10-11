@@ -17,6 +17,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  draftModelSelection,
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
@@ -166,6 +167,41 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("editing scheduled task model settings", () => {
+  const effortTask: ScheduledTask = {
+    ...legacyTask,
+    modelSelection: {
+      ...legacyTask.modelSelection,
+      options: [{ id: "reasoningEffort", value: "high" }],
+    },
+    runtimeMode: "auto",
+  };
+
+  it("saves the task's effort and permissions unless they are changed", () => {
+    const draft = taskToDraft(effortTask);
+    expect(draft.runtimeMode).toBe("auto");
+    expect(draftModelSelection(draft, null)).toEqual(effortTask.modelSelection);
+    expect(
+      draftModelSelection(
+        { ...draft, modelOptions: [{ id: "reasoningEffort", value: "xhigh" }] },
+        null,
+      ),
+    ).toEqual({
+      ...legacyTask.modelSelection,
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
+  });
+
+  it("uses the default model, with its options, until a model is picked", () => {
+    const fallback = effortTask.modelSelection;
+    expect(draftModelSelection({ modelKey: "", modelOptions: [] }, fallback)).toBe(fallback);
+    expect(draftModelSelection({ modelKey: "codex:gpt-6", modelOptions: [] }, fallback)).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6",
+    });
   });
 });
 
