@@ -1145,10 +1145,11 @@ function ScheduledTaskEditorDialog({
                     instanceId={activeInstanceId}
                     models={activeEntry.models}
                     model={activeModel}
-                    prompt=""
-                    onPromptChange={() => {}}
+                    // Prompt-injected effort (Claude's Ultrathink) edits the task prompt,
+                    // as it does in the composer.
+                    prompt={draft.prompt}
+                    onPromptChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
                     modelOptions={activeSelection?.options ?? []}
-                    allowPromptInjectedEffort={false}
                     planModeEnabled={settings.planModeEnabled}
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(options) =>
@@ -1163,10 +1164,14 @@ function ScheduledTaskEditorDialog({
               </div>
             </Field>
 
-            <Field label="Permissions">
+            {/* A run sent into a bound thread keeps that thread's permissions. */}
+            <Field
+              label="Permissions"
+              {...(draft.threadId ? { hint: "Uses the bound thread's permissions" } : {})}
+            >
               <Select
                 value={runtimeMode}
-                disabled={saving || !connected}
+                disabled={saving || !connected || draft.threadId !== ""}
                 onValueChange={(value) => {
                   if (value) setDraft((current) => ({ ...current, runtimeMode: value }));
                 }}
