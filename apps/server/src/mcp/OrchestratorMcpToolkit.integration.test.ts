@@ -647,6 +647,7 @@ describe("orchestrator MCP toolkit", () => {
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+          const defaultBaseRef = yield* Ref.make("develop");
           const layerScheduledTaskStub = Layer.succeed(
             ScheduledTaskService.ScheduledTaskService,
             ScheduledTaskService.ScheduledTaskService.of({
@@ -662,7 +663,13 @@ describe("orchestrator MCP toolkit", () => {
                   return { task };
                 }),
               defaultWorkspaceStrategy: () =>
-                Effect.succeed({ type: "worktree", baseRef: "develop", startFromOrigin: true }),
+                Ref.get(defaultBaseRef).pipe(
+                  Effect.map((baseRef) => ({
+                    type: "worktree" as const,
+                    baseRef,
+                    startFromOrigin: true,
+                  })),
+                ),
               setEnabled: () =>
                 Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
               delete: (input) =>
@@ -1565,6 +1572,18 @@ describe("orchestrator MCP toolkit", () => {
                 threadId: null,
                 workspaceStrategy: { type: "worktree", baseRef: "develop", startFromOrigin: true },
               },
+            ]);
+            // A retry keeps the branch the first attempt resolved after the checkout moves.
+            yield* Ref.set(defaultBaseRef, "feature/after");
+            const replayedScheduleCall = yield* invoke("schedule_task", {
+              prompt: "check for new pull requests",
+              schedule: '{"type":"interval","everyMs":3600000}',
+              bindToCurrentThread: false,
+              clientRequestId: "schedule-opencode-compat-1",
+            });
+            expect(replayedScheduleCall.isError).toBe(false);
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              { workspaceStrategy: { type: "worktree", baseRef: "develop" } },
             ]);
             const serializedScheduledTaskId = (
               serializedScheduleCall.structuredContent as { scheduledTaskId: string }

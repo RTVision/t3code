@@ -261,6 +261,11 @@ export class ScheduledTaskService extends Context.Service<
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
 
+/** The id an idempotent create with this commandId gets, so a retry finds its task. */
+export function scheduledTaskIdForCommand(commandId: CommandId): ScheduledTaskId {
+  return ScheduledTaskId.make(`scheduled-task:${commandId}`);
+}
+
 function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
     message,
@@ -1016,9 +1021,9 @@ export const layer = Layer.effect(
             : null;
         const id =
           input.id ??
-          ScheduledTaskId.make(
-            input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
-          );
+          (input.commandId
+            ? scheduledTaskIdForCommand(input.commandId)
+            : ScheduledTaskId.make(`scheduled-task:${uuid}`));
         // Look up by the *resolved* id so idempotent creates (commandId replays)
         // keep their run history, and so real load failures propagate instead
         // of silently resetting an existing row.

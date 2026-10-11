@@ -1520,6 +1520,30 @@ const make = Effect.gen(function* () {
         }
         const modelSelection =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        // Scope the idempotency key by provider session so two callers
+        // reusing the same clientRequestId cannot collide on one task row.
+        const commandId =
+          input.clientRequestId === undefined
+            ? undefined
+            : stableCommandId({
+                scope,
+                requestKey: input.clientRequestId,
+                operation: "schedule-task",
+              });
+        // A retry keeps the base branch its first attempt resolved, even if the
+        // project checkout has moved since.
+        let replayed: ScheduledTask | undefined;
+        if (commandId !== undefined && !bindToCurrentThread) {
+          const { tasks } = yield* scheduledTasks
+            .list()
+            .pipe(
+              Effect.mapError((error) =>
+                failure("orchestration_error", `Could not load scheduled tasks: ${error.message}`),
+              ),
+            );
+          const replayedId = ScheduledTaskService.scheduledTaskIdForCommand(commandId);
+          replayed = tasks.find((task) => task.id === replayedId && task.threadId === null);
+        }
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1530,23 +1554,15 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(projectId, bindToCurrentThread),
+          workspaceStrategy:
+            replayed?.workspaceStrategy ??
+            (yield* scheduledTaskWorkspaceStrategy(projectId, bindToCurrentThread)),
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
-          // Scope the idempotency key by provider session so two callers
-          // reusing the same clientRequestId cannot collide on one task row.
-          ...(input.clientRequestId === undefined
-            ? {}
-            : {
-                commandId: stableCommandId({
-                  scope,
-                  requestKey: input.clientRequestId,
-                  operation: "schedule-task",
-                }),
-              }),
+          ...(commandId === undefined ? {} : { commandId }),
         };
         const { task } = yield* scheduledTasks
           .upsert(upsertInput)
