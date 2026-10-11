@@ -1249,6 +1249,12 @@ it.effect.each([
     expected: "rtvision",
   },
   {
+    name: "falls back to the checked-out branch when origin's default was deleted",
+    options: { defaultBranch: "gone", remoteBranchExists: false, checkedOutBranch: "trunk" },
+    baseRef: undefined,
+    expected: "trunk",
+  },
+  {
     name: "falls back to the checked-out branch when origin records no default",
     options: { remoteExists: false, checkedOutBranch: "trunk" },
     baseRef: undefined,

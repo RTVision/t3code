@@ -1017,23 +1017,24 @@ const make = Effect.gen(function* () {
       const hasOrigin = yield* git
         .remoteExists({ cwd, remoteName: "origin" })
         .pipe(Effect.mapError(readFailed));
+      const exists = (refName: string) =>
+        Effect.gen(function* () {
+          if (yield* git.hasCommit({ cwd, refName })) return true;
+          return (
+            hasOrigin && (yield* git.remoteBranchExists({ cwd, remoteName: "origin", refName }))
+          );
+        }).pipe(Effect.mapError(readFailed));
       if (input.baseRef !== undefined) {
-        const refName = input.baseRef;
-        const exists =
-          (yield* git.hasCommit({ cwd, refName }).pipe(Effect.mapError(readFailed))) ||
-          (hasOrigin &&
-            (yield* git
-              .remoteBranchExists({ cwd, remoteName: "origin", refName })
-              .pipe(Effect.mapError(readFailed))));
-        if (exists) return refName;
-        return yield* fail(`Base branch '${refName}' does not exist in ${cwd}.`)();
+        if (yield* exists(input.baseRef)) return input.baseRef;
+        return yield* fail(`Base branch '${input.baseRef}' does not exist in ${cwd}.`)();
       }
       const defaultBranch = hasOrigin
         ? yield* git
             .resolveDefaultBranchName({ cwd, remoteName: "origin" })
             .pipe(Effect.mapError(readFailed))
         : null;
-      if (defaultBranch !== null) return defaultBranch;
+      // origin/HEAD can still name a branch that was deleted since the clone.
+      if (defaultBranch !== null && (yield* exists(defaultBranch))) return defaultBranch;
       // origin/HEAD is only recorded by clone; fall back to what the project has checked out.
       const status = yield* git.localStatus({ cwd }).pipe(Effect.mapError(readFailed));
       if (status.refName !== null) return status.refName;
