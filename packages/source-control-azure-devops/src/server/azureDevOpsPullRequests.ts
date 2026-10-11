@@ -75,7 +75,7 @@ type AzureDevOpsRepositoryReference = {
 };
 
 /** Azure's stable repository identity is its project and repository name. */
-export function azureDevOpsRepositoryNameWithOwner(
+function azureDevOpsRepositoryNameWithOwner(
   repository: AzureDevOpsRepositoryReference | null | undefined,
 ): string | null {
   const project = trimOptionalString(repository?.project?.name);

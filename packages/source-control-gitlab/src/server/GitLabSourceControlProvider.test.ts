@@ -147,7 +147,7 @@ it.effect("passes the target repository from remote context to GitLab MR reads",
     });
     const context = {
       provider: {
-        kind: "gitlab",
+        kind: SourceControlProviderKind.make("gitlab"),
         name: "GitLab",
         baseUrl: "https://gitlab.com",
       },
