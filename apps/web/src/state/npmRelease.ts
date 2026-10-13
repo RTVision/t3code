@@ -16,14 +16,17 @@ export const npmReleasePublished = (version: string) =>
     return typeof body === "object" && body !== null && "version" in body
       ? body.version === version
       : false;
-  });
+  }).pipe(
+    // Tracing headers trigger an unnecessary browser CORS preflight.
+    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+  );
 
 /**
  * Whether `@rtvision/t3@<version>` is published on npm. A 404 is false; network and
  * registry errors stay unknown. Both re-check every few minutes, so a release
  * that lands later shows up without a reload.
  */
-const npmReleasePublishedAtom = Atom.family((version: string) =>
+export const npmReleasePublishedAtom = Atom.family((version: string) =>
   Atom.make(npmReleasePublished(version).pipe(Effect.provide(FetchHttpClient.layer))).pipe(
     Atom.withRefresh("5 minutes"),
     Atom.keepAlive,

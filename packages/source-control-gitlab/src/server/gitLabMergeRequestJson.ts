@@ -71,6 +71,8 @@ const RawMergeRequestSchema = Schema.Struct({
   target_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
   source_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   target_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
+  /** The source branch's head commit. */
+  sha: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
@@ -262,6 +264,8 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
    * it: an install too old to answer must not be read as saying the branch is current.
    */
   readonly divergedCommits?: number;
+  /** Absent where GitLab did not report the head commit. */
+  readonly headSha?: string;
 }
 
 function trimmed(value: string | null | undefined): string | null {
@@ -420,6 +424,7 @@ function toDetail(
   repository?: string,
 ): GitLabMergeRequestDetail {
   const listItem = toListItem(raw, repository);
+  const headSha = trimmed(raw.sha);
   const autoMerge =
     raw.merge_when_pipeline_succeeds == null && raw.auto_merge_enabled == null
       ? undefined
@@ -445,6 +450,7 @@ function toDetail(
       ? { autoMergeMethod: "squash" as const }
       : {}),
     ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
+    ...(headSha === null ? {} : { headSha }),
   };
 }
 
