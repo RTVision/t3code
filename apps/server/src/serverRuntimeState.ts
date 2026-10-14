@@ -19,6 +19,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
   launcherPid: Schema.optional(Schema.Int),
+  ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
@@ -57,57 +58,47 @@ export const persistServiceRuntimeState = (input: {
     );
   });
 
-/** Publish discovery for this server and retain daemon ownership only during handoff. */
-export const acquireServerRuntimeState = Effect.fn("server.acquireRuntimeState")(function* (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "baseDir" | "serverRuntimeStatePath">;
-  readonly state: PersistedServerRuntimeState;
-}) {
-  const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
-  yield* Effect.acquireRelease(
-    Effect.gen(function* () {
-      if (launcher.managed) {
-        yield* persistServiceRuntimeState({
-          baseDir: input.config.baseDir,
-          state: input.state,
-          launcherPid: process.ppid,
-        });
-      }
-      yield* persistServerRuntimeState({
-        path: input.config.serverRuntimeStatePath,
-        state: input.state,
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to persist server runtime state", { cause }),
-        ),
-      );
-    }),
-    () =>
+/** Retain service discovery during handoff; shared discovery belongs to ServerOwnership. */
+export const acquireServiceRuntimeState = Effect.fn("server.acquireServiceRuntimeState")(
+  function* (input: {
+    readonly config: Pick<ServerConfig.ServerConfig["Service"], "baseDir">;
+    readonly state: PersistedServerRuntimeState;
+  }) {
+    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    yield* Effect.acquireRelease(
       Effect.gen(function* () {
-        yield* clearPersistedServerRuntimeState(
-          input.config.serverRuntimeStatePath,
-          input.state.pid,
-        );
-        if (!launcher.managed) return;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const runtimeDir = path.join(input.config.baseDir, "runtime");
-        const service = yield* fs.readFileString(path.join(runtimeDir, SERVICE_STATE_FILE)).pipe(
-          Effect.map(parseServiceState),
-          Effect.orElseSucceed(() => undefined),
-        );
-        const stopping = yield* fs.exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE));
-        if (service?.update?.status === "pending" && !stopping) return;
-        yield* clearPersistedServerRuntimeState(
-          yield* serviceRuntimeStatePath(input.config.baseDir),
-          input.state.pid,
-        );
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to clear server runtime state", { cause }),
+        if (launcher.managed) {
+          yield* persistServiceRuntimeState({
+            baseDir: input.config.baseDir,
+            state: input.state,
+            launcherPid: process.ppid,
+          });
+        }
+      }),
+      () =>
+        Effect.gen(function* () {
+          if (!launcher.managed) return;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const runtimeDir = path.join(input.config.baseDir, "runtime");
+          const service = yield* fs.readFileString(path.join(runtimeDir, SERVICE_STATE_FILE)).pipe(
+            Effect.map(parseServiceState),
+            Effect.orElseSucceed(() => undefined),
+          );
+          const stopping = yield* fs.exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE));
+          if (service?.update?.status === "pending" && !stopping) return;
+          yield* clearPersistedServerRuntimeState(
+            yield* serviceRuntimeStatePath(input.config.baseDir),
+            input.state.pid,
+          );
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to clear server runtime state", { cause }),
+          ),
         ),
-      ),
-  );
-});
+    );
+  },
+);
 
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
@@ -205,6 +196,7 @@ export const clearPersistedServerRuntimeState = (path: string, expectedPid?: num
  * alive.
  */
 export const isProcessAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;

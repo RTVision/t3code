@@ -102,7 +102,7 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
     );
   }
   const crypto = yield* Crypto.Crypto;
-  const runtimeDirectory = `/tmp/t3code-ssh-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
+  const runtimeDirectory = `/tmp/t3code-ssh-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
   const scope = yield* Scope.Scope;
   // Killing wsl.exe does not guarantee termination of the distro-side ssh.
   yield* Scope.addFinalizer(

@@ -366,7 +366,14 @@ export const OpenInPicker = memo(function OpenInPicker({
               density={density}
               disabled={!openInCwd || !canOpenGui}
               key={value}
-              onClick={() => openInEditor({ kind: "gui", editor: value }, true)}
+              onClick={() => {
+                const choice = { kind: "gui", editor: value } as const;
+                if (presentation === "menu") {
+                  void openInEditor(choice, true);
+                } else {
+                  dispatch.select(choice);
+                }
+              }}
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>
