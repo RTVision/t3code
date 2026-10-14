@@ -11,7 +11,11 @@ import * as Schema from "effect/Schema";
 
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
+import * as ProcessRunner from "./processRunner.ts";
+import * as ServerOwnership from "./serverOwnership.ts";
 import * as ServerRuntimeState from "./serverRuntimeState.ts";
+
+const runtimeTestLayer = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -27,6 +31,103 @@ interface CapturedLog {
   readonly message: unknown;
   readonly annotations: Readonly<Record<string, unknown>>;
 }
+
+describe("server ownership", () => {
+  const layerOwnership = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+  const makeState = ServerRuntimeState.makePersistedServerRuntimeState({
+    config: { host: undefined, devUrl: undefined },
+    port: 3773,
+  });
+
+  it.effect("lets only one of two racing starts own a state directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-race-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const attempts = yield* Effect.all(
+        [
+          ServerOwnership.acquireServerOwnership(statePath).pipe(Effect.result),
+          ServerOwnership.acquireServerOwnership(statePath).pipe(Effect.result),
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.equal(attempts.filter((result) => result._tag === "Success").length, 1);
+      const refused = attempts.find((result) => result._tag === "Failure");
+      assert.equal(refused?.failure._tag, "ServerAlreadyRunningError");
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
+  it.effect("refuses a second owner without touching its record, then allows a restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* makeState;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const owner = yield* ServerOwnership.acquireServerOwnership(statePath);
+          yield* owner.publish(state);
+          const before = yield* fs.readFileString(statePath);
+          const refused = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.flip,
+          );
+          assert.equal(refused._tag, "ServerAlreadyRunningError");
+          assert.equal(yield* fs.readFileString(statePath), before);
+        }),
+      );
+      assert.isFalse(yield* fs.exists(statePath));
+      yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
+  it.effect("refuses beside a live pre-lock server and ignores a stale record", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-legacy-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* makeState;
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        // @effect-diagnostics-next-line globalDateInEffect:off - Legacy identity uses the real process start time, not TestClock.
+        state: { ...state, startedAt: new Date().toISOString() },
+      });
+      const refused = yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath)).pipe(
+        Effect.flip,
+      );
+      assert.equal(refused._tag, "ServerAlreadyRunningError");
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        state: { ...state, pid: 0 },
+      });
+      yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
+  it.effect("never removes a runtime record another server published", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-cleanup-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* makeState;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const owner = yield* ServerOwnership.acquireServerOwnership(statePath);
+          yield* owner.publish(state);
+          yield* ServerRuntimeState.persistServerRuntimeState({
+            path: statePath,
+            state: { ...state, ownerId: "other-owner" },
+          });
+        }),
+      );
+      const remaining = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
+      assert.equal(Option.getOrThrow(remaining).ownerId, "other-owner");
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+});
 
 describe("serverRuntimeState", () => {
   it.effect("persists and reads the runtime state", () =>
@@ -51,7 +152,7 @@ describe("serverRuntimeState", () => {
       const restored = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
 
       assert.deepEqual(Option.getOrThrow(restored), state);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(runtimeTestLayer)),
   );
 
   it.effect("keeps daemon discovery when another server overwrites and clears shared state", () =>
@@ -83,7 +184,7 @@ describe("serverRuntimeState", () => {
         yield* ServerRuntimeState.serviceRuntimeStatePath(baseDir),
       );
       assert.equal(Option.getOrThrow(restarted).port, 15358);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(runtimeTestLayer)),
   );
 
   it.effect(
@@ -107,15 +208,16 @@ describe("serverRuntimeState", () => {
         });
         const sharedPath = path.join(baseDir, "userdata", "server-runtime.json");
         yield* Effect.gen(function* () {
-          yield* ServerRuntimeState.acquireServerRuntimeState({
-            config: { baseDir, serverRuntimeStatePath: sharedPath },
+          const ownership = yield* ServerOwnership.acquireServerOwnership(sharedPath);
+          yield* ownership.publish(state);
+          yield* ServerRuntimeState.acquireServiceRuntimeState({
+            config: { baseDir },
             state,
           });
-          assert.deepEqual(
-            Option.getOrThrow(
-              yield* ServerRuntimeState.readPersistedServerRuntimeState(sharedPath),
-            ),
-            state,
+          assert.equal(
+            Option.getOrThrow(yield* ServerRuntimeState.readPersistedServerRuntimeState(sharedPath))
+              .port,
+            state.port,
           );
           assert.equal(logs[0]?.message, "Failed to persist service runtime state");
         }).pipe(
@@ -125,7 +227,7 @@ describe("serverRuntimeState", () => {
         assert.isFalse(yield* fs.exists(sharedPath));
       }).pipe(
         Effect.provide(
-          Layer.merge(NodeServices.layer, Logger.layer([logger], { mergeWithExisting: false })),
+          Layer.mergeAll(runtimeTestLayer, Logger.layer([logger], { mergeWithExisting: false })),
         ),
       );
     },
@@ -145,8 +247,10 @@ describe("serverRuntimeState", () => {
           port: 15357,
         });
         yield* Effect.gen(function* () {
-          yield* ServerRuntimeState.acquireServerRuntimeState({
-            config: { baseDir, serverRuntimeStatePath: sharedPath },
+          const ownership = yield* ServerOwnership.acquireServerOwnership(sharedPath);
+          yield* ownership.publish(state);
+          yield* ServerRuntimeState.acquireServiceRuntimeState({
+            config: { baseDir },
             state,
           });
           assert.isTrue(yield* fs.exists(servicePath));
@@ -171,7 +275,7 @@ describe("serverRuntimeState", () => {
           if (mode === "new-owner") {
             yield* ServerRuntimeState.persistServerRuntimeState({
               path: sharedPath,
-              state: { ...state, pid: state.pid + 1 },
+              state: { ...state, pid: state.pid + 1, ownerId: "new-owner" },
             });
             yield* ServerRuntimeState.persistServiceRuntimeState({
               baseDir,
@@ -185,7 +289,7 @@ describe("serverRuntimeState", () => {
         );
         assert.equal(yield* fs.exists(servicePath), mode === "handoff" || mode === "new-owner");
         assert.equal(yield* fs.exists(sharedPath), mode === "new-owner");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(runtimeTestLayer)),
   );
 
   it.effect("records the dev web URL when the server fronts a dev server", () =>
@@ -238,7 +342,7 @@ describe("serverRuntimeState", () => {
       );
 
       assert.isTrue(Option.isNone(restored));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(runtimeTestLayer)),
   );
 
   it.effect("preserves malformed state decode failures", () => {
@@ -273,7 +377,7 @@ describe("serverRuntimeState", () => {
       }
     }).pipe(
       Effect.provide(
-        Layer.merge(NodeServices.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        Layer.mergeAll(runtimeTestLayer, Logger.layer([logger], { mergeWithExisting: false })),
       ),
     );
   });
@@ -310,7 +414,7 @@ describe("serverRuntimeState", () => {
       }
     }).pipe(
       Effect.provide(
-        Layer.merge(NodeServices.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        Layer.mergeAll(runtimeTestLayer, Logger.layer([logger], { mergeWithExisting: false })),
       ),
     );
   });
@@ -344,6 +448,6 @@ describe("serverRuntimeState", () => {
         assert.equal(error.message, `Failed to persist server runtime state at ${statePath}.`);
         assert.deepInclude(error.cause, { _tag: "PlatformError" });
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(runtimeTestLayer)),
   );
 });

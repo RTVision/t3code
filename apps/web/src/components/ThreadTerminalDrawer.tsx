@@ -1734,7 +1734,7 @@ export default function ThreadTerminalDrawer({
                         if (terminalId !== resolvedActiveTerminalId)
                           onActiveTerminalChange(terminalId);
                       }}
-                      onMouseDown={() => {
+                      onPointerDown={() => {
                         if (terminalId !== resolvedActiveTerminalId) {
                           onActiveTerminalChange(terminalId);
                         }
