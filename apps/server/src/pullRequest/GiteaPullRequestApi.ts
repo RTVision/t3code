@@ -2250,6 +2250,14 @@ export const make = Effect.gen(function* () {
           return approveWorkflows(input);
         case "revert":
           return revertPullRequest(input);
+        case "delete-branch":
+          return Effect.fail(
+            new GiteaPullRequestApiError({
+              operation: "runAction",
+              reason: "failed",
+              detail: "Gitea does not support deleting a pull request's source branch here.",
+            }),
+          );
       }
     },
     getViewedFiles: Effect.fn("GiteaPullRequestApi.getViewedFiles")(function* (input) {

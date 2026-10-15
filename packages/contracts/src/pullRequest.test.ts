@@ -238,6 +238,16 @@ describe("leaving a merge for the host to make once it is ready", () => {
 });
 
 describe("reverting a merged pull request", () => {
+  it("carries a standalone branch deletion action", () => {
+    expect(
+      decodeAction({
+        projectId: "project-1",
+        repository: "acme/web",
+        number: 7,
+        action: "delete-branch",
+      }).action,
+    ).toBe("delete-branch");
+  });
   it("carries the revert action without merge options", () => {
     const action = decodeAction({
       projectId: "project-1",
@@ -275,6 +285,11 @@ describe("PullRequestCapabilities", () => {
     review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
     reviewers: { request: true, listCandidates: true },
   };
+
+  it("only offers branch deletion when the server advertises it", () => {
+    expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
+    expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
+  });
 
   it("decodes a server that says nothing about reactions as a server with none", () => {
     expect(decodeCapabilities(base).reactions).toBeUndefined();
