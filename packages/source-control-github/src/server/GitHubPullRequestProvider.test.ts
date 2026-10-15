@@ -37,6 +37,7 @@ it.effect("dependency listings do not spend host requests loading actor avatars"
   }),
 );
 const coreFields = {
+  reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
   viewerAccess: {
@@ -83,6 +84,48 @@ it.effect("maps credential verification failures without relabeling operation fa
     verificationFails = false;
     expect(yield* verify(input, operation).pipe(Effect.flip)).toBe("operation-failed");
     expect(operations).toBe(1);
+  }),
+);
+
+it.effect("advertises standalone branch deletion for source repository writers", () =>
+  Effect.gen(function* () {
+    let action: string | undefined;
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          runPullRequestAction: (input) =>
+            Effect.sync(() => {
+              action = input.action;
+            }),
+        }),
+      ),
+    );
+    expect(provider.capabilities.deleteBranch).toBe(true);
+    expect(provider.capabilities.actions).toContain("delete-branch");
+    yield* provider.runAction({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+      action: "delete-branch",
+    });
+    expect(action).toBe("delete-branch");
+    const access = {
+      canWrite: false,
+      canTriage: false,
+      canUpdate: false,
+      didAuthor: false,
+      canDeleteBranch: true,
+    };
+    expect(gitHubViewerPermissions(access).actions).toContain("delete-branch");
+    expect(
+      gitHubViewerPermissions({
+        ...access,
+        canWrite: true,
+        didAuthor: true,
+        canDeleteBranch: false,
+      }).actions,
+    ).not.toContain("delete-branch");
   }),
 );
 
@@ -241,6 +284,7 @@ describe("gitHubViewerPermissions", () => {
     expect(
       gitHubViewerPermissions({
         canWrite: true,
+        canDeleteBranch: true,
         canTriage: true,
         canUpdate: true,
         didAuthor: false,
@@ -248,6 +292,7 @@ describe("gitHubViewerPermissions", () => {
     ).toEqual({
       // Arming a merge for later is the merge, so it travels with it.
       actions: [
+        "delete-branch",
         "merge",
         "enable-auto-merge",
         "disable-auto-merge",

@@ -570,6 +570,24 @@ layer("GiteaPullRequestApi", (it) => {
       expect(callAt(1).path).toContain("/timeline?");
     }),
   );
+  it.effect("refuses branch deletion without making a Gitea request", () =>
+    Effect.gen(function* () {
+      const api = yield* GiteaPullRequestApi.make;
+      const error = yield* api
+        .runAction({
+          host: "forge.example.test",
+          repository: "acme/web",
+          number: 7,
+          action: "delete-branch",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toBe(
+        "Gitea does not support deleting a pull request's source branch here.",
+      );
+      expect(mockedRequest).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("opens a native revert PR only on an advertising Gitea server", () =>
     Effect.gen(function* () {
       mockedRequest
