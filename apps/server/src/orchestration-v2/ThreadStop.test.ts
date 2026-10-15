@@ -391,6 +391,89 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a held queue only holds messages queued behind a turn Stop reached", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:held-queue-fresh");
+    yield* createWatchingThread(threadId, 13);
+    yield* send(threadId, "work", "start_immediately");
+    const now = yield* DateTime.now;
+    const run = { ...(yield* orchestrator.getThreadProjection(threadId)).runs[0]!, startedAt: now };
+    yield* projections.apply({
+      id: EventId.make("event:held-queue-fresh:running"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "running" },
+    });
+    // An earlier failure held this message for the user to resume.
+    yield* send(threadId, "old", "queue_after_active");
+    const old = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+    yield* projections.apply({
+      id: EventId.make("event:held-queue-fresh:held"),
+      type: "run.updated",
+      threadId,
+      runId: old.id,
+      occurredAt: now,
+      payload: { ...old, queueHeld: true },
+    });
+
+    // A message queued behind the healthy turn does not join the old hold.
+    yield* send(threadId, "fresh", "queue_after_active");
+    assert.deepEqual((yield* threadState(threadId)).runs, ["running", "queued:held", "queued"]);
+
+    // Once Stop reaches the turn, messages queued behind it wait with the hold.
+    yield* projections.apply({
+      id: EventId.make("event:held-queue-fresh:interrupt-request"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("turn-item:held-queue-fresh:interrupt-request"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId: run.providerThreadId!,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1_000,
+        status: "completed",
+        title: "Interrupt requested",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "run_interrupt_request",
+        message: "Stop",
+      },
+    });
+    yield* send(threadId, "after stop", "queue_after_active");
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "running",
+      "queued:held",
+      "queued",
+      "queued:held",
+    ]);
+
+    // When the turn ends, the unheld message starts past the held ones.
+    yield* projections.apply({
+      id: EventId.make("event:held-queue-fresh:interrupted"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "interrupted", completedAt: now },
+    });
+    yield* orchestrator.resumeQueuedRuns;
+    const runs = (yield* threadState(threadId)).runs;
+    assert.deepEqual([runs[0], runs[1], runs[3]], ["interrupted", "queued:held", "queued:held"]);
+    assert.notInclude(["queued", "queued:held"], runs[2]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("thread.stop keeps a restart continuation of the stopped run from starting", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

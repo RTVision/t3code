@@ -619,10 +619,11 @@ function delegatedTaskTerminalStatus(
   }
 }
 
+/** Held runs wait for the user to resume them; later unheld runs go past them. */
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
 function latestStableRun(
@@ -1303,8 +1304,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runs.some(isBlockingRun) ||
-        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        projection.runs.some(isBlockingRun)
       ) {
         return;
       }
@@ -5048,6 +5048,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
+        // A message queued behind a turn that Stop reached joins the queue Stop
+        // held. Behind a healthy turn it goes out when that turn ends, even
+        // while older messages stay held for the user to resume.
+        const holdQueuedRun =
+          worktreeMissingRun !== undefined ||
+          (projection.runs.some(
+            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+          ) &&
+            (yield* stopReachedRun(command, command.threadId, queueBehindRun.id)));
         const checkpointScope =
           queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
             ? null
@@ -5086,12 +5095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: "queued",
-          ...(worktreeMissingRun !== undefined ||
-          projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-          )
-            ? { queueHeld: true }
-            : {}),
+          ...(holdQueuedRun ? { queueHeld: true } : {}),
           queuePosition:
             Math.max(
               0,
