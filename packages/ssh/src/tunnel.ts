@@ -762,6 +762,12 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   if server_running "$ADOPTED_PID"; then
     :
   elif [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    # Only a server adopted during this launch can be known to have exited.
+    # A remembered external server or a daemon still owns its home.
+    if [ -z "$ADOPTED_PID" ] || [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      printf 'The external T3 server is unavailable. Retry after it has restarted.\\n' >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
