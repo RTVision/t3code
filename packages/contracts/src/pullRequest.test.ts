@@ -286,6 +286,11 @@ describe("PullRequestCapabilities", () => {
     reviewers: { request: true, listCandidates: true },
   };
 
+  it("only offers branch deletion when the server advertises it", () => {
+    expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
+    expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
+  });
+
   it("decodes a server that says nothing about reactions as a server with none", () => {
     expect(decodeCapabilities(base).reactions).toBeUndefined();
     expect(decodeCapabilities(base).dependencies).toBeUndefined();
@@ -351,11 +356,6 @@ describe("PullRequestDependencyContext", () => {
       native: { status: "present", id: "STACK_1", members: [1, 2], coverage: "complete" },
     };
     expect(Schema.decodeUnknownSync(codec)(legacy)).toEqual(value);
-  });
-
-  it("only offers branch deletion when the server advertises it", () => {
-    expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
-    expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
   });
 });
 
