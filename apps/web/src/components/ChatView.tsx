@@ -6603,7 +6603,7 @@ export default function ChatView(props: ChatViewProps) {
             (!vimEnabled() || getVimMode() === "insert") &&
             shouldRefocusComposerOnWindowFocus(document.activeElement)
           )
-            focusComposer();
+            focusComposerStable();
         });
       });
     };
