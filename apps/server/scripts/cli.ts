@@ -34,7 +34,6 @@ import {
   ServerCliPublishIconSourceMissingError,
   ServerCliPublishIconTargetMissingError,
 } from "./cliErrors.ts";
-import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 
 interface PackageJson {
   name: string;
@@ -145,10 +144,6 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
 
-// ---------------------------------------------------------------------------
-// build subcommand
-// ---------------------------------------------------------------------------
-
 const buildCmd = Command.make(
   "build",
   {
@@ -239,10 +234,6 @@ const buildExeCmd = Command.make(
   ),
 );
 
-// ---------------------------------------------------------------------------
-// publish subcommand
-// ---------------------------------------------------------------------------
-
 interface PublishCommandConfig {
   readonly access: string;
   readonly tag: string;
@@ -272,7 +263,7 @@ const publishCmd = Command.make(
   "publish",
   {
     packagesDir: Flag.String("packages-dir").pipe(
-      Flag.withDescription("Output dir of scripts/build-npm-platform-packages.ts."),
+      Flag.withDescription("Output dir of scripts/build-npm-launcher.ts."),
       Flag.optional,
     ),
     tag: Flag.String("tag").pipe(Flag.withDefault("latest")),
@@ -293,41 +284,22 @@ const publishCmd = Command.make(
       if (Option.isSome(config.packagesDir)) {
         // Tarball paths stay absolute because npm runs from the packages directory.
         const packagesDir = path.resolve(config.packagesDir.value);
-        const scopeDir = path.join(packagesDir, "@t3code");
-        const launcherTarball = path.join(packagesDir, "t3.tgz");
-        const platformTarballs = (yield* fs
-          .readDirectory(scopeDir)
-          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-          .filter((entry) => entry.startsWith("t3-") && entry.endsWith(".tgz"))
-          .sort()
-          .map((entry) => path.join(scopeDir, entry));
-        if (platformTarballs.length === 0) {
-          return yield* new ServerCliBuildAssetMissingError({
-            assetPath: path.join(scopeDir, "t3-<platform>.tgz"),
-          });
+        const tarball = path.join(packagesDir, "t3.tgz");
+        if (!(yield* fs.exists(tarball))) {
+          return yield* new ServerCliBuildAssetMissingError({ assetPath: tarball });
         }
-        if (!(yield* fs.exists(launcherTarball))) {
-          return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
-        }
-
         const args = ["publish", "--access", config.access, "--tag", config.tag];
         if (config.provenance) args.push("--provenance");
         if (config.dryRun) args.push("--dry-run");
-
-        const publish = Effect.fn("publish")(function* (tarball: string) {
-          const spawnCommand = yield* resolveSpawnCommand("npm", [...args, tarball]);
-          yield* Effect.log(`[cli] npm ${args.join(" ")} ${path.basename(tarball)}`);
-          yield* runCommand(
-            ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-              cwd: packagesDir,
-              stdout: config.verbose ? "inherit" : "ignore",
-              stderr: "inherit",
-              shell: spawnCommand.shell,
-            }),
-          );
-        });
-
-        return yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
+        const spawnCommand = yield* resolveSpawnCommand("npm", [...args, tarball]);
+        return yield* runCommand(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: packagesDir,
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: spawnCommand.shell,
+          }),
+        );
       }
 
       const repoRoot = yield* RepoRoot;
@@ -430,10 +402,6 @@ const publishCmd = Command.make(
     "Publish the server package, or publish platform tarballs and their launcher with --packages-dir.",
   ),
 );
-
-// ---------------------------------------------------------------------------
-// root command
-// ---------------------------------------------------------------------------
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),

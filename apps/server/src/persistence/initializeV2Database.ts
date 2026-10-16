@@ -62,7 +62,7 @@ export class V2DatabaseImportError extends Schema.TaggedError<V2DatabaseImportEr
 }
 const isV2DatabaseImportError = Schema.is(V2DatabaseImportError);
 
-/** Seed V2 once. Its copied legacy tables remain the source for lazy transcript import. */
+/** Its copied legacy tables remain the source for lazy transcript import. */
 export const initializeV2Database = Effect.fn("initializeV2Database")(function* (
   destinationPath: string,
   baseDir?: string,

@@ -1,3 +1,4 @@
+import * as Dialog from "../../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -8,9 +9,9 @@ import type {
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { pullRequestCiEnvironment } from "../../../state/pull-request-ci";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -40,7 +41,7 @@ function Action({
 
 function open(url: string) {
   void tryOpenExternalUrl(url, "pull-request").then((opened) => {
-    if (!opened) Alert.alert("Unable to open CI details");
+    if (!opened) Dialog.alert("Unable to open CI details");
   });
 }
 
@@ -117,7 +118,7 @@ function Run({
     const result = await rerun({ environmentId, input: { ...input, target } });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      Alert.alert(
+      Dialog.alert(
         "Unable to rerun CI",
         error instanceof Error ? error.message : "The host refused the rerun.",
       );

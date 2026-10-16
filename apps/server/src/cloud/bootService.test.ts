@@ -48,7 +48,6 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   expect(
     BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
   ).toBe("/home/theo/.t3");
-  // Spaces and specifiers are quoted and escaped on the way in.
   expect(
     BootService.bootServiceBaseDirOf(
       BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
@@ -176,6 +175,8 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
+      // A stop that fails (a timeout, say) has still stopped the service.
+      if (command === "systemctl --user stop t3code.service") control.active = false;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -197,7 +198,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
               : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
-          failed || (input.args[1] === "is-active" && !control.active) ? 1 : 0,
+          failed ||
+            (input.args[1] === "is-active" && !control.active) ||
+            (input.args[1] === "is-enabled" && !control.enabled)
+            ? 1
+            : 0,
         ),
         timedOut: false,
         stdoutTruncated: false,
@@ -542,8 +547,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
         ),
       ).toEqual([]);
-      // The files say 1.2.4 but the process is still 1.2.3: not current, and
-      // the reason is named so `t3 service status` can point at restart.
       const status = yield* newer.status;
       expect(status.current).toBe(false);
       expect(status.problems).toContain("restart-pending");
@@ -561,8 +564,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       yield* service.install();
       const newer = yield* makeService(undefined, "1.2.4");
-      // A non-empty directory in the unit's place: it still counts as an
-      // installed unit, and the rename that writes the new unit fails.
       const unitPath = (yield* service.status).unitPath;
       yield* fs.remove(unitPath);
       yield* fs.makeDirectory(unitPath);
@@ -596,6 +597,73 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const error = yield* service.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceUpdatePendingError");
       expect(yield* fs.readFileString(statePath)).toBe(pendingState);
+    }),
+  );
+
+  it.effect("pauses only this home's running service for maintenance, even when it fails", () =>
+    Effect.gen(function* () {
+      const { service, commands, control, makeService } = yield* makeHarness();
+      yield* service.install();
+      const failure = yield* service
+        .withStopped(
+          Effect.suspend(() => Effect.fail(control.active ? "running" : "repair failed")),
+        )
+        .pipe(Effect.flip);
+      expect(failure).toBe("repair failed");
+      expect(control.active).toBe(true);
+
+      // A failed stop skips the operation but still starts the service again.
+      control.failCommand = "systemctl --user stop t3code.service";
+      let ran = false;
+      const stopFailure = yield* service
+        .withStopped(
+          Effect.sync(() => {
+            ran = true;
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(stopFailure).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "stopping the installed service",
+      });
+      expect(ran).toBe(false);
+      expect(control.active).toBe(true);
+      control.failCommand = undefined;
+
+      // An enabled unit that is not active (crash-looping in auto-restart, say)
+      // is still stopped for the repair and started again afterwards.
+      control.active = false;
+      commands.length = 0;
+      yield* service.withStopped(Effect.sync(() => commands.push("repair")));
+      expect(commands).toEqual([
+        "systemctl --user is-enabled t3code.service",
+        "systemctl --user is-active t3code.service",
+        "systemctl --user stop t3code.service",
+        "repair",
+        "systemctl --user restart t3code.service",
+      ]);
+      expect(control.active).toBe(true);
+      // A running unit the user disabled is started again but stays disabled.
+      control.enabled = false;
+      yield* service.withStopped(Effect.void);
+      expect(control).toMatchObject({ active: true, enabled: false });
+      // A unit that was neither enabled nor active stays stopped.
+      control.active = false;
+      control.enabled = false;
+      commands.length = 0;
+      yield* service.withStopped(Effect.sync(() => commands.push("repair")));
+      expect(commands).toContain("systemctl --user stop t3code.service");
+      expect(commands).not.toContain("systemctl --user restart t3code.service");
+      expect(control.active).toBe(false);
+      control.enabled = true;
+      control.active = true;
+
+      const fs = yield* FileSystem.FileSystem;
+      const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-doctor-other-" });
+      const other = yield* makeService(undefined, "1.2.3", otherHome);
+      commands.length = 0;
+      expect(yield* other.withStopped(Effect.sync(() => control.active))).toBe(true);
+      expect(commands).toEqual([]);
     }),
   );
 

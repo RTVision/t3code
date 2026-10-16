@@ -23,7 +23,6 @@ const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
-/** Settings keep `enabled` explicit; a host the test leaves it off is enabled. */
 const hostSettings = (
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
 ) =>
@@ -241,7 +240,6 @@ process.stdout.write(ambient || stored[host]?.[account] || "");
 
       yield* settings.update({ sourceControlHosts: { github: { hosts: {} } } });
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
-      // The unpinned token stayed cached; only the newly pinned account cost a gh call.
       expect(calls).toHaveLength(2);
     }).pipe(Effect.provide(layer));
   });

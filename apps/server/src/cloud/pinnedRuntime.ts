@@ -42,7 +42,6 @@ const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
 
 export interface PinnedRuntimePaths {
   readonly versionDir: string;
-  /** The executable. Its existence is what marks a runtime as present. */
   readonly entryPath: string;
   readonly sentinelPath: string;
 }
@@ -116,12 +115,9 @@ export type PinnedRuntimeProgress =
   | { readonly stage: "verify" | "extract" | "validate" | "cached" };
 
 /**
- * Installs the t3 release archive for `version` into the pinned runtime
- * directory unless a complete install is already there, and returns its
- * paths. The sentinel is written only after extraction and validation
- * succeed; checking the entry file alone is not enough, since tar writes the
- * executable before the last native package and a killed install leaves a
- * plausible-looking but broken tree behind.
+ * The sentinel is written only after extraction and validation succeed; checking the entry file
+ * alone is not enough, since tar writes the executable before the last native package and a
+ * killed install leaves a plausible-looking but broken tree behind.
  */
 
 interface PinnedRuntimeInstallInput {
@@ -168,7 +164,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           ),
           Stream.runCollect,
         );
-        // A completed chunked response finally gives us its total size.
         if (total === undefined && received > 0) {
           onProgress({ stage: "download", received, total: received });
         }
@@ -189,12 +184,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   );
 });
 
-/**
- * Downloads the release archive for this platform, verifies it against the
- * release's checksum file, and unpacks it so the executable sits directly in
- * the staging directory. Only `tar` is required on the host; every supported
- * OS ships one that reads gzip and zip.
- */
 const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
   input: PinnedRuntimeInstallInput,
   stagingDir: string,

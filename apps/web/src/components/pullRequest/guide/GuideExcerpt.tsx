@@ -44,8 +44,6 @@ import {
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
-// Long lines scroll inside the excerpt. The renderer only shows its scrollbar on hover, which
-// reads as code cut off at the edge, so the excerpt keeps it visible.
 const EXCERPT_UNSAFE_CSS = `${DIFF_VIEW_UNSAFE_CSS}
 [data-code]::-webkit-scrollbar-thumb {
   background-color: var(--diffs-bg-context);
@@ -57,12 +55,7 @@ export interface ExcerptNoteMarker {
   readonly markers: ReadonlyArray<{ readonly marker: string; readonly title: string }>;
 }
 
-/**
- * What a reader can do with lines of an excerpt, the same two things the Code tab offers: queue a
- * comment for the review, or ask an agent about them. Null where neither is possible.
- */
 export interface ExcerptCommenting {
-  /** Whether a comment can be queued for the review; asking an agent needs no host support. */
   readonly canComment: boolean;
   readonly workspaceRoot: string;
   readonly environmentId: EnvironmentId;
@@ -76,7 +69,6 @@ export interface ExcerptCommenting {
     readonly body: string;
   }) => void;
   readonly onRemove: (commentId: string) => void;
-  /** Opens an agent thread about the lines; null where no thread can be opened. */
   readonly onAskAgent: ((comment: ReviewCommentContext, request: string) => void) | null;
 }
 
@@ -91,12 +83,6 @@ interface ExcerptDraft {
   readonly position: PullRequestReviewPosition;
 }
 
-/**
- * The lines of one excerpt, drawn by the same renderer as the Code tab from a patch cut down to
- * the excerpt's range, so line numbers, colors and highlighting match the full diff. The cut keeps
- * the file's real line numbers, so the bars above and below it load the code around the excerpt
- * from the file itself, as they do between hunks in the Code tab.
- */
 export function GuideExcerpt({
   excerpt,
   file,
@@ -107,12 +93,10 @@ export function GuideExcerpt({
   onOpenFile,
 }: {
   excerpt: PullRequestReviewGuideExcerpt;
-  /** The file's parsed diff, null while it loads or when the host withheld it. */
   file: FileDiffMetadata | null;
   loading: boolean;
   notes: ReadonlyArray<ExcerptNoteMarker>;
   commenting: ExcerptCommenting | null;
-  /** Loads the file's unchanged lines for the bars around the excerpt. */
   loadDiffFiles: FileDiffContentsLoader;
   onOpenFile: (path: string) => void;
 }) {
@@ -129,7 +113,6 @@ export function GuideExcerpt({
     );
     const fileDiff = parsed?.kind === "files" ? parsed.files[0] : undefined;
     if (fileDiff === undefined) return null;
-    // Lines the excerpt draws, by side, so only comments that land on one are placed in it.
     const drawn = {
       additions: new Set(shown.flatMap((row) => (row.newLine === null ? [] : [row.newLine]))),
       deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
@@ -160,7 +143,6 @@ export function GuideExcerpt({
     };
   }, [excerpt.end, excerpt.side, excerpt.start, loadDiffFiles, sliceRows]);
 
-  // Notes, queued comments and the draft share one annotation per line, as in the Code tab.
   const annotations = useMemo(() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
     const at = (side: "additions" | "deletions", line: number) => {
@@ -207,8 +189,6 @@ export function GuideExcerpt({
     return [...groups.values()];
   }, [commenting?.pending, draft, excerpt.path, excerpt.side, notes, slice]);
 
-  // Positions and the agent's copy of the lines come from the whole file's diff, so a comment
-  // lands where the Code tab would put it rather than on the excerpt's cut-down patch.
   const beginComment = useCallback(
     (range: SelectedLineRange | null) => {
       if (range === null || file === null) return;
@@ -244,12 +224,10 @@ export function GuideExcerpt({
       themeType: resolvedTheme,
       preferredHighlighter: PREFERRED_HIGHLIGHTER,
       unsafeCSS: EXCERPT_UNSAFE_CSS,
-      // Hover a line for the gutter button, or drag across line numbers, as in the Code tab.
       enableGutterUtility: interactive,
       enableLineSelection: interactive,
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
-      // Without a loader there is nothing to expand into, so the bars stay plain.
       ...(loadExcerptFiles === null
         ? { hunkSeparators: "simple" as const }
         : { loadDiffFiles: loadExcerptFiles }),
@@ -367,7 +345,6 @@ export function GuideExcerpt({
   );
 }
 
-/** A renamed file's comment carries its old path too, which hosts need to place it. */
 function previousPathOf(file: FileDiffMetadata, path: string): string | null {
   const previous = resolveFileDiffPreviousPath(file);
   return previous === path ? null : previous;

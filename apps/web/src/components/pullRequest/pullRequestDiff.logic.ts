@@ -2,8 +2,6 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
 
 /**
- * Whether a conversation's line is really in this file's hunks.
- *
  * A thread naming a file is not the same as a thread the diff can show: its line may have moved
  * out of the change, or sit in a hunk the host withheld. Pinning it anyway would put the remark
  * against whatever code now occupies that line number, and silently dropping it would lose the

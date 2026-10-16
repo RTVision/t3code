@@ -75,8 +75,6 @@ vi.mock("../state/session", async () => {
     scope !== AuthTerminalOperateScope &&
     (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
   return {
-    // Asset atoms read these at module scope; the markdown tests only exercise
-    // the task grant.
     environmentSession: {
       sessionStateAtom: () => ({}),
       preparedConnectionValueAtom: () => ({}),

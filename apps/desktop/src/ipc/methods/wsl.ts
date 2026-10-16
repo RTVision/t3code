@@ -35,8 +35,6 @@ const readWslState: Effect.Effect<
     wslOnly: settings.wslOnly,
     sshRunner: settings.sshRunner,
     distros,
-    // Only the dual-mode secondary records this; a wsl-only failure surfaces via
-    // a dialog + Windows fallback, so it stays null there.
     preflightError: settings.wslOnly ? null : Option.getOrNull(preflightError),
   };
 });
@@ -73,9 +71,7 @@ export const setWslBackendEnabled = makeIpcMethod({
       return state;
     }
     // Reconcile is idempotent and never fails; no need for a swap-style
-    // rollback when the WSL side has trouble coming up. With both
-    // backends running side by side, "WSL didn't start" is a transient
-    // state on one instance — the primary stays up either way.
+    // rollback when the WSL side has trouble coming up.
     yield* wslBackend.reconcile;
     return yield* readWslState;
   }),
