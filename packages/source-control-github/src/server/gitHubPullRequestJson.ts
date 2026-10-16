@@ -89,7 +89,10 @@ interface ListItemFields {
   readonly author?: (ActorFields & { readonly id?: string | null | undefined }) | null | undefined;
   readonly headRefName: string;
   readonly headRepository?:
-    | { readonly nameWithOwner?: string | null | undefined; readonly name?: string | null }
+    | {
+        readonly nameWithOwner?: string | null | undefined;
+        readonly name?: string | null | undefined;
+      }
     | null
     | undefined;
   readonly headRepositoryOwner?: { readonly login: string } | null | undefined;
