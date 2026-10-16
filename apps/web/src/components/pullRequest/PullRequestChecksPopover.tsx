@@ -30,9 +30,9 @@ import {
 } from "./pullRequestPresentation";
 
 /**
- * The checks behind the rollup, for a row that only carries the rollup. Mounted by the popup, so
- * the read starts when somebody opens it rather than once per row of a listing — the detail read
- * is a request per pull request, and a page of them at rest would be a hundred.
+ * Mounted by the popup, so the read starts when somebody opens it rather than once per row of a
+ * listing — the detail read is a request per pull request, and a page of them at rest would be a
+ * hundred.
  */
 function LazyChecksBody({
   environmentId,
@@ -89,8 +89,7 @@ function ChecksBody({
     <>
       <ScrollArea className="max-h-64">
         <ul className="flex flex-col gap-1">
-          {/* Keyed by position as well as by name: the host is the one that decides how many runs
-          share a name, and a repeated key is a rendering fault rather than a wrong list. */}
+          {}
           {visibleChecks.map((check, index) => (
             <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
               <PullRequestCheckStatusIcon status={check.status} />
@@ -162,7 +161,6 @@ export function PullRequestChecksPopover({
   stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
-  /** Thread the popover sits beside; a listing row has none. */
   threadRef?: ScopedThreadRef | null;
   variant?: "icon" | "count";
   className?: string;

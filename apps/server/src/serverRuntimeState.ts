@@ -17,7 +17,6 @@ import type * as ServerConfig from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
-  // Schema version of this file, not the server build. See `serverVersion`.
   version: Schema.Literal(1),
   pid: Schema.Int,
   launcherPid: Schema.optional(Schema.Int),
@@ -25,21 +24,10 @@ export const PersistedServerRuntimeState = Schema.Struct({
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
-  // Present when the server fronts a dev web server (VITE_DEV_SERVER_URL).
   // Dev is single-origin: browsers must pair through this URL, not `origin`.
   devUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
-  /**
-   * Set when the boot-service launcher supervises this server. Lets a CLI
-   * tell a service-managed server apart from one started by hand, which is
-   * the difference between "restart the service" and "stop your terminal".
-   */
   serviceManaged: Schema.optional(Schema.Boolean),
-  /**
-   * The server build that wrote this record. `t3 triage` reports it because
-   * the CLI that runs triage can be a different build. Missing on records
-   * written by older servers.
-   */
   serverVersion: Schema.optional(Schema.String),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -199,10 +187,8 @@ export const clearPersistedServerRuntimeState = (path: string, expectedPid?: num
   });
 
 /**
- * Report whether the pid recorded in a persisted runtime state is still
- * running. Signal 0 delivers nothing; it only reports whether the pid exists.
- * EPERM means it exists but belongs to another user, which still counts as
- * alive.
+ * Signal 0 delivers nothing; it only reports whether the pid exists. EPERM
+ * means it exists but belongs to another user, which still counts as alive.
  */
 export const isProcessAlive = (pid: number): boolean => {
   if (!Number.isInteger(pid) || pid <= 0) return false;

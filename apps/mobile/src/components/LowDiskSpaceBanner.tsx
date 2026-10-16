@@ -3,7 +3,7 @@ import type { ServerLowDiskSpace } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { cn } from "../lib/cn";
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 
 /** Shown above the composer while the environment's disk is nearly full. */
 export function LowDiskSpaceBanner(props: {

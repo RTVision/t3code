@@ -33,7 +33,6 @@ export function ElectronBrowserHost() {
     () =>
       Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
         const threadRef = parseScopedThreadKey(threadKey);
-        // Server tabs of other environments stream; this desktop's own server tabs render here.
         return threadRef
           ? Object.values(previewState.sessions)
               .filter(
@@ -114,8 +113,6 @@ export function ElectronBrowserHost() {
     });
   }, []);
 
-  // A `target="_blank"` link inside a hosted page opens as another tab of the
-  // same thread, so the page that held the link stays where it is.
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: true });
   const sessionByRuntimeTabId = useRef(new Map<string, (typeof sessions)[number]>());
   useEffect(() => {

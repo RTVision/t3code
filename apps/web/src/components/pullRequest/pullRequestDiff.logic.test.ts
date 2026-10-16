@@ -11,7 +11,6 @@ import {
   type DiffSliceState,
 } from "./pullRequestDiff.logic";
 
-/** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
   hunks: ReadonlyArray<{
     deletionStart: number;
@@ -35,7 +34,6 @@ describe("isLineInFileDiff", () => {
   });
 
   it("includes the first line of a hunk and excludes the one past its last", () => {
-    // The boundaries are where an off-by-one would quietly move a conversation between lists.
     expect(isLineInFileDiff(file, "right", 10)).toBe(true);
     expect(isLineInFileDiff(file, "right", 14)).toBe(true);
     expect(isLineInFileDiff(file, "right", 15)).toBe(false);
@@ -45,7 +43,6 @@ describe("isLineInFileDiff", () => {
   });
 
   it("keeps the two sides apart, since one line number means two lines", () => {
-    // The second hunk is a pure insertion: it deletes nothing, so nothing is on its left.
     expect(isLineInFileDiff(file, "right", 43)).toBe(true);
     expect(isLineInFileDiff(file, "left", 40)).toBe(false);
   });
