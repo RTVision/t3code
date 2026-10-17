@@ -724,7 +724,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
           "fetchRemoteTrackingBranch",
           { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
         ],
-        ["execute", ["branch", "feature/x", "refs/remotes/origin/feature/x"]],
+        ["execute", ["branch", "--", "feature/x", "refs/remotes/origin/feature/x"]],
         ["switchRef", { cwd: "/repo", refName: "feature/x" }],
         [
           "setBranchUpstream",
@@ -910,7 +910,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
           "fetchRemoteTrackingBranch",
           { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
         ],
-        ["execute", ["fetch", "--quiet", "--no-tags", "origin", "refs/pull/5/head"]],
+        ["execute", ["fetch", "--quiet", "--no-tags", "--", "origin", "refs/pull/5/head"]],
         ["switchRef", { cwd: "/repo", refName: "feature/x" }],
         ["execute", ["reset", "--hard", "--quiet", "abc123"]],
       ]);
@@ -1011,7 +1011,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
         force: true,
       });
       assert.deepStrictEqual(git, [
-        ["execute", ["fetch", "--quiet", "--no-tags", "origin", "refs/pull/5/head"]],
+        ["execute", ["fetch", "--quiet", "--no-tags", "--", "origin", "refs/pull/5/head"]],
         ["switchRef", { cwd: "/repo", refName: "feature/x" }],
         ["execute", ["reset", "--hard", "--quiet", "abc123"]],
       ]);

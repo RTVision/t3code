@@ -20,9 +20,8 @@ import {
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { Minimize2Icon } from "lucide-react";
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { APP_VERSION } from "~/branding";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
@@ -34,7 +33,6 @@ import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
-
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
 }) => {
@@ -43,13 +41,10 @@ const commandFailure = (result: {
     error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
   );
 };
-
-const MIN_URL_LIFE_MS = 5 * 60_000;
+const MIN_URL_LIFE_MS = 5 * 60000;
 const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
-
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
-
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -58,9 +53,8 @@ function saveBlob(blob: Blob, name: string) {
   link.click();
   // Long after the browser has read it: some start the download a task or
   // more after the click, and a revoked URL saves nothing.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
-
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -92,18 +86,14 @@ export function McpAppFrame(props: {
     });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Closing and reopening replaces the box.
   }, [closed]);
-
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: app.attachmentId,
-      fileName: mcpAppFileName(app),
-      mimeType: "text/html",
-      disposition: "inline" as const,
-      renderIntent: "mcp-app" as const,
-    }),
-    [app],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: app.attachmentId,
+    fileName: mcpAppFileName(app),
+    mimeType: "text/html",
+    disposition: "inline" as const,
+    renderIntent: "mcp-app" as const,
+  };
   const asset = useAssetUrlState(props.environmentId, resource);
   const refreshAsset = useAssetUrlRefresh(props.environmentId, resource);
   // The frame keeps its first URL: a re-minted one would reload the app. A
@@ -127,7 +117,6 @@ export function McpAppFrame(props: {
       () => setMintFailed(true),
     );
   }, [src, cachedUrl, cachedExpiresAt, refreshAsset]);
-
   const detail = useTurnItemDetail({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -135,13 +124,20 @@ export function McpAppFrame(props: {
     revision: props.revision,
   });
   const storedItem = detail.data?.item;
-  const toolCall = useMemo(() => {
-    if (storedItem?.type !== "dynamic_tool") return undefined;
-    const output = storedItem.output as { readonly result?: unknown } | undefined;
-    const result = output?.result as McpAppCallToolResult | undefined;
-    return { arguments: storedItem.input, result };
-  }, [storedItem]);
-
+  // The host gets the tool call pushed by an effect keyed on it, so it must stay cached.
+  const toolCall =
+    storedItem?.type === "dynamic_tool"
+      ? {
+          arguments: storedItem.input,
+          result: (
+            storedItem.output as
+              | {
+                  readonly result?: unknown;
+                }
+              | undefined
+          )?.result as McpAppCallToolResult | undefined,
+        }
+      : undefined;
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfo = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
   const readResource = useAtomCommand(mcpAppEnvironment.readResource, { reportFailure: false });
@@ -149,7 +145,6 @@ export function McpAppFrame(props: {
     reportFailure: false,
   });
   const [toolDefinition, setToolDefinition] = useState<unknown>(undefined);
-
   // Read by the host on every message, so it always sees current values
   // without being rebuilt (which would drop the app's session).
   const live = {
@@ -168,7 +163,6 @@ export function McpAppFrame(props: {
   useEffect(() => {
     latest.current = live;
   });
-
   useEffect(() => {
     const box = boxRef.current;
     if (box === null || !fullscreenSupported) return;
@@ -204,7 +198,6 @@ export function McpAppFrame(props: {
       window.removeEventListener("resize", onResize);
     };
   }, [displayMode]);
-
   useEffect(() => {
     let cancelled = false;
     void latest.current
@@ -235,7 +228,6 @@ export function McpAppFrame(props: {
       setNavigatedAway(true);
     }
   };
-
   useEffect(() => {
     if (src === null) return;
     const hostContext = (): McpAppHostContext => {
@@ -381,7 +373,13 @@ export function McpAppFrame(props: {
             if (read._tag !== "Success") throw commandFailure(read);
             const content = read.value.contents[0];
             bytes = mcpResourceBytes(content);
-            const declared = (content as { readonly mimeType?: unknown } | undefined)?.mimeType;
+            const declared = (
+              content as
+                | {
+                    readonly mimeType?: unknown;
+                  }
+                | undefined
+            )?.mimeType;
             if (typeof declared === "string") mimeType = declared;
           }
           if (bytes === undefined) throw new McpAppHostRefusal(`${file.name} has no contents.`);
@@ -417,17 +415,14 @@ export function McpAppFrame(props: {
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A reopened document needs a new host.
   }, [src, app, documentGeneration, registry]);
-
   useEffect(() => {
     hostRef.current?.updateHostContext();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Context changes trigger a resend.
   }, [theme, width, displayMode, toolDefinition]);
-
   useEffect(() => {
     if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
   }, [toolCall, src, documentGeneration]);
-
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
@@ -447,7 +442,6 @@ export function McpAppFrame(props: {
       </div>
     );
   }
-
   const fullscreen = displayMode === "fullscreen";
   return (
     // The row keeps its inline height while the app is full screen, so the

@@ -1,9 +1,8 @@
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { MentionSuggestionsContext } from "../ui/mention-textarea";
-
 export function PullRequestMentionProvider({
   environmentId,
   reference,
@@ -28,7 +27,7 @@ export function PullRequestMentionProvider({
       ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference })
       : null,
   );
-  const candidates = useMemo(() => {
+  const candidates = (() => {
     if (!detail) return [];
     return [
       ...(detail.author ? [detail.author] : []),
@@ -39,7 +38,7 @@ export function PullRequestMentionProvider({
       ),
       ...(query.data?.candidates.filter((candidate) => candidate.kind === "user") ?? []),
     ];
-  }, [detail, query.data]);
+  })();
   return (
     <MentionSuggestionsContext
       value={

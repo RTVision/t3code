@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { STATIC_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { useClientSettings } from "../hooks/useSettings";
 import { dispatchAppCommand } from "./commandBus";
@@ -23,7 +23,6 @@ import {
   vimPane,
   vimScope,
 } from "./runtime";
-
 const overlaySelector =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="popover-popup"], [role="listbox"], [data-keybinding-capture], [data-vim-search]';
 const inputSelector = 'input, textarea, [contenteditable="true"]';
@@ -71,20 +70,26 @@ function focusNeighbor(direction: string): void {
     .sort((a, b) => a.ahead + a.across * 2 - (b.ahead + b.across * 2))[0];
   if (target) focusVimNormal(target.pane);
 }
-
 /** One capture owner decides whether a stroke belongs to Vim or the focused input. */
 export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
   const settings = useClientSettings((value) => value.vim);
   const mode = useVimMode();
-  const bindings = useMemo(() => resolveVimBindings(settings), [settings]);
+  const bindings = resolveVimBindings(settings);
   const [pending, setPending] = useState("");
   const [guide, setGuide] = useState<readonly VimBinding[]>([]);
   const [help, setHelp] = useState(false);
   const sequence = useRef<SequenceState>(EMPTY_SEQUENCE);
   const timeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const guideTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
   const config = useRef({ settings, bindings, isOnSettings, help });
+  const [wasEnabled, setWasEnabled] = useState(settings.enabled);
+  if (wasEnabled !== settings.enabled) {
+    setWasEnabled(settings.enabled);
+    if (!settings.enabled) {
+      setPending("");
+      setGuide([]);
+    }
+  }
   useLayoutEffect(() => {
     config.current = { settings, bindings, isOnSettings, help };
     if (!settings.enabled) {
@@ -92,8 +97,6 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       clearTimeout(timeout.current);
       clearTimeout(guideTimeout.current);
       cancelVimPaneFocus();
-      setPending("");
-      setGuide((current) => (current.length ? [] : current));
     }
   }, [settings, bindings, isOnSettings, help]);
   useLayoutEffect(() => {
@@ -125,10 +128,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       sequence.current = EMPTY_SEQUENCE;
       clearTimeout(timeout.current);
       clearTimeout(guideTimeout.current);
-      setPending("");
-      setGuide((current) => (current.length ? [] : current));
     }
-
     function focus(event: FocusEvent) {
       if (!config.current.settings.enabled) return;
       clear();
@@ -323,7 +323,6 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       clearTimeout(guideTimeout.current);
     };
   }, []);
-
   if (!settings.enabled) return null;
   const shown = help ? bindings : guide;
   return (

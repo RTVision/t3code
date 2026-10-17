@@ -7,11 +7,9 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 import { SmilePlusIcon } from "lucide-react";
-import { useCallback, useContext, useLayoutEffect, useRef, useState } from "react";
-
+import { useContext, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -22,18 +20,14 @@ import {
   pullRequestReactionName,
   pullRequestReactionTooltip,
 } from "./pullRequestReactions.logic";
-
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
-
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
-
 function reactionsSignature(reactions: ReadonlyArray<PullRequestReaction>): string {
   return reactions
     .map((reaction) => `${reaction.content}:${reaction.count}:${reaction.viewerHasReacted ? 1 : 0}`)
     .join(" ");
 }
-
 export function PullRequestReactionBar({
   reactions,
   canReact,
@@ -64,11 +58,9 @@ export function PullRequestReactionBar({
   const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
     reportFailure: false,
   });
-
   const signature = reactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(reactions, values);
-
   const current = {
     canReact,
     permission,
@@ -83,40 +75,34 @@ export function PullRequestReactionBar({
   useLayoutEffect(() => {
     latest.current = current;
   });
-
-  const toggle = useCallback(
-    async (content: PullRequestReactionContent, reacted: boolean) => {
-      const target = latest.current;
-      if (!target.canReact || !registry.get(target.permission)) return;
-      setPending({
-        signature: target.signature,
-        values: new Map([...target.values, [content, reacted]]),
+  const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
+    const target = latest.current;
+    if (!target.canReact || !registry.get(target.permission)) return;
+    setPending({
+      signature: target.signature,
+      values: new Map([...target.values, [content, reacted]]),
+    });
+    const result = await setReaction({
+      environmentId: target.environmentId,
+      input: {
+        ...target.reference,
+        ...(target.subjectId === undefined ? {} : { subjectId: target.subjectId }),
+        content,
+        reacted,
+      },
+    });
+    if (result._tag === "Failure") {
+      setPending((current) => {
+        const next = new Map(current.values);
+        next.delete(content);
+        return { signature: current.signature, values: next };
       });
-      const result = await setReaction({
-        environmentId: target.environmentId,
-        input: {
-          ...target.reference,
-          ...(target.subjectId === undefined ? {} : { subjectId: target.subjectId }),
-          content,
-          reacted,
-        },
-      });
-      if (result._tag === "Failure") {
-        setPending((current) => {
-          const next = new Map(current.values);
-          next.delete(content);
-          return { signature: current.signature, values: next };
-        });
-        toastManager.add({ type: "error", title: "The reaction could not be saved" });
-        return;
-      }
-      target.onRefresh();
-    },
-    [registry, setReaction],
-  );
-
+      toastManager.add({ type: "error", title: "The reaction could not be saved" });
+      return;
+    }
+    target.onRefresh();
+  };
   if (shown.length === 0 && !writable) return null;
-
   return (
     <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
       {shown.map((reaction) => (

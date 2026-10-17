@@ -1,5 +1,4 @@
 import type { Dispatch, SetStateAction } from "react";
-
 /**
  * This module must stay free of runtime `react` imports: it is loaded from
  * inside `vi.mock("react", ...)` factories, and a value import would recurse
@@ -12,7 +11,6 @@ function createReactHookHarness() {
   let cursor = 0;
   let slots: unknown[] = [];
   const nextIndex = () => cursor++;
-
   return {
     beginRender() {
       cursor = 0;
@@ -36,12 +34,16 @@ function createReactHookHarness() {
       }
       return slots[index] as unknown[];
     },
-    useRef<T>(initialValue: T): { current: T } {
+    useRef<T>(initialValue: T): {
+      current: T;
+    } {
       const index = nextIndex();
       if (!slots[index]) {
         slots[index] = { current: initialValue };
       }
-      return slots[index] as { current: T };
+      return slots[index] as {
+        current: T;
+      };
     },
     useState<T>(initialValue: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
       const index = nextIndex();
@@ -58,5 +60,4 @@ function createReactHookHarness() {
     },
   };
 }
-
 export const reactHookHarness = createReactHookHarness();

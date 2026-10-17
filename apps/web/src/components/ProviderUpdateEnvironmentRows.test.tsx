@@ -9,25 +9,20 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-
 import type {
   LocalEnvironmentUpdateGroup,
   ProviderUpdateCandidate,
   ProviderUpdateRowStatus,
 } from "./ProviderUpdateLaunchNotification.logic";
-
 const testState = vi.hoisted(() => ({
   groups: [] as LocalEnvironmentUpdateGroup[],
   permittedEnvironmentIds: new Set<EnvironmentId>(),
   updateProvider: vi.fn(),
 }));
-
 const hooks = vi.hoisted(() => {
   let cursor = 0;
   let slots: unknown[] = [];
-
   const nextIndex = () => cursor++;
-
   return {
     beginRender() {
       cursor = 0;
@@ -51,12 +46,16 @@ const hooks = vi.hoisted(() => {
       }
       return slots[index] as unknown[];
     },
-    useRef<T>(initialValue: T): { current: T } {
+    useRef<T>(initialValue: T): {
+      current: T;
+    } {
       const index = nextIndex();
       if (!slots[index]) {
         slots[index] = { current: initialValue };
       }
-      return slots[index] as { current: T };
+      return slots[index] as {
+        current: T;
+      };
     },
     useState<T>(initialValue: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
       const index = nextIndex();
@@ -73,7 +72,6 @@ const hooks = vi.hoisted(() => {
     },
   };
 });
-
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
@@ -84,15 +82,12 @@ vi.mock("react", async (importOriginal) => {
     useState: hooks.useState,
   };
 });
-
 vi.mock("react/compiler-runtime", () => ({
   c: hooks.useMemoCache,
 }));
-
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateProvider: Symbol("updateProvider") },
 }));
-
 vi.mock("~/state/session", () => ({
   readEnvironmentScope: (environmentId: EnvironmentId, scope: AuthEnvironmentScope) =>
     scope === AuthProvidersManageScope && testState.permittedEnvironmentIds.has(environmentId),
@@ -101,23 +96,18 @@ vi.mock("~/state/session", () => ({
     scope === AuthProvidersManageScope &&
     testState.permittedEnvironmentIds.has(environmentId),
 }));
-
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => testState.updateProvider,
 }));
-
 vi.mock("./ProviderUpdateLaunchNotification.environments", () => ({
   useLocalEnvironmentUpdateGroups: () => ({
     groups: testState.groups,
     isAnySettling: false,
   }),
 }));
-
 import { ProviderUpdateEnvironmentRows } from "./ProviderUpdateEnvironmentRows";
-
 const environmentId = "env-wsl" as EnvironmentId;
-const pendingExpiryMs = 6 * 60_000;
-
+const pendingExpiryMs = 6 * 60000;
 function provider(updateStatus?: "succeeded"): ServerProvider {
   const result: ServerProvider = {
     instanceId: ProviderInstanceId.make("codex-wsl"),
@@ -141,7 +131,6 @@ function provider(updateStatus?: "succeeded"): ServerProvider {
       message: updateStatus ? "Up to date." : "Update available.",
     },
   };
-
   return updateStatus
     ? {
         ...result,
@@ -155,7 +144,6 @@ function provider(updateStatus?: "succeeded"): ServerProvider {
       }
     : result;
 }
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -163,12 +151,10 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
 type RowElement = ReactElement<{
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
 }>;
-
 function renderRow(): RowElement {
   hooks.beginRender();
   const output = ProviderUpdateEnvironmentRows({}) as ReactElement<{
@@ -177,13 +163,11 @@ function renderRow(): RowElement {
   const children = output.props.children;
   return Array.isArray(children) ? children[0]! : children;
 }
-
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 }
-
 describe("ProviderUpdateEnvironmentRows", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -203,38 +187,39 @@ describe("ProviderUpdateEnvironmentRows", () => {
       },
     ];
   });
-
   afterEach(() => {
     vi.useRealTimers();
   });
-
   it("keeps a successor pending when an expired request resolves late, then shows its success", async () => {
-    const firstRequest =
-      deferred<ReturnType<typeof AsyncResult.success<{ providers: ServerProvider[] }>>>();
-    const successorRequest =
-      deferred<ReturnType<typeof AsyncResult.success<{ providers: ServerProvider[] }>>>();
+    const firstRequest = deferred<
+      ReturnType<
+        typeof AsyncResult.success<{
+          providers: ServerProvider[];
+        }>
+      >
+    >();
+    const successorRequest = deferred<
+      ReturnType<
+        typeof AsyncResult.success<{
+          providers: ServerProvider[];
+        }>
+      >
+    >();
     testState.updateProvider
       .mockReturnValueOnce(firstRequest.promise)
       .mockReturnValueOnce(successorRequest.promise);
-
     renderRow().props.onUpdate();
     expect(renderRow().props.status.kind).toBe("loading");
-
     await vi.advanceTimersByTimeAsync(pendingExpiryMs);
     expect(renderRow().props.status.kind).toBe("failed");
-
     renderRow().props.onUpdate();
     expect(testState.updateProvider).toHaveBeenCalledTimes(2);
     expect(renderRow().props.status.kind).toBe("loading");
-
     firstRequest.resolve(AsyncResult.success({ providers: [provider("succeeded")] }));
     await flushPromises();
-
     expect(renderRow().props.status.kind).toBe("loading");
-
     successorRequest.resolve(AsyncResult.success({ providers: [provider("succeeded")] }));
     await flushPromises();
-
     expect(renderRow().props.status.kind).toBe("success");
   });
 });

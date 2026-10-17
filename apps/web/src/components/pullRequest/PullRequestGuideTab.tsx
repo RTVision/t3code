@@ -1,9 +1,7 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo } from "react";
-
+import { useEffect, useEffectEvent } from "react";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -18,7 +16,6 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
-
 export function PullRequestGuideTab({
   environmentId,
   reference,
@@ -57,39 +54,26 @@ export function PullRequestGuideTab({
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const updatePendingComment = usePullRequestReviewStore((store) => store.updateComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
-  const commenting = useMemo<ExcerptCommenting | null>(
-    () =>
-      !canComment && onAskAboutLines === null
-        ? null
-        : {
-            canComment,
-            workspaceRoot,
-            environmentId,
-            onEdit: (commentId, body) => updatePendingComment(reviewKey, commentId, body),
-            pending,
-            onComment: ({ path, oldPath, position, body }) =>
-              addComment(reviewKey, {
-                id: nextPendingReviewCommentId(),
-                path,
-                ...(oldPath === null ? {} : { oldPath }),
-                position,
-                body,
-              }),
-            onRemove: (commentId) => removeComment(reviewKey, commentId),
-            onAskAgent: onAskAboutLines,
-          },
-    [
-      addComment,
-      canComment,
-      workspaceRoot,
-      environmentId,
-      onAskAboutLines,
-      pending,
-      removeComment,
-      reviewKey,
-      updatePendingComment,
-    ],
-  );
+  const commenting: ExcerptCommenting | null =
+    !canComment && onAskAboutLines === null
+      ? null
+      : {
+          canComment,
+          workspaceRoot,
+          environmentId,
+          onEdit: (commentId, body) => updatePendingComment(reviewKey, commentId, body),
+          pending,
+          onComment: ({ path, oldPath, position, body }) =>
+            addComment(reviewKey, {
+              id: nextPendingReviewCommentId(),
+              path,
+              ...(oldPath === null ? {} : { oldPath }),
+              position,
+              body,
+            }),
+          onRemove: (commentId) => removeComment(reviewKey, commentId),
+          onAskAgent: onAskAboutLines,
+        };
   useEffect(() => {
     if (!active) return;
     useGuideRunStore.getState().setShown(runKey);
@@ -98,7 +82,6 @@ export function PullRequestGuideTab({
         useGuideRunStore.getState().setShown(null);
     };
   }, [active, runKey]);
-
   const guide = data?.guide ?? null;
   const tourShown = active && guide !== null;
   const reportTourShown = useEffectEvent(() => onTourShown?.());
@@ -117,7 +100,6 @@ export function PullRequestGuideTab({
         {running ? "Reading the change..." : label}
       </Button>
     ) : null;
-
   if (guide === null) {
     if (query.isPending && data === null) {
       return (
@@ -142,7 +124,6 @@ export function PullRequestGuideTab({
       </div>
     );
   }
-
   const banner =
     stale || failure !== null || running ? (
       <Alert variant={running ? "info" : "warning"}>
@@ -155,7 +136,6 @@ export function PullRequestGuideTab({
         {!running && canWrite ? <AlertAction>{writeButton("Rewrite", "xs")}</AlertAction> : null}
       </Alert>
     ) : null;
-
   return (
     <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
       <GuideTour

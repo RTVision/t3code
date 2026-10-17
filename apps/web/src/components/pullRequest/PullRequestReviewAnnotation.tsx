@@ -10,10 +10,9 @@ import type {
 import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
-
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
-
 import { Button } from "../ui/button";
 import { MentionTextarea } from "../ui/mention-textarea";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -28,10 +27,8 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
-
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
-
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
@@ -49,11 +46,9 @@ function submitKeys(input: {
     }
   };
 }
-
 export function toViewerSide(side: PullRequestDiffSide) {
   return side === "left" ? ("deletions" as const) : ("additions" as const);
 }
-
 export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
   line: number;
   side: PullRequestDiffSide;
@@ -70,7 +65,6 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
       };
   }
 }
-
 export function PendingReviewCommentCard({
   comment,
   workspaceRoot,
@@ -130,7 +124,6 @@ export function PendingReviewCommentCard({
     </div>
   );
 }
-
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -175,7 +168,10 @@ export function ReviewThreadCard({
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
   const [loadedPage, setLoadedPage] = useState<
-    (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
+    | (PullRequestThreadCommentsResult & {
+        readonly threadId: string;
+      })
+    | null
   >(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const currentPage = loadedPage?.threadId === thread.id ? loadedPage : null;
@@ -183,7 +179,6 @@ export function ReviewThreadCard({
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
-
   const saveEdit = async (commentId: string, body: string) => {
     if (savingEdit) return;
     setSavingEdit(true);
@@ -201,49 +196,44 @@ export function ReviewThreadCard({
       setEditingId(null);
     }
   };
-
   const send = async () => {
     const trimmed = reply.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
-    try {
-      if (await onReply(trimmed)) {
-        // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
-        // the new reply remains reachable without spending requests until they ask to load it.
-        setLoadedPage((previous) =>
-          previous?.threadId === thread.id
-            ? {
-                ...previous,
-                nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
-              }
-            : previous,
-        );
-        setReply("");
-        setReplying(false);
-      }
-    } finally {
-      sendingRef.current = false;
-    }
+    const result = await settlePromise(() => onReply(trimmed));
+    sendingRef.current = false;
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    if (!result.value) return;
+    // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
+    // the new reply remains reachable without spending requests until they ask to load it.
+    setLoadedPage((previous) =>
+      previous?.threadId === thread.id
+        ? {
+            ...previous,
+            nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
+          }
+        : previous,
+    );
+    setReply("");
+    setReplying(false);
   };
   const loadMore = async () => {
     if (nextCommentsCursor === null || loadingMore) return;
     setLoadingMore(true);
-    try {
-      const page = await onLoadMore(nextCommentsCursor);
-      if (page === null) return;
-      setLoadedPage((previous) => ({
-        threadId: thread.id,
-        comments: mergePullRequestThreadComments(
-          previous?.threadId === thread.id ? previous.comments : [],
-          page.comments,
-        ),
-        nextCursor: page.nextCursor,
-      }));
-    } finally {
-      setLoadingMore(false);
-    }
+    const result = await settlePromise(() => onLoadMore(nextCommentsCursor));
+    setLoadingMore(false);
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    const page = result.value;
+    if (page === null) return;
+    setLoadedPage((previous) => ({
+      threadId: thread.id,
+      comments: mergePullRequestThreadComments(
+        previous?.threadId === thread.id ? previous.comments : [],
+        page.comments,
+      ),
+      nextCursor: page.nextCursor,
+    }));
   };
-
   return (
     <div
       className={CARD_CLASS}
@@ -361,12 +351,14 @@ export function ReviewThreadCard({
                   placeholder="Reply"
                   aria-label="Reply to this conversation"
                   onValueChange={setReply}
-                  onKeyDown={submitKeys({
-                    value: reply,
-                    pending,
-                    onSubmit: () => void send(),
-                    onCancel: () => setReplying(false),
-                  })}
+                  onKeyDown={(event) =>
+                    submitKeys({
+                      value: reply,
+                      pending,
+                      onSubmit: () => void send(),
+                      onCancel: () => setReplying(false),
+                    })(event)
+                  }
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>

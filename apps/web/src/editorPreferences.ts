@@ -20,7 +20,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useEditorPreference } from "./editorPreferenceStorage";
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { randomUUID } from "./lib/utils";
 import { readEnvironmentScope, useEnvironmentScope } from "./state/session";
 import { shellEnvironment } from "./state/shell";
@@ -31,11 +31,9 @@ import {
   useRemoteOpenResolution,
 } from "./remoteOpen";
 import { invalidateTerminalEditors, useTerminalEditor } from "./terminalEditors";
-
 const NullableEditorId = Schema.NullOr(EditorId);
 const NullableEditorChoice = Schema.NullOr(EditorChoice);
 const LAST_EDITOR_KEY = "t3code:last-editor";
-
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",
   { targetPath: Schema.String },
@@ -44,7 +42,6 @@ export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<
     return `Cannot open ${this.targetPath} because no environment is selected.`;
   }
 }
-
 export class PreferredEditorUnavailableError extends Schema.TaggedError<PreferredEditorUnavailableError>()(
   "PreferredEditorUnavailableError",
   {
@@ -60,7 +57,6 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
 export class EditorOpenError extends Schema.TaggedError<EditorOpenError>()("EditorOpenError", {
   message: Schema.String,
 }) {}
-
 export function useEditorChoice(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
@@ -97,11 +93,11 @@ export function useEditorChoice(
     null,
     NullableEditorChoice,
   );
-  const choice = useMemo(
-    () => resolveEditorChoice(explicit, fallback, legacy, effectiveEditors),
-    [explicit, fallback, legacy, effectiveEditors],
-  );
+  const choice = resolveEditorChoice(explicit, fallback, legacy, effectiveEditors);
   return { choice, select, effectiveEditors, terminal, remote };
+}
+function editorOpenFailure(message: string) {
+  return AsyncResult.failure(Cause.fail(new EditorOpenError({ message })));
 }
 
 export function useEditorDispatch(
@@ -124,107 +120,96 @@ export function useEditorDispatch(
       : remote.isResolved &&
         remote.state.mode !== "remote-unavailable" &&
         (remote.state.mode !== "local-exec" || canOpenLocalEditor));
-  const open = useCallback(
-    async (input: string | EditorOpenTarget, selected: EditorChoice | null = choice) => {
-      const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
-      if (!environmentId)
-        return AsyncResult.failure(
-          Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: target.path })),
-        );
-      if (!selected)
-        return AsyncResult.failure(
-          Cause.fail(
-            new PreferredEditorUnavailableError({
-              environmentId,
-              targetPath: target.path,
-              availableEditorIds: availableEditors,
-            }),
-          ),
-        );
-      const requiredScope =
-        selected.kind === "terminal"
-          ? AuthTerminalOperateScope
-          : remote.state.mode === "local-exec"
-            ? AuthOrchestrationOperateScope
-            : null;
-      if (requiredScope && !readEnvironmentScope(environmentId, requiredScope)) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new EnvironmentAuthorizationError({
-              requiredScope,
-              message: "This connection cannot open this editor on the environment.",
-            }),
-          ),
-        );
-      }
-      try {
-        if (selected.kind === "terminal") {
-          const bridge = window.desktopBridge?.openTerminalEditor;
-          if (!bridge)
-            throw new EditorOpenError({
-              message: "Neovim (Terminal) requires a desktop app with terminal editor support.",
-            });
-          if (!terminal.connected || !terminal.connection)
-            throw new EditorOpenError({
-              message: "Connect this environment before opening Neovim.",
-            });
-          const capability = await terminal.refresh();
-          if (capability.state !== "available" && capability.state !== "check-on-open")
-            throw new EditorOpenError({ message: capability.message });
-          const result = await bridge({
-            connection: terminal.connection,
-            connectionGeneration: terminal.generation,
-            requestId: randomUUID(),
-            routeGeneration: capability.routeGeneration,
-            editor: "neovim",
-            workspacePath: editorWorkspace(target, workspace),
-            target,
-          });
-          if (result.status === "failed") {
-            invalidateTerminalEditors();
-            throw new EditorOpenError({ message: result.message });
-          }
-          return AsyncResult.success("neovim" as const);
-        }
-        if (!remote.isResolved)
-          throw new EditorOpenError({
-            message: "The environment's editor route is still resolving.",
-          });
-        if (remote.state.mode === "remote-unavailable")
-          throw new EditorOpenError({
-            message: "No SSH editor route is available for this environment.",
-          });
-        if (remote.state.mode === "remote-links") {
-          const url = buildRemoteOpenUrl({
-            editor: selected.editor,
-            host: remote.state.host.host,
-            absolutePath: guiEditorTarget(target),
-          });
-          if (!url || !(await openRemoteEditorUrl(url)))
-            throw new EditorOpenError({
-              message: "The desktop could not open this remote editor link.",
-            });
-          return AsyncResult.success(selected.editor);
-        }
-        return mapAtomCommandResult(
-          await openGui({
+  const open = async (input: string | EditorOpenTarget, selected: EditorChoice | null = choice) => {
+    const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
+    if (!environmentId)
+      return AsyncResult.failure(
+        Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: target.path })),
+      );
+    if (!selected)
+      return AsyncResult.failure(
+        Cause.fail(
+          new PreferredEditorUnavailableError({
             environmentId,
-            input: { cwd: guiEditorTarget(target), editor: selected.editor },
+            targetPath: target.path,
+            availableEditorIds: availableEditors,
           }),
-          () => selected.editor,
-        );
-      } catch (error) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new EditorOpenError({
-              message: error instanceof Error ? error.message : String(error),
-            }),
-          ),
-        );
+        ),
+      );
+    const requiredScope =
+      selected.kind === "terminal"
+        ? AuthTerminalOperateScope
+        : remote.state.mode === "local-exec"
+          ? AuthOrchestrationOperateScope
+          : null;
+    if (requiredScope && !readEnvironmentScope(environmentId, requiredScope)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new EnvironmentAuthorizationError({
+            requiredScope,
+            message: "This connection cannot open this editor on the environment.",
+          }),
+        ),
+      );
+    }
+    try {
+      if (selected.kind === "terminal") {
+        const bridge = window.desktopBridge?.openTerminalEditor;
+        if (!bridge)
+          return editorOpenFailure(
+            "Neovim (Terminal) requires a desktop app with terminal editor support.",
+          );
+        if (!terminal.connected || !terminal.connection)
+          return editorOpenFailure("Connect this environment before opening Neovim.");
+        const capability = await terminal.refresh();
+        if (capability.state !== "available" && capability.state !== "check-on-open")
+          return editorOpenFailure(capability.message);
+        const result = await bridge({
+          connection: terminal.connection,
+          connectionGeneration: terminal.generation,
+          requestId: randomUUID(),
+          routeGeneration: capability.routeGeneration,
+          editor: "neovim",
+          workspacePath: editorWorkspace(target, workspace),
+          target,
+        });
+        if (result.status === "failed") {
+          invalidateTerminalEditors();
+          return editorOpenFailure(result.message);
+        }
+        return AsyncResult.success("neovim" as const);
       }
-    },
-    [availableEditors, choice, environmentId, openGui, remote, terminal, workspace],
-  );
+      if (!remote.isResolved)
+        return editorOpenFailure("The environment's editor route is still resolving.");
+      if (remote.state.mode === "remote-unavailable")
+        return editorOpenFailure("No SSH editor route is available for this environment.");
+      if (remote.state.mode === "remote-links") {
+        const url = buildRemoteOpenUrl({
+          editor: selected.editor,
+          host: remote.state.host.host,
+          absolutePath: guiEditorTarget(target),
+        });
+        if (!url || !(await openRemoteEditorUrl(url)))
+          return editorOpenFailure("The desktop could not open this remote editor link.");
+        return AsyncResult.success(selected.editor);
+      }
+      return mapAtomCommandResult(
+        await openGui({
+          environmentId,
+          input: { cwd: guiEditorTarget(target), editor: selected.editor },
+        }),
+        () => selected.editor,
+      );
+    } catch (error) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new EditorOpenError({
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        ),
+      );
+    }
+  };
   return { ...state, open, canOpen };
 }
 export function useOpenInPreferredEditor(

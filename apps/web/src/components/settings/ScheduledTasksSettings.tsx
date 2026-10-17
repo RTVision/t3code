@@ -12,7 +12,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   EnvironmentId,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -36,7 +36,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -111,17 +110,14 @@ import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   useRelativeTimeTick,
 } from "./settingsLayout";
-
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
-
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
   root: "Use the project checkout",
   existing_worktree: "Use a specific checkout",
 };
-
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
   title: "",
@@ -146,7 +142,6 @@ const EMPTY_DRAFT: DraftState = {
   signatureSecret: "",
   maxDeliveryAgeMinutes: "",
 };
-
 function Field({
   label,
   hint,
@@ -170,11 +165,10 @@ function Field({
     </div>
   );
 }
-
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
-    const minutes = schedule.everyMs / 60_000;
+    const minutes = schedule.everyMs / 60000;
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
@@ -188,7 +182,6 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
   return `${days} at ${schedule.timeOfDay}`;
 }
-
 /**
  * `formatRelativeTime` only handles the past, and `nextRunAt` is a future
  * instant — render "in 5m" style labels for upcoming runs instead of a
@@ -202,14 +195,13 @@ export function relativeLabel(value: string | null): string {
     if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
-  const minutes = Math.ceil(diffMs / 60_000);
+  const minutes = Math.ceil(diffMs / 60000);
   if (minutes < 2) return "in under a minute";
   if (minutes < 60) return `in ${minutes}m`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
 }
-
 const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
   accepted: "Ran",
   dispatch_failed: "Run failed",
@@ -218,7 +210,6 @@ const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, strin
   rate_limited: "Rate limited",
   expired: "Too old",
 };
-
 function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
   if (outcome === "accepted") return "success";
   if (outcome === "disabled" || outcome === "rate_limited" || outcome === "expired") {
@@ -226,14 +217,12 @@ function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
   }
   return "error";
 }
-
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   if (status === "failed") return "error";
   if (status === "succeeded") return "success";
   if (status === "running") return "info";
   return "outline";
 }
-
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -243,9 +232,9 @@ export function ScheduledTasksSettings(target: {
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
   } | null>(null);
-  const openForEdit = useCallback((environmentId: EnvironmentId, task: ScheduledTask) => {
+  const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
-  }, []);
+  };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
@@ -321,7 +310,6 @@ export function ScheduledTasksSettings(target: {
     </SettingsPageContainer>
   );
 }
-
 function ScheduledTaskEnvironmentList({
   environmentId,
   taskId,
@@ -333,32 +321,28 @@ function ScheduledTaskEnvironmentList({
 }) {
   const { scope, environments } = useSettingsScope();
   const states = useAtomValue(
-    useMemo(
-      () =>
-        Atom.make((get) =>
-          environments.map((environment) => {
-            const connected =
-              environment.connection.phase === "connected" && environment.serverConfig !== null;
-            const query = connected
-              ? get(
-                  serverEnvironment.scheduledTasksLive({
-                    environmentId: environment.environmentId,
-                    input: {},
-                  }),
-                )
-              : null;
-            const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
-            return {
-              environment,
-              connected,
-              tasks: data?.tasks.filter((task) =>
-                matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
-              ),
-              error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
-            };
-          }),
-        ),
-      [environments, scope],
+    Atom.make((get) =>
+      environments.map((environment) => {
+        const connected =
+          environment.connection.phase === "connected" && environment.serverConfig !== null;
+        const query = connected
+          ? get(
+              serverEnvironment.scheduledTasksLive({
+                environmentId: environment.environmentId,
+                input: {},
+              }),
+            )
+          : null;
+        const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
+        return {
+          environment,
+          connected,
+          tasks: data?.tasks.filter((task) =>
+            matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
+          ),
+          error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
+        };
+      }),
     ),
   );
   const linkedState = states.find((state) => state.environment.environmentId === environmentId);
@@ -370,8 +354,7 @@ function ScheduledTaskEnvironmentList({
       onEdit(environmentId, linkedTask);
     }
   }, [environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
-
+  useRelativeTimeTick(60000);
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
   const summaries: Record<string, string[]> = {
@@ -394,7 +377,6 @@ function ScheduledTaskEnvironmentList({
       summaries["No tasks on"]!.push(label);
     }
   }
-
   return (
     <SettingsGroup>
       {populated.map(({ environment, tasks }) => {
@@ -468,7 +450,6 @@ function ScheduledTaskEnvironmentList({
     </SettingsGroup>
   );
 }
-
 function ScheduledTaskEnvironmentSection({
   environment,
   showEnvironmentHeading,
@@ -502,7 +483,7 @@ function ScheduledTaskEnvironmentSection({
       onEdit(environment.environmentId, linkedTask);
     }
   }, [environment.environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
+  useRelativeTimeTick(60000);
   return (
     <SettingsSection
       title={environment.label}
@@ -552,7 +533,6 @@ function ScheduledTaskEnvironmentSection({
     </SettingsSection>
   );
 }
-
 function ScheduledTaskRow({
   environmentId,
   task,
@@ -675,7 +655,6 @@ function ScheduledTaskRow({
     />
   );
 }
-
 function WebhookDeliveriesDialog({
   environmentId,
   task,
@@ -702,7 +681,6 @@ function WebhookDeliveriesDialog({
   const deliveries = deliveriesQuery.data?.deliveries ?? null;
   const selected = selectedQuery.data?.delivery ?? null;
   const error = selectedId === null ? deliveriesQuery.error : selectedQuery.error;
-
   return (
     <Dialog
       open
@@ -810,7 +788,6 @@ function WebhookDeliveriesDialog({
     </Dialog>
   );
 }
-
 function DeliveryBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-1">
@@ -821,7 +798,6 @@ function DeliveryBlock({ title, children }: { title: string; children: ReactNode
     </div>
   );
 }
-
 function WebhookEndpointField({
   environmentId,
   task,
@@ -896,7 +872,6 @@ function WebhookEndpointField({
     </div>
   );
 }
-
 function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const cloudLink = usePrimaryCloudLinkState();
   if (cloudLink.target?.environmentId !== environmentId || cloudLink.data === null) return null;
@@ -911,7 +886,6 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
     </p>
   );
 }
-
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
@@ -930,14 +904,10 @@ function ScheduledTaskEditorDialog({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  const projects = useMemo(
-    () =>
-      allProjects.filter(
-        (project) =>
-          project.environmentId === environmentId &&
-          matchesScheduledTaskScope(scope, environmentId, project.id),
-      ),
-    [allProjects, environmentId, scope],
+  const projects = allProjects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      matchesScheduledTaskScope(scope, environmentId, project.id),
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
@@ -962,18 +932,13 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(
-          deriveProviderInstanceEntries(providers),
-          settings,
-          selectedProject?.id ?? null,
-        ),
-      ),
-    [providers, settings, selectedProject?.id],
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      selectedProject?.id ?? null,
+    ),
   );
-
   const firstInstance = instanceEntries[0];
   // A picked model whose provider is off for this project falls back to the default.
   const draftSelection = draftModelSelection(draft, null);
@@ -997,11 +962,12 @@ function ScheduledTaskEditorDialog({
     ? draft.runtimeMode
     : (compatibleRuntimeModes[0] ?? draft.runtimeMode);
   const RuntimeModeIcon = runtimeModeConfig[runtimeMode].icon;
-  const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, providers, activeInstanceId, activeModel),
-    [settings, providers, activeInstanceId, activeModel],
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    activeInstanceId,
+    activeModel,
   );
-
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -1011,7 +977,6 @@ function ScheduledTaskEditorDialog({
       }),
     );
   };
-
   const submit = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -1099,7 +1064,6 @@ function ScheduledTaskEditorDialog({
     }
     onClose();
   };
-
   return (
     <Dialog
       open

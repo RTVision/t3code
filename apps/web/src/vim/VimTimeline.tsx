@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { RunId } from "@t3tools/contracts";
 import type { TimelineEntry } from "../session-logic";
@@ -6,9 +6,7 @@ import type { MessagesTimelineRow } from "../components/chat/MessagesTimeline.lo
 import type { CitationHistoryPage } from "../components/chat/useAssistantCitationTarget";
 import { focusVimNormal, useVimAction, vimEnabled } from "./runtime";
 import { nextMatchIndex, searchConversation } from "./search";
-
 const HISTORY_PAGE_BATCH = 5;
-
 export function VimTimeline({
   entries,
   rows,
@@ -32,8 +30,10 @@ export function VimTimeline({
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [searchingHistory, setSearchingHistory] = useState(false);
-
-  const [selected, setSelected] = useState<{ messageId: string; offset: number } | null>(null);
+  const [selected, setSelected] = useState<{
+    messageId: string;
+    offset: number;
+  } | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const [goToTop, setGoToTop] = useState(false);
   const [historyBudget, setHistoryBudget] = useState(HISTORY_PAGE_BATCH);
@@ -41,19 +41,16 @@ export function VimTimeline({
     historyBudget === 0 && Boolean(loadEarlier) && (searchingHistory || goToTop);
   const requestedPages = useRef(new Set<string>());
   const input = useRef<HTMLInputElement>(null);
-  const messages = useMemo(
-    () => entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
-    [entries],
-  );
-  const matches = useMemo(() => searchConversation(messages, query), [messages, query]);
+  const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
+  const matches = searchConversation(messages, query);
   const selectedIndex = matches.findIndex(
     (match) => match.messageId === selected?.messageId && match.offset === selected.offset,
   );
   const match = matches[selectedIndex];
-
   useEffect(() => {
     if ((!searchingHistory && !goToTop) || historyError || !vimEnabled()) return;
     if (!loadEarlier) {
+      // oxlint-disable-next-line react/set-state-in-effect -- A completed history walk clears its loading state after the final page arrives.
       setSearchingHistory(false);
       setGoToTop(false);
       if (goToTop) void listRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -66,14 +63,11 @@ export function VimTimeline({
     setHistoryBudget((remaining) => remaining - 1);
     loadEarlier.onLoadEarlier();
   }, [entries, goToTop, historyBudget, historyError, listRef, loadEarlier, searchingHistory]);
-
-  useEffect(() => {
-    if (query && selected === null && matches[0]) {
-      const first = matches[0];
-      setSelected({ messageId: first.messageId, offset: first.offset });
-      setTarget(first.messageId);
-    }
-  }, [matches, query, selected]);
+  if (query && selected === null && matches[0]) {
+    const first = matches[0];
+    setSelected({ messageId: first.messageId, offset: first.offset });
+    setTarget(first.messageId);
+  }
 
   useEffect(() => {
     if (!target) return;
@@ -85,9 +79,9 @@ export function VimTimeline({
     }
     onManualNavigation();
     void listRef.current?.scrollToIndex({ index, animated: false, viewOffset: 24 });
+    // oxlint-disable-next-line react/set-state-in-effect -- Acknowledge the imperative scroll so it is not repeated on the next render.
     setTarget(null);
   }, [expandRun, listRef, messages, onManualNavigation, rows, target]);
-
   function choose(index: number) {
     const next = matches[index];
     if (!next) return;
@@ -156,7 +150,6 @@ export function VimTimeline({
     });
     return true;
   });
-
   if (!vimEnabled() || (!open && !query && !goToTop)) return null;
   return (
     <div
@@ -171,7 +164,6 @@ export function VimTimeline({
             setSelected(null);
             requestedPages.current.clear();
             setHistoryBudget(HISTORY_PAGE_BATCH);
-
             setSearchingHistory(Boolean(draft));
             setOpen(false);
             focusVimNormal();
