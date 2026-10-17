@@ -7,7 +7,6 @@ import {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
-import { isValidElement, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -392,35 +391,19 @@ describe("Git actions while thread details load", () => {
   });
 });
 
-function changedFileButton() {
-  const element = GitActionsControl({
+async function changedFileButton() {
+  const element = createElement(GitActionsControl, {
     gitCwd: "/repo",
     activeThreadRef: {
       environmentId: EnvironmentId.make("environment"),
       threadId: ThreadId.make("thread"),
     },
   });
-  type ButtonProps = {
-    children?: ReactNode;
-    "aria-label"?: string;
-    disabled?: boolean;
-    onClick?: () => void;
-  };
-  const find = (node: ReactNode): ButtonProps | undefined => {
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        const match = find(child);
-        if (match) return match;
-      }
-      return;
-    }
-    if (!isValidElement<ButtonProps>(node)) return;
-    if (node.props["aria-label"] === "Open file.ts in editor") return node.props;
-    return find(node.props.children);
-  };
-  const button = find(element);
-  if (!button) throw new Error("Changed-file editor button is missing");
-  return button;
+  await act(async () => {
+    if (renderer) renderer.update(element);
+    else renderer = create(element);
+  });
+  return renderer!.root.find((node) => node.props["aria-label"] === "Open file.ts in editor").props;
 }
 
 it("opens changed files through authorized terminal and remote GUI routes and blocks local GUI after revocation", async () => {
@@ -429,8 +412,10 @@ it("opens changed files through authorized terminal and remote GUI routes and bl
   state.remote = { mode: "local-exec" };
   state.opened.mockReset();
   state.toast.mockReset();
-  vi.stubGlobal("window", {
-    desktopBridge: {
+  const originalBridge = Object.getOwnPropertyDescriptor(window, "desktopBridge");
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: {
       openTerminalEditor: async (input: unknown) => {
         state.opened(input);
         return { status: "opened" };
@@ -443,8 +428,8 @@ it("opens changed files through authorized terminal and remote GUI routes and bl
       completed = resolve;
     });
     state.opened.mockImplementation(() => completed());
-    expect(changedFileButton().disabled).toBe(false);
-    changedFileButton().onClick!();
+    expect((await changedFileButton()).disabled).toBe(false);
+    (await changedFileButton()).onClick!();
     await milestone;
     expect(state.opened).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -458,18 +443,18 @@ it("opens changed files through authorized terminal and remote GUI routes and bl
     milestone = new Promise<void>((resolve) => {
       completed = resolve;
     });
-    expect(changedFileButton().disabled).toBe(false);
-    changedFileButton().onClick!();
+    expect((await changedFileButton()).disabled).toBe(false);
+    (await changedFileButton()).onClick!();
     await milestone;
     expect(state.opened).toHaveBeenCalledWith(
       expect.stringContaining("vscode://vscode-remote/ssh-remote+dev/repo/file.ts"),
     );
     state.remote = { mode: "local-exec" };
     state.scopes.add(AuthOrchestrationOperateScope);
-    const retained = changedFileButton().onClick!;
+    const retained = (await changedFileButton()).onClick!;
     state.scopes.clear();
     state.opened.mockClear();
-    expect(changedFileButton().disabled).toBe(true);
+    expect((await changedFileButton()).disabled).toBe(true);
     milestone = new Promise<void>((resolve) => {
       completed = resolve;
     });
@@ -484,14 +469,15 @@ it("opens changed files through authorized terminal and remote GUI routes and bl
     milestone = new Promise<void>((resolve) => {
       completed = resolve;
     });
-    expect(changedFileButton().disabled).toBe(false);
-    changedFileButton().onClick!();
+    expect((await changedFileButton()).disabled).toBe(false);
+    (await changedFileButton()).onClick!();
     await milestone;
     expect(state.opened).toHaveBeenCalledExactlyOnceWith({
       environmentId: "environment",
       input: { cwd: "/repo/file.ts", editor: "vscode" },
     });
   } finally {
-    vi.unstubAllGlobals();
+    if (originalBridge) Object.defineProperty(window, "desktopBridge", originalBridge);
+    else delete window.desktopBridge;
   }
 });

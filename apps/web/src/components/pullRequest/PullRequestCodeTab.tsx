@@ -1,4 +1,3 @@
-import { useStableCallback } from "~/hooks/useStableCallback";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -27,7 +26,16 @@ import {
 import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
-import { useContext, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -105,6 +113,56 @@ import {
   usePullRequestReviewStore,
   type PendingReviewComment,
 } from "./pullRequestReviewStore";
+interface FileViewedToggleState {
+  readonly enabled: boolean;
+  readonly writable: boolean;
+  readonly isViewed: (path: string) => boolean;
+  readonly isStale: (path: string) => boolean;
+  readonly setFileViewed: (path: string, viewed: boolean, event: Event) => void;
+}
+
+// Header portals are memoized on the render props; the viewed toggle reads its state through
+// context so a press redraws the toggles, not every header on screen.
+const FileViewedToggleContext = createContext<FileViewedToggleState | null>(null);
+
+function FileViewedToggle({ path, stat }: { readonly path: string; readonly stat: ReactNode }) {
+  const viewedFiles = use(FileViewedToggleContext);
+  if (viewedFiles === null || !viewedFiles.enabled) return stat;
+  const viewed = viewedFiles.isViewed(path);
+  const stale = viewedFiles.isStale(path);
+  return (
+    <span className="flex items-center gap-3">
+      {stat}
+      <label
+        data-viewed-toggle=""
+        className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Checkbox
+          aria-label={stale ? "Changed" : "Viewed"}
+          checked={viewed}
+          disabled={!viewedFiles.writable}
+          onCheckedChange={(next, { event }) =>
+            viewedFiles.setFileViewed(path, next === true, event)
+          }
+        />
+        {stale ? (
+          <Tooltip>
+            <TooltipTrigger render={<span className="text-warning-foreground" />}>
+              Changed
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              This file has been pushed to since you marked it viewed.
+            </TooltipPopup>
+          </Tooltip>
+        ) : (
+          <span className="@max-xs:hidden">Viewed</span>
+        )}
+      </label>
+    </span>
+  );
+}
+
 interface ReviewAnnotationGroup {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
   readonly pending: ReadonlyArray<PendingReviewComment>;
@@ -786,11 +844,16 @@ function PullRequestCodeTab({
       </Button>
     );
   };
-  // Read through refs rather than closed over. The viewer memoizes each visible file's header
-  // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
-  // host's answer, would rebuild every header on screen.
   const codeViewFrameRef = useRef<HTMLDivElement>(null);
-  const renderHeaderMetadata = useStableCallback((item: CodeViewItem<ReviewAnnotationGroup>) => {
+  const fileViewedToggle = {
+    enabled: filesViewed.enabled,
+    writable: filesViewed.writable,
+    isViewed: filesViewed.isViewed,
+    isStale: filesViewed.isStale,
+    setFileViewed: (path: string, viewed: boolean, event: Event) =>
+      setFileViewed(path, viewed, isPinnedHeaderEvent(event, codeViewFrameRef.current)),
+  };
+  const renderHeaderMetadata = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     if (item.type !== "diff") return null;
     let { additions, deletions } = sourceFileStats.get(item.id) ?? getDiffLineStat([item.fileDiff]);
     const path = resolveFileDiffPath(item.fileDiff);
@@ -798,53 +861,20 @@ function PullRequestCodeTab({
       const withheld = omittedFileStats.get(path);
       if (withheld) ({ additions, deletions } = withheld);
     }
-    const stat = (
-      <PullRequestDiffStat
-        additions={additions}
-        deletions={deletions}
-        className="font-mono text-2xs"
+    return (
+      <FileViewedToggle
+        path={path}
+        stat={
+          <PullRequestDiffStat
+            additions={additions}
+            deletions={deletions}
+            className="font-mono text-2xs"
+          />
+        }
       />
     );
-    const viewedFiles = filesViewed;
-    if (!viewedFiles.enabled) return stat;
-    const viewed = viewedFiles.isViewed(path);
-    const stale = viewedFiles.isStale(path);
-    return (
-      <span className="flex items-center gap-3">
-        {stat}
-        <label
-          data-viewed-toggle=""
-          className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Checkbox
-            aria-label={stale ? "Changed" : "Viewed"}
-            checked={viewed}
-            disabled={!viewedFiles.writable}
-            onCheckedChange={(next, { event }) =>
-              setFileViewed(
-                path,
-                next === true,
-                isPinnedHeaderEvent(event, codeViewFrameRef.current),
-              )
-            }
-          />
-          {stale ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="text-warning-foreground" />}>
-                Changed
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                This file has been pushed to since you marked it viewed.
-              </TooltipPopup>
-            </Tooltip>
-          ) : (
-            <span className="@max-xs:hidden">Viewed</span>
-          )}
-        </label>
-      </span>
-    );
-  });
+  };
+
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -1486,26 +1516,28 @@ function PullRequestCodeTab({
           {/* The viewer virtualizes against the element it is told is scrolling and places its
             rows absolutely, so it has to own that element — the thread diff panel hands it the
             same one. Scrolling from a parent instead leaves it painting over its neighbours. */}
-          <StyledDiffCodeView<ReviewAnnotationGroup>
-            className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-            containerRef={scrollerRef}
-            viewerRef={setViewer}
-            items={items}
-            selectedLines={selectedLines}
-            onSelectedLinesChange={setSelectedLines}
-            options={diffViewOptions}
-            renderCodeViewFooter={renderCodeViewFooter}
-            renderHeaderPrefix={renderHeaderPrefix}
-            renderHeaderMetadata={renderHeaderMetadata}
-            renderAnnotation={renderAnnotation}
-            // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
-            onRevealSearchMatch={(item) => {
-              if (item.type === "diff") {
-                setFileFolded(resolveFileDiffPath(item.fileDiff), false);
-              }
-            }}
-            unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-          />
+          <FileViewedToggleContext value={fileViewedToggle}>
+            <StyledDiffCodeView<ReviewAnnotationGroup>
+              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+              containerRef={scrollerRef}
+              viewerRef={setViewer}
+              items={items}
+              selectedLines={selectedLines}
+              onSelectedLinesChange={setSelectedLines}
+              options={diffViewOptions}
+              renderCodeViewFooter={renderCodeViewFooter}
+              renderHeaderPrefix={renderHeaderPrefix}
+              renderHeaderMetadata={renderHeaderMetadata}
+              renderAnnotation={renderAnnotation}
+              // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
+              onRevealSearchMatch={(item) => {
+                if (item.type === "diff") {
+                  setFileFolded(resolveFileDiffPath(item.fileDiff), false);
+                }
+              }}
+              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+            />
+          </FileViewedToggleContext>
         </div>
         {fileTreeOpen ? (
           <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
