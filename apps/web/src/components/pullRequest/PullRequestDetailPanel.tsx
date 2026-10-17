@@ -29,7 +29,6 @@ import {
   ArrowUpRightIcon,
   BookOpenIcon,
   CheckIcon,
-  CircleDotIcon,
   CopyIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -53,16 +52,13 @@ import {
   lazy,
   Suspense,
   type MouseEvent as ReactMouseEvent,
-  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -103,7 +99,6 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useUiStateStore } from "~/uiStateStore";
-
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -200,9 +195,7 @@ import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
-
 type DetailTab = "summary" | "guide" | "timeline" | "code";
-
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
   merge: "Could not merge this pull request",
   ready: "Could not mark this ready for review",
@@ -216,7 +209,6 @@ const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
   "delete-branch": "Could not delete this branch",
   "approve-workflows": "Could not approve workflows",
 };
-
 const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   merge:
     "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
@@ -238,31 +230,28 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   "approve-workflows":
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
 };
-
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
-
-const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
+const TABS: ReadonlyArray<{
+  value: DetailTab;
+  label: string;
+}> = [
   { value: "summary", label: "Summary" },
   { value: "guide", label: "Guide" },
   { value: "timeline", label: "Timeline" },
   { value: "code", label: "Code" },
 ];
-
 // The diff viewer pulls in its worker pool, so load it only when the reader approaches Code.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
-
 /**
  * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
  * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
  * apart from the one they were handed: only the sentence still exactly as written may be replaced.
  */
 const lastHandoffPromptByDraft = new Map<string, string>();
-
 const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
   typeof target === "string" ? target : scopedThreadKey(target);
-
 function ActOnEnvironmentPicker({
   environments,
   value,
@@ -300,10 +289,12 @@ function ActOnEnvironmentPicker({
     </>
   );
 }
-
 const openNumberContextMenu = (
   event: ReactMouseEvent,
-  detail: { readonly url: string; readonly provider: string },
+  detail: {
+    readonly url: string;
+    readonly provider: string;
+  },
 ): void => {
   event.preventDefault();
   event.stopPropagation();
@@ -313,7 +304,6 @@ const openNumberContextMenu = (
     position: { x: event.clientX, y: event.clientY },
   });
 };
-
 function PullRequestBaseFreshnessWarning({
   baseBranch,
   freshness,
@@ -337,9 +327,7 @@ function PullRequestBaseFreshnessWarning({
   const behind =
     freshness.behindBy === null
       ? ""
-      : ` by ${freshness.behindBy.toLocaleString()} ${
-          freshness.behindBy === 1 ? "commit" : "commits"
-        }`;
+      : ` by ${freshness.behindBy.toLocaleString()} ${freshness.behindBy === 1 ? "commit" : "commits"}`;
   const summary = `This branch is out-of-date with ${baseBranch}${behind}.`;
   return (
     <Popover>
@@ -384,7 +372,6 @@ function PullRequestBaseFreshnessWarning({
     </Popover>
   );
 }
-
 export function PullRequestDetailPanel({
   environmentId,
   shortcutsEnabled,
@@ -425,17 +412,13 @@ export function PullRequestDetailPanel({
   const repositoryIdentity = project?.repositoryIdentity;
   const supportsThreadPullRequests =
     environmentConfigs.get(environmentId)?.environment.capabilities.threadPullRequests === true;
-  const reference = useMemo(
-    () =>
-      supportsThreadPullRequests
-        ? resolvePullRequestReferenceHost(requestedReference, repositoryIdentity)
-        : {
-            projectId: requestedReference.projectId,
-            repository: requestedReference.repository,
-            number: requestedReference.number,
-          },
-    [requestedReference, repositoryIdentity, supportsThreadPullRequests],
-  );
+  const reference = supportsThreadPullRequests
+    ? resolvePullRequestReferenceHost(requestedReference, repositoryIdentity)
+    : {
+        projectId: requestedReference.projectId,
+        repository: requestedReference.repository,
+        number: requestedReference.number,
+      };
   const pullRequestKey = `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
@@ -487,13 +470,12 @@ export function PullRequestDetailPanel({
   // A previously visited Code tab must not fetch diffs for every later PR while hidden.
   const mountedTabs =
     tabMountState.key === tabScopeKey ? tabMountState.tabs : new Set<DetailTab>([tab]);
-  useEffect(() => {
-    setTabMountState((previous) => {
-      if (previous.key !== tabScopeKey) return { key: tabScopeKey, tabs: new Set([tab]) };
-      if (previous.tabs.has(tab)) return previous;
-      return { key: tabScopeKey, tabs: new Set(previous.tabs).add(tab) };
+  if (tabMountState.key !== tabScopeKey || !tabMountState.tabs.has(tab)) {
+    setTabMountState({
+      key: tabScopeKey,
+      tabs: new Set(tabMountState.key === tabScopeKey ? tabMountState.tabs : []).add(tab),
     });
-  }, [tab, tabScopeKey]);
+  }
   const [chromeCondensed, setChromeCondensed] = useState(false);
   const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
   useEffect(() => {
@@ -501,20 +483,17 @@ export function PullRequestDetailPanel({
   }, [tab]);
   const condensed = chromeCondensed;
   const scrollerByTab = useRef<Partial<Record<DetailTab, HTMLDivElement | null>>>({});
-  const scrollerRefs = useMemo(
-    () => ({
-      summary: (node: HTMLDivElement | null) => {
-        scrollerByTab.current.summary = node;
-      },
-      timeline: (node: HTMLDivElement | null) => {
-        scrollerByTab.current.timeline = node;
-      },
-      code: (node: HTMLDivElement | null) => {
-        scrollerByTab.current.code = node;
-      },
-    }),
-    [],
-  );
+  const scrollerRefs = {
+    summary: (node: HTMLDivElement | null) => {
+      scrollerByTab.current.summary = node;
+    },
+    timeline: (node: HTMLDivElement | null) => {
+      scrollerByTab.current.timeline = node;
+    },
+    code: (node: HTMLDivElement | null) => {
+      scrollerByTab.current.code = node;
+    },
+  };
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
   const compensationRef = useRef<{
@@ -543,10 +522,7 @@ export function PullRequestDetailPanel({
     environmentId,
     reference.projectId,
   );
-  const projectDefaultMergeMethod = useMemo(
-    () => resolveProjectDefaultMergeMethod(),
-    [resolveProjectDefaultMergeMethod],
-  );
+  const projectDefaultMergeMethod = resolveProjectDefaultMergeMethod();
   const [mergeMethodSelection, setMergeMethodSelection] = useState<{
     readonly pullRequestKey: string;
     readonly method: PullRequestMergeMethod;
@@ -571,7 +547,10 @@ export function PullRequestDetailPanel({
       reference,
     ),
   );
-  useEffect(() => {
+  const [cachedDetailScope, setCachedDetailScope] = useState(tabScopeKey);
+  const [previousLiveDetail, setPreviousLiveDetail] = useState(detailQuery.data);
+  if (cachedDetailScope !== tabScopeKey) {
+    setCachedDetailScope(tabScopeKey);
     setCachedDetail(
       readPullRequestDetailSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
@@ -579,43 +558,34 @@ export function PullRequestDetailPanel({
         reference,
       ),
     );
-  }, [environmentId, pullRequestKey, reference.projectId, reference.repository, reference.number]);
+  }
+  if (previousLiveDetail !== detailQuery.data) {
+    setPreviousLiveDetail(detailQuery.data);
+    if (detailQuery.data !== null) setCachedDetail(detailQuery.data);
+  }
   useEffect(() => {
-    if (detailQuery.data === null) return;
-    writePullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-      detailQuery.data,
-    );
-    setCachedDetail(detailQuery.data);
-  }, [
-    detailQuery.data,
-    environmentId,
-    pullRequestKey,
-    reference.projectId,
-    reference.repository,
-    reference.number,
-  ]);
+    if (detailQuery.data !== null)
+      writePullRequestDetailSnapshot(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        environmentId,
+        reference,
+        detailQuery.data,
+      );
+  }, [detailQuery.data, environmentId, reference]);
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: detailQuery.data,
     cached: cachedDetail,
     reference,
   });
-  const listSummary = useMemo(
-    () => (matchingListEntry === null ? null : pullRequestListEntryToSummary(matchingListEntry)),
-    [matchingListEntry],
-  );
-  const detailSummary = useMemo(
-    () =>
-      detailQuery.data === null
-        ? null
-        : {
-            ...detailQuery.data,
-            checksState: pullRequestChecksState(detailQuery.data.checks),
-          },
-    [detailQuery.data],
-  );
+  const listSummary =
+    matchingListEntry === null ? null : pullRequestListEntryToSummary(matchingListEntry);
+  const detailSummary =
+    detailQuery.data === null
+      ? null
+      : {
+          ...detailQuery.data,
+          checksState: pullRequestChecksState(detailQuery.data.checks),
+        };
   const observedSummary = useSharedPullRequestSummary(
     environmentId,
     reference,
@@ -624,86 +594,76 @@ export function PullRequestDetailPanel({
   );
   // The list row is also published to the shared cache, but only after this commit's layout
   // effects run, so it is compared directly rather than trusted to be there already.
-  const sharedSummary = useMemo(
-    () =>
-      newestPullRequestSummary(
-        resolvedCoreDetail,
-        newestPullRequestSummary(observedSummary, listSummary),
-      ),
-    [resolvedCoreDetail, observedSummary, listSummary],
+  const sharedSummary = newestPullRequestSummary(
+    resolvedCoreDetail,
+    newestPullRequestSummary(observedSummary, listSummary),
   );
-  const coreDetail = useMemo(
-    () =>
-      resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
-        ? resolvedCoreDetail
-        : {
-            ...resolvedCoreDetail,
-            title: sharedSummary.title,
-            state: sharedSummary.state,
-            headBranch: sharedSummary.headBranch,
-            baseBranch: sharedSummary.baseBranch,
-            updatedAt: sharedSummary.updatedAt,
-            author: sharedSummary.author ?? resolvedCoreDetail.author,
-            additions: sharedSummary.additions ?? resolvedCoreDetail.additions,
-            deletions: sharedSummary.deletions ?? resolvedCoreDetail.deletions,
-            changedFiles: sharedSummary.changedFiles ?? resolvedCoreDetail.changedFiles,
-            mergeability: sharedSummary.mergeability ?? resolvedCoreDetail.mergeability,
-            closedAt:
-              sharedSummary.closedAt === undefined
-                ? resolvedCoreDetail.closedAt
-                : sharedSummary.closedAt,
-            mergedAt:
-              sharedSummary.mergedAt === undefined
-                ? resolvedCoreDetail.mergedAt
-                : sharedSummary.mergedAt,
-            isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
-          },
-    [resolvedCoreDetail, sharedSummary],
-  );
+  const coreDetail =
+    resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
+      ? resolvedCoreDetail
+      : {
+          ...resolvedCoreDetail,
+          title: sharedSummary.title,
+          state: sharedSummary.state,
+          headBranch: sharedSummary.headBranch,
+          baseBranch: sharedSummary.baseBranch,
+          updatedAt: sharedSummary.updatedAt,
+          author: sharedSummary.author ?? resolvedCoreDetail.author,
+          additions: sharedSummary.additions ?? resolvedCoreDetail.additions,
+          deletions: sharedSummary.deletions ?? resolvedCoreDetail.deletions,
+          changedFiles: sharedSummary.changedFiles ?? resolvedCoreDetail.changedFiles,
+          mergeability: sharedSummary.mergeability ?? resolvedCoreDetail.mergeability,
+          closedAt:
+            sharedSummary.closedAt === undefined
+              ? resolvedCoreDetail.closedAt
+              : sharedSummary.closedAt,
+          mergedAt:
+            sharedSummary.mergedAt === undefined
+              ? resolvedCoreDetail.mergedAt
+              : sharedSummary.mergedAt,
+          isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
+        };
   const activity = activityQuery.data;
-  const detail = useMemo(
-    () =>
-      coreDetail === null
-        ? null
-        : {
-            ...coreDetail,
-            capabilities: canWriteSourceControl
-              ? coreDetail.capabilities
-              : {
-                  ...coreDetail.capabilities,
-                  reactions: false,
-                  reactionSubjects: {
-                    changeRequest: false,
-                    issueComment: false,
-                    reviewComment: false,
-                    review: false,
-                  },
-                  edit: { changeRequest: false, comment: false },
+  const detail =
+    coreDetail === null
+      ? null
+      : {
+          ...coreDetail,
+          capabilities: canWriteSourceControl
+            ? coreDetail.capabilities
+            : {
+                ...coreDetail.capabilities,
+                reactions: false,
+                reactionSubjects: {
+                  changeRequest: false,
+                  issueComment: false,
+                  reviewComment: false,
+                  review: false,
                 },
-            viewerPermissions: canWriteSourceControl
-              ? coreDetail.viewerPermissions
-              : {
-                  ...coreDetail.viewerPermissions,
-                  actions: [],
-                  stackRebase: false,
-                  comment: false,
-                  resolve: false,
-                  verdicts: [],
-                  requestReviewers: false,
-                  updateMethods: [],
-                  labels: false,
-                },
-            author: activity?.author ?? coreDetail.author,
-            reviewers: activity?.reviewers ?? coreDetail.reviewers,
-            comments: activity?.comments ?? [],
-            commentCount: activity?.commentCount ?? 0,
-            commentsTruncated: activity?.commentsTruncated ?? false,
-            reviewThreads: activity?.reviewThreads ?? [],
-            commits: activity?.commits ?? [],
-            reactions: activity?.reactions ?? [],
-          },
-    [activity, canWriteSourceControl, coreDetail],
-  );
+                edit: { changeRequest: false, comment: false },
+              },
+          viewerPermissions: canWriteSourceControl
+            ? coreDetail.viewerPermissions
+            : {
+                ...coreDetail.viewerPermissions,
+                actions: [],
+                stackRebase: false,
+                comment: false,
+                resolve: false,
+                verdicts: [],
+                requestReviewers: false,
+                updateMethods: [],
+                labels: false,
+              },
+          author: activity?.author ?? coreDetail.author,
+          reviewers: activity?.reviewers ?? coreDetail.reviewers,
+          comments: activity?.comments ?? [],
+          commentCount: activity?.commentCount ?? 0,
+          commentsTruncated: activity?.commentsTruncated ?? false,
+          reviewThreads: activity?.reviewThreads ?? [],
+          commits: activity?.commits ?? [],
+          reactions: activity?.reactions ?? [],
+        };
   const handoffSummary = detail ?? sharedSummary;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
@@ -731,20 +691,20 @@ export function PullRequestDetailPanel({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
-  useEffect(() => {
+  const mergePreferenceKey = `${pullRequestKey}:${detail?.autoMergeMethod ?? ""}`;
+  const [previousMergePreference, setPreviousMergePreference] = useState(mergePreferenceKey);
+  if (previousMergePreference !== mergePreferenceKey) {
+    setPreviousMergePreference(mergePreferenceKey);
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
-  }, [detail?.autoMergeMethod, pullRequestKey]);
+  }
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const hostClient = sourceControlClients.get(detail?.provider);
-  const markdownContext = useMemo(
-    () => ({
-      repositoryUrl:
-        repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
-      provider: detail?.provider ?? null,
-      threadRef,
-    }),
-    [detail?.provider, hostClient, repositoryUrl, threadRef],
-  );
+  const markdownContext = {
+    repositoryUrl:
+      repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
+    provider: detail?.provider ?? null,
+    threadRef,
+  };
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
       ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
@@ -758,22 +718,19 @@ export function PullRequestDetailPanel({
         changeRequestRepositoryUrl(handoffSummary.url),
       )
     : loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
-  const onCheckoutCommandError = useCallback((error: Error) => {
+  const onCheckoutCommandError = (error: Error) => {
     toastManager.add({
       type: "error",
       title: "Could not copy checkout command",
       description: error.message,
     });
-  }, []);
+  };
   // The host's own stack, where it keeps one. Only asked for once the detail has landed so a
   // pull request nobody can read costs one request rather than two.
-  const stackReference = useMemo(
-    () =>
-      detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
-        ? null
-        : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host },
-    [detail, reference, supportsThreadPullRequests],
-  );
+  const stackReference =
+    detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
+      ? null
+      : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host };
   const nativeStackQuery = usePullRequestStack(environmentId, stackReference);
   const nativeStack = nativeStackQuery.data;
   const isStackedPullRequest = nativeStack !== null;
@@ -808,40 +765,39 @@ export function PullRequestDetailPanel({
   });
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
-  const refreshDetail = useCallback(() => {
+  const refreshDetail = () => {
     detailQuery.refresh();
     activityQuery.refresh();
     dependencyContextQuery.refresh();
     nativeStackQuery.refresh();
-  }, [
-    activityQuery.refresh,
-    dependencyContextQuery.refresh,
-    detailQuery.refresh,
-    nativeStackQuery.refresh,
-  ]);
+  };
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   // Softer than the token above: the diff is read again in place, and only a page that came back
   // different replaces what is on screen.
   const [diffRevalidateToken, setDiffRevalidateToken] = useState(0);
-  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (!coreDetail) return;
-    const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
-    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
-      // Let an existing read settle before revalidating the new revision. Interrupting a
-      // mutation's activity refresh can leave SWR displaying its previous value.
-      if (activityQuery.isPending) return;
-      activityQuery.refresh();
-      // A resolved conversation or a reaction moves this revision as surely as a push does, so
-      // the diff is checked rather than started over: starting over throws away the reader's
-      // place for a change that usually left the code alone.
+  const [activityRevision, setActivityRevision] = useState<{
+    readonly key: string;
+    readonly updatedAt: string;
+  } | null>(null);
+  const [activityRevalidations, setActivityRevalidations] = useState(0);
+  const coreUpdatedAt = coreDetail?.updatedAt ?? null;
+  if (
+    coreUpdatedAt !== null &&
+    (activityRevision?.key !== tabScopeKey || activityRevision.updatedAt !== coreUpdatedAt)
+  ) {
+    const next = { key: tabScopeKey, updatedAt: coreUpdatedAt };
+    if (!shouldRefreshPullRequestActivity(activityRevision, next)) setActivityRevision(next);
+    else if (!activityQuery.isPending) {
+      setActivityRevision(next);
+      setActivityRevalidations((count) => count + 1);
       setDiffRevalidateToken((token) => token + 1);
     }
-    activityRevision.current = next;
-  }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
+  }
+  const revalidateActivity = useEffectEvent(() => activityQuery.refresh());
+  useEffect(() => {
+    if (activityRevalidations > 0) revalidateActivity();
+  }, [activityRevalidations]);
   useLiveRefresh(
     () => {
       detailQuery.refresh();
@@ -850,22 +806,19 @@ export function PullRequestDetailPanel({
     { key: `pull-request:${environmentId}:${pullRequestKey}` },
   );
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
-  const retryDependencies = useCallback(async () => {
+  const retryDependencies = async () => {
     await invalidate({ environmentId, input: { reference } });
     dependencyContextQuery.refresh();
-  }, [dependencyContextQuery.refresh, environmentId, invalidate, reference]);
+  };
   const [isInvalidating, setIsInvalidating] = useState(false);
   const refreshing = isInvalidating || detailQuery.isPending;
-  const refreshFromHost = useCallback(async () => {
+  const refreshFromHost = async () => {
     setIsInvalidating(true);
-    try {
-      await invalidate({ environmentId, input: { reference } });
-      refreshDetail();
-      setRefreshToken((token) => token + 1);
-    } finally {
-      setIsInvalidating(false);
-    }
-  }, [environmentId, invalidate, reference, refreshDetail]);
+    await invalidate({ environmentId, input: { reference } });
+    refreshDetail();
+    setRefreshToken((token) => token + 1);
+    setIsInvalidating(false);
+  };
   const appliedForcedToken = useRef(forcedRefreshToken);
   useEffect(() => {
     if (appliedForcedToken.current === forcedRefreshToken) return;
@@ -889,38 +842,28 @@ export function PullRequestDetailPanel({
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
-  const unavailableBrowserUrl = useMemo(() => {
+  const unavailableBrowserUrl = (() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
     return matchingListEntry?.provider === "gitea" || identity?.provider === "gitea"
       ? giteaPullRequestBrowserUrl(identity, reference.repository, reference.number)
       : gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
-  }, [
-    environmentId,
-    matchingListEntry?.provider,
-    projects,
-    reference.number,
-    reference.projectId,
-    reference.repository,
-  ]);
+  })();
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
-  const pickableEnvironments = useMemo(
-    () =>
-      context === "page"
-        ? resolvePickableEnvironments(
-            { environmentId, projectId: reference.projectId },
-            projects,
-            environments.map((environment) => ({
-              environmentId: environment.environmentId,
-              label: environment.label,
-              machine: resolveEnvironmentMachineKind(environment.serverConfig),
-            })),
-          )
-        : [],
-    [context, environmentId, environments, projects, reference.projectId],
-  );
+  const pickableEnvironments =
+    context === "page"
+      ? resolvePickableEnvironments(
+          { environmentId, projectId: reference.projectId },
+          projects,
+          environments.map((environment) => ({
+            environmentId: environment.environmentId,
+            label: environment.label,
+            machine: resolveEnvironmentMachineKind(environment.serverConfig),
+          })),
+        )
+      : [];
   const [actingScope, setActingScope] = useState<{
     readonly pullRequestKey: string;
     readonly environmentId: EnvironmentId;
@@ -937,7 +880,6 @@ export function PullRequestDetailPanel({
     environmentId: actingEnvironmentId,
     cwd: checkoutRoot,
   });
-
   const finishAction = async (
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
@@ -985,7 +927,6 @@ export function PullRequestDetailPanel({
     onActed?.(action, "done");
     return true;
   };
-
   const perform = async (
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
@@ -995,7 +936,6 @@ export function PullRequestDetailPanel({
     setPendingAction(action);
     return finishAction(action, method, updateMethod);
   };
-
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
     if (!canWriteSourceControl || pendingAction !== null) return { commentPosted: false };
     setPendingAction(action);
@@ -1014,7 +954,6 @@ export function PullRequestDetailPanel({
     if (!actionSucceeded) refreshDetail();
     return { commentPosted: true };
   };
-
   const saveTitle = async (next: string) => {
     const title = next.trim();
     if (!canWriteSourceControl || detail === null || titleSaving) return;
@@ -1039,12 +978,10 @@ export function PullRequestDetailPanel({
     setTitleScope(null);
     refreshDetail();
   };
-
   type ThreadTask = {
     prompt: string;
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
   };
-
   const attachTarget = composerDraftTarget ?? null;
   const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
   const canFixFindings = attachTarget !== null || canPrepareWorktree;
@@ -1058,7 +995,6 @@ export function PullRequestDetailPanel({
     void guideWriter.write();
     if (guideWriter.data?.guide == null) setTab("guide");
   };
-
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
@@ -1095,12 +1031,15 @@ export function PullRequestDetailPanel({
       });
     }
   };
-
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: ThreadTask | null,
-    opened?: { draftId: DraftId },
-  ): Promise<{ draftId: DraftId } | null> => {
+    opened?: {
+      draftId: DraftId;
+    },
+  ): Promise<{
+    draftId: DraftId;
+  } | null> => {
     const session =
       opened ??
       (await newThread(projectRef).then(
@@ -1112,11 +1051,12 @@ export function PullRequestDetailPanel({
     writeTaskToComposer(session.draftId, task);
     return session;
   };
-
   const startAsk = async (
     kind: string,
     task: ThreadTask,
-    options?: { readonly keepGuide?: boolean },
+    options?: {
+      readonly keepGuide?: boolean;
+    },
   ) => {
     if (!detail || handoff !== null) return;
     if (attachTarget !== null) {
@@ -1168,10 +1108,12 @@ export function PullRequestDetailPanel({
           : "The pull request is in the composer — type your question, then send.",
     });
   };
-
   const startHandoff = async (
     kind: string,
-    task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
+    task: {
+      prompt: string;
+      reviewComments?: ReadonlyArray<ReviewCommentContext>;
+    } | null,
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
@@ -1293,7 +1235,6 @@ export function PullRequestDetailPanel({
         : staleCheckoutToast,
     );
   };
-
   const askAboutPullRequest = () => {
     if (!detail) return;
     void startAsk("ask", {
@@ -1308,7 +1249,6 @@ export function PullRequestDetailPanel({
       }),
     });
   };
-
   const explainPullRequest = () => {
     if (!detail) return;
     void startAsk("explain", {
@@ -1323,7 +1263,6 @@ export function PullRequestDetailPanel({
       }),
     });
   };
-
   const askAboutGuideStop = (stop: PullRequestReviewGuideStop, index: number, question: string) => {
     if (!detail) return;
     void startAsk(
@@ -1348,10 +1287,11 @@ export function PullRequestDetailPanel({
       { keepGuide: true },
     );
   };
-
   const addSelectionToAgent = (
     selection: PullRequestAgentSelectionInput,
-    options?: { readonly keepGuide?: boolean },
+    options?: {
+      readonly keepGuide?: boolean;
+    },
   ) => {
     if (!detail) return;
     void startAsk(
@@ -1370,12 +1310,10 @@ export function PullRequestDetailPanel({
       options,
     );
   };
-
   const startCheckout = (mode: "worktree" | "local") => {
     if (!handoffSummary) return;
     void startHandoff(`checkout:${mode}`, null, mode);
   };
-
   const startFixFinding = (finding: PullRequestFinding) => {
     if (!detail) return;
     void startHandoff(
@@ -1390,7 +1328,6 @@ export function PullRequestDetailPanel({
       }),
     );
   };
-
   const startFixFindings = () => {
     if (!detail) return;
     void startHandoff(
@@ -1408,7 +1345,6 @@ export function PullRequestDetailPanel({
       }),
     );
   };
-
   const startResolveConflicts = () => {
     if (!handoffSummary) return;
     void startHandoff("conflicts", {
@@ -1420,7 +1356,6 @@ export function PullRequestDetailPanel({
       }),
     });
   };
-
   const allowedMergeMethods = detail
     ? detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method])
     : [];
@@ -1452,9 +1387,7 @@ export function PullRequestDetailPanel({
       (item.value !== "code" || detail === null || detail.capabilities.diff) &&
       (item.value !== "guide" || reviewGuidesEnabled),
   );
-  useEffect(() => {
-    if (!visibleTabs.some((item) => item.value === tab)) setTab("summary");
-  }, [tab, visibleTabs]);
+  if (!visibleTabs.some((item) => item.value === tab)) setTab("summary");
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
@@ -1543,7 +1476,6 @@ export function PullRequestDetailPanel({
           (entry) => entry.outcome === "approved" && !entry.stale,
         ).length
       : 0;
-
   const checkoutControl =
     context === "page" ? (
       <Menu>
@@ -1600,7 +1532,6 @@ export function PullRequestDetailPanel({
         </MenuPopup>
       </Menu>
     ) : null;
-
   const resolveConflictsControl = (
     <Tooltip>
       <TooltipTrigger
@@ -1626,7 +1557,6 @@ export function PullRequestDetailPanel({
       </TooltipPopup>
     </Tooltip>
   );
-
   if (detailQuery.isPending && !detail) {
     return (
       <PullRequestDetailGhost
@@ -1652,7 +1582,6 @@ export function PullRequestDetailPanel({
       />
     );
   }
-
   const content = (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
@@ -2414,9 +2343,7 @@ export function PullRequestDetailPanel({
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-2xs">
                     <span
                       className="inline-flex items-center gap-1 tabular-nums"
-                      aria-label={`${detail.changedFiles.toLocaleString()} changed ${
-                        detail.changedFiles === 1 ? "file" : "files"
-                      }`}
+                      aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                     >
                       <FileDiffIcon aria-hidden className="size-3" />
                       {detail.changedFiles.toLocaleString()}
@@ -2691,9 +2618,7 @@ export function PullRequestDetailPanel({
                     aria-label={
                       activityError
                         ? "Comments unavailable"
-                        : `${detail.commentCount.toLocaleString()} ${
-                            detail.commentCount === 1 ? "comment" : "comments"
-                          }`
+                        : `${detail.commentCount.toLocaleString()} ${detail.commentCount === 1 ? "comment" : "comments"}`
                     }
                   >
                     <MessageSquareIcon aria-hidden className="size-3" />
@@ -2708,9 +2633,7 @@ export function PullRequestDetailPanel({
                     aria-label={
                       activityError
                         ? "Commits unavailable"
-                        : `${detail.commits.length.toLocaleString()} ${
-                            detail.commits.length === 1 ? "commit" : "commits"
-                          }`
+                        : `${detail.commits.length.toLocaleString()} ${detail.commits.length === 1 ? "commit" : "commits"}`
                     }
                   >
                     <GitCommitHorizontalIcon aria-hidden className="size-3" />

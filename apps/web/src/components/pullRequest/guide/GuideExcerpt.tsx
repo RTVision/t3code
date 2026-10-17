@@ -11,8 +11,7 @@ import type {
   PullRequestReviewPosition,
 } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
-
+import { useState } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import {
   getRenderablePatch,
@@ -25,7 +24,6 @@ import {
   resolveDiffReviewPosition,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
-
 import { DiffCommentAnnotation } from "../../diffs/DiffCommentAnnotation";
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
 import { Button } from "../../ui/button";
@@ -43,18 +41,18 @@ import {
 } from "@t3tools/client-runtime/review-guide-tour";
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
-
 const EXCERPT_UNSAFE_CSS = `${DIFF_VIEW_UNSAFE_CSS}
 [data-code]::-webkit-scrollbar-thumb {
   background-color: var(--diffs-bg-context);
 }
 `;
-
 export interface ExcerptNoteMarker {
   readonly line: number;
-  readonly markers: ReadonlyArray<{ readonly marker: string; readonly title: string }>;
+  readonly markers: ReadonlyArray<{
+    readonly marker: string;
+    readonly title: string;
+  }>;
 }
-
 export interface ExcerptCommenting {
   readonly canComment: boolean;
   readonly workspaceRoot: string;
@@ -71,18 +69,15 @@ export interface ExcerptCommenting {
   readonly onRemove: (commentId: string) => void;
   readonly onAskAgent: ((comment: ReviewCommentContext, request: string) => void) | null;
 }
-
 interface ExcerptAnnotation {
   readonly markers: ExcerptNoteMarker["markers"];
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly draft: boolean;
 }
-
 interface ExcerptDraft {
   readonly range: SelectedLineRange;
   readonly position: PullRequestReviewPosition;
 }
-
 export function GuideExcerpt({
   excerpt,
   file,
@@ -102,7 +97,7 @@ export function GuideExcerpt({
 }) {
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const { resolvedTheme } = useTheme();
-  const slice = useMemo(() => {
+  const slice = (() => {
     if (file === null) return null;
     const rows = fileDiffRows(file);
     const shown = excerptRows(rows, excerpt);
@@ -118,13 +113,12 @@ export function GuideExcerpt({
       deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
     };
     return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
-  }, [excerpt, file]);
-
+  })();
   // The excerpt expands against an old side of its own: the file's real old side differs from
   // the new one wherever another hunk changed it, and the renderer needs the two to agree around
   // the lines it shows. A slice across hunks has nothing consistent to expand into.
   const sliceRows = slice?.rows ?? null;
-  const loadExcerptFiles = useMemo<FileDiffContentsLoader | null>(() => {
+  const loadExcerptFiles: FileDiffContentsLoader | null = (() => {
     if (sliceRows === null || sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
       return null;
     }
@@ -141,9 +135,8 @@ export function GuideExcerpt({
         },
       };
     };
-  }, [excerpt.end, excerpt.side, excerpt.start, loadDiffFiles, sliceRows]);
-
-  const annotations = useMemo(() => {
+  })();
+  const annotations = (() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
     const at = (side: "additions" | "deletions", line: number) => {
       const key = `${side}:${line}`;
@@ -187,17 +180,13 @@ export function GuideExcerpt({
       update(toViewerSide(anchor.side), anchor.line, (metadata) => ({ ...metadata, draft: true }));
     }
     return [...groups.values()];
-  }, [commenting?.pending, draft, excerpt.path, excerpt.side, notes, slice]);
-
-  const beginComment = useCallback(
-    (range: SelectedLineRange | null) => {
-      if (range === null || file === null) return;
-      const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
-      if (position === null) return;
-      setDraft({ range, position });
-    },
-    [file],
-  );
+  })();
+  const beginComment = (range: SelectedLineRange | null) => {
+    if (range === null || file === null) return;
+    const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
+    if (position === null) return;
+    setDraft({ range, position });
+  };
   const interactive = commenting !== null && draft === null;
   const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
@@ -214,27 +203,22 @@ export function GuideExcerpt({
     setDraft(null);
     if (comment !== null) onAskAgent(comment, request);
   };
-
-  const options = useMemo(
-    () => ({
-      diffStyle: "unified" as const,
-      lineDiffType: "none" as const,
-      overflow: "scroll" as const,
-      theme: resolveDiffThemeName(resolvedTheme),
-      themeType: resolvedTheme,
-      preferredHighlighter: PREFERRED_HIGHLIGHTER,
-      unsafeCSS: EXCERPT_UNSAFE_CSS,
-      enableGutterUtility: interactive,
-      enableLineSelection: interactive,
-      onGutterUtilityClick: beginComment,
-      onLineSelectionEnd: beginComment,
-      ...(loadExcerptFiles === null
-        ? { hunkSeparators: "simple" as const }
-        : { loadDiffFiles: loadExcerptFiles }),
-    }),
-    [resolvedTheme, interactive, beginComment, loadExcerptFiles],
-  );
-
+  const options = {
+    diffStyle: "unified" as const,
+    lineDiffType: "none" as const,
+    overflow: "scroll" as const,
+    theme: resolveDiffThemeName(resolvedTheme),
+    themeType: resolvedTheme,
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
+    unsafeCSS: EXCERPT_UNSAFE_CSS,
+    enableGutterUtility: interactive,
+    enableLineSelection: interactive,
+    onGutterUtilityClick: beginComment,
+    onLineSelectionEnd: beginComment,
+    ...(loadExcerptFiles === null
+      ? { hunkSeparators: "simple" as const }
+      : { loadDiffFiles: loadExcerptFiles }),
+  };
   return (
     <figure className="flex min-w-0 flex-col gap-1.5">
       {excerpt.caption.trim() !== "" ? (
@@ -344,7 +328,6 @@ export function GuideExcerpt({
     </figure>
   );
 }
-
 function previousPathOf(file: FileDiffMetadata, path: string): string | null {
   const previous = resolveFileDiffPreviousPath(file);
   return previous === path ? null : previous;

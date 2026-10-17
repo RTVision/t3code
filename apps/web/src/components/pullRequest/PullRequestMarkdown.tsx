@@ -7,13 +7,11 @@ import type {
   ScopedThreadRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
-
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
-
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import {
@@ -21,13 +19,11 @@ import {
   resolvePullRequestImageAsset,
   splitPullRequestBody,
 } from "./pullRequestMarkdown.logic";
-
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
   provider: SourceControlProviderKind | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
-
 function PullRequestGitHubVideo({
   environmentId,
   cwd,
@@ -39,10 +35,7 @@ function PullRequestGitHubVideo({
   url: string;
   fetchUrl: string;
 }) {
-  const resource = useMemo<AssetResource>(
-    () => ({ _tag: "github-media", cwd, url: fetchUrl }),
-    [cwd, fetchUrl],
-  );
+  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -58,7 +51,6 @@ function PullRequestGitHubVideo({
     />
   );
 }
-
 export function PullRequestMarkdown({
   text,
   cwd,
@@ -76,18 +68,11 @@ export function PullRequestMarkdown({
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
   const provider = context?.provider;
-  const resolveImageAsset = useCallback(
-    (source: string) => resolvePullRequestImageAsset(source, provider, repositoryUrl),
-    [provider, repositoryUrl],
-  );
+  const resolveImageAsset = (source: string) =>
+    resolvePullRequestImageAsset(source, provider, repositoryUrl);
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
-  const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () =>
-      provider === "github" && repositoryUrl
-        ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
-        : [],
-    [provider, repositoryUrl],
-  );
+  const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> =
+    provider === "github" && repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : [];
   return (
     <div
       className={cn(

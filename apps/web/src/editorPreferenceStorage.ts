@@ -1,6 +1,5 @@
 import * as Schema from "effect/Schema";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
-
+import { useState, useSyncExternalStore } from "react";
 const values = new Map<string, string | null>();
 const listeners = new Map<string, Set<() => void>>();
 const changeEvent = "t3code:local_storage_change";
@@ -31,7 +30,13 @@ function onStorage(event: StorageEvent) {
   } else refresh(event.key);
 }
 function onLocalChange(event: Event) {
-  refresh((event as CustomEvent<{ key: string }>).detail.key);
+  refresh(
+    (
+      event as CustomEvent<{
+        key: string;
+      }>
+    ).detail.key,
+  );
 }
 // All editor consumers share two browser listeners and cached serialized snapshots.
 function subscribe(key: string, listener: () => void) {
@@ -61,31 +66,36 @@ export function useEditorPreference<T, E>(
   initial: T,
   schema: Schema.Codec<T, E>,
 ): [T, (value: T) => void] {
-  const getSnapshot = useCallback(() => snapshot(key), [key]);
-  const watch = useCallback((listener: () => void) => subscribe(key, listener), [key]);
-  const serialized = useSyncExternalStore(watch, getSnapshot, getSnapshot);
-  const value = useMemo(() => {
+  const [binding, setBinding] = useState(() => editorPreferenceBinding(key));
+  if (binding.key !== key) setBinding(editorPreferenceBinding(key));
+  const serialized = useSyncExternalStore(binding.watch, binding.getSnapshot, binding.getSnapshot);
+  const value = (() => {
     if (serialized === null) return initial;
     try {
       return Schema.decodeSync(Schema.fromJsonString(schema))(serialized);
     } catch {
       return initial;
     }
-  }, [serialized, initial, schema]);
-  const set = useCallback(
-    (next: T) => {
-      try {
-        const serialized =
-          next === null ? null : Schema.encodeSync(Schema.fromJsonString(schema))(next);
-        if (snapshot(key) === serialized) return;
-        if (serialized === null) window.localStorage.removeItem(key);
-        else window.localStorage.setItem(key, serialized);
-        window.dispatchEvent(new CustomEvent(changeEvent, { detail: { key } }));
-      } catch (error) {
-        console.error("Could not save editor preference.", error);
-      }
-    },
-    [key, schema],
-  );
+  })();
+  const set = (next: T) => {
+    try {
+      const serialized =
+        next === null ? null : Schema.encodeSync(Schema.fromJsonString(schema))(next);
+      if (snapshot(key) === serialized) return;
+      if (serialized === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, serialized);
+      window.dispatchEvent(new CustomEvent(changeEvent, { detail: { key } }));
+    } catch (error) {
+      console.error("Could not save editor preference.", error);
+    }
+  };
   return [value, set];
+}
+
+function editorPreferenceBinding(key: string) {
+  return {
+    key,
+    watch: (listener: () => void) => subscribe(key, listener),
+    getSnapshot: () => snapshot(key),
+  };
 }

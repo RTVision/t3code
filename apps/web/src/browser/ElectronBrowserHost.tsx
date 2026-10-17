@@ -1,20 +1,19 @@
 "use client";
-
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import { AuthPreviewOperateScope, FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  type DesktopPreviewOpenLinkEvent,
+  FILL_PREVIEW_VIEWPORT,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { type ComponentProps, useEffect, useMemo, useRef } from "react";
-
+import { type ComponentProps, useEffect, useEffectEvent } from "react";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
-
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
-import { useTheme } from "~/hooks/useTheme";
 import { pinPreviewDesktopProfile, useActivePreviewSessions } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
-
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
@@ -22,43 +21,32 @@ import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
-
 export function ElectronBrowserHost() {
-  const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   const hydrated = useClientSettingsHydrated();
   const defaultProfileId = useBrowserDefaults().profileId;
-  const sessions = useMemo(
-    () =>
-      Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
-        const threadRef = parseScopedThreadKey(threadKey);
-        return threadRef
-          ? Object.values(previewState.sessions)
-              .filter(
-                (snapshot) =>
-                  snapshot.runtime !== "server" ||
-                  rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot),
-              )
-              .map((snapshot) => ({
-                threadRef,
-                snapshot,
-                runtimeTabId: previewRuntimeTabId(
-                  threadRef,
-                  previewState.serverEpoch,
-                  snapshot.tabId,
-                ),
-                serverEpoch: previewState.serverEpoch,
-                profileId: previewState.desktopProfileByTabId?.[snapshot.tabId],
-                pictureInPicture:
-                  previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
-                zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
-              }))
-          : [];
-      }),
-    [previewByThreadKey, primaryEnvironmentId],
-  );
-
+  const sessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
+    const threadRef = parseScopedThreadKey(threadKey);
+    return threadRef
+      ? Object.values(previewState.sessions)
+          .filter(
+            (snapshot) =>
+              snapshot.runtime !== "server" ||
+              rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot),
+          )
+          .map((snapshot) => ({
+            threadRef,
+            snapshot,
+            runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
+            serverEpoch: previewState.serverEpoch,
+            profileId: previewState.desktopProfileByTabId?.[snapshot.tabId],
+            pictureInPicture:
+              previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
+            zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
+          }))
+      : [];
+  });
   useEffect(() => {
     if (!isElectron || !hydrated) return;
     for (const session of sessions) {
@@ -71,11 +59,9 @@ export function ElectronBrowserHost() {
       );
     }
   }, [defaultProfileId, hydrated, sessions]);
-
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
-
     let lastSerializedTheme = "";
     const syncTheme = () => {
       const theme = readPreviewAnnotationTheme();
@@ -103,8 +89,7 @@ export function ElectronBrowserHost() {
       observer.disconnect();
       headObserver.disconnect();
     };
-  }, [resolvedTheme]);
-
+  }, []);
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
@@ -112,31 +97,23 @@ export function ElectronBrowserHost() {
       useBrowserPointerStore.getState().apply(event);
     });
   }, []);
-
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: true });
-  const sessionByRuntimeTabId = useRef(new Map<string, (typeof sessions)[number]>());
-  useEffect(() => {
-    sessionByRuntimeTabId.current = new Map(
-      sessions.map((session) => [session.runtimeTabId, session]),
-    );
-  }, [sessions]);
+  const onOpenLink = useEffectEvent(({ tabId, url, background }: DesktopPreviewOpenLinkEvent) => {
+    const source = sessions.find((session) => session.runtimeTabId === tabId);
+    if (!source || source.profileId === undefined) return;
+    void openUrlInPreview({
+      threadRef: source.threadRef,
+      url,
+      openPreview,
+      profileId: source.profileId,
+      background,
+    });
+  });
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
-    return preview.onOpenLink?.(({ tabId, url, background }) => {
-      const source = sessionByRuntimeTabId.current.get(tabId);
-      if (!source || source.profileId === undefined) return;
-      // The new tab keeps the source tab's profile so its cookies carry over.
-      void openUrlInPreview({
-        threadRef: source.threadRef,
-        url,
-        openPreview,
-        profileId: source.profileId,
-        background,
-      });
-    });
-  }, [openPreview]);
-
+    return preview.onOpenLink?.(onOpenLink);
+  }, []);
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
@@ -170,7 +147,6 @@ export function ElectronBrowserHost() {
     </div>
   );
 }
-
 function AuthorizedBrowserWebview(props: ComponentProps<typeof HostedBrowserWebview>) {
   const canOperatePreview = useEnvironmentScope(
     props.threadRef.environmentId,

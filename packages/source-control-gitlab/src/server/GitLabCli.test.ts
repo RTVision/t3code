@@ -77,7 +77,7 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({
           command: "glab",
           cwd: "/repo",
-          args: ["mr", "view", "42", "--output", "json"],
+          args: ["mr", "view", "--output", "json", "--", "42"],
         }),
       );
     }),
@@ -233,7 +233,7 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({
           command: "glab",
           cwd: "/repo",
-          args: ["mr", "view", "46", "--repo", "acme/web", "--output", "json"],
+          args: ["mr", "view", "--repo", "acme/web", "--output", "json", "--", "46"],
         }),
       );
     }),
@@ -338,7 +338,7 @@ layer("GitLabCli.layer", (it) => {
       });
       assert.isUndefined(result.headRepositoryNameWithOwner);
       expect(mockedRun).toHaveBeenCalledWith(
-        expect.objectContaining({ args: ["mr", "view", reference, "--output", "json"] }),
+        expect.objectContaining({ args: ["mr", "view", "--output", "json", "--", reference] }),
       );
     }),
   );
@@ -487,7 +487,7 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({
           command: "glab",
           cwd: "/repo",
-          args: ["mr", "checkout", "42"],
+          args: ["mr", "checkout", "--", "42"],
         }),
       );
     }),

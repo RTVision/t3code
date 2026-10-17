@@ -4,11 +4,10 @@ import type {
   TerminalEditorProbeInput,
 } from "@t3tools/contracts";
 import { terminalEditorConnectionRef } from "@t3tools/client-runtime/editor-choice";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { environmentCatalog } from "./connection/catalog";
 import { useEnvironmentPresentation } from "./state/presentation";
 import { useEnvironmentQuery } from "./state/query";
-
 const CHECKING: TerminalEditorCapability = {
   state: "checking",
   message: "Checking Neovim…",
@@ -80,27 +79,20 @@ function probe(input: TerminalEditorProbeInput) {
   void entry.result.then((value) => {
     if (cache.get(key) !== entry) return;
     entry.value = value;
-    entry.expires = performance.now() + (value.state === "available" ? 60_000 : 5_000);
+    entry.expires = performance.now() + (value.state === "available" ? 60000 : 5000);
     notify();
   });
   return entry.result;
 }
-
 export function useTerminalEditor(environmentId: EnvironmentId | null) {
   const { presentation } = useEnvironmentPresentation(environmentId);
   const { data: connectionState } = useEnvironmentQuery(
     environmentId ? environmentCatalog.stateAtom(environmentId) : null,
   );
-  const connection = useMemo(
-    () => terminalEditorConnectionRef(presentation?.entry.target ?? null, environmentId),
-    [presentation?.entry.target, environmentId],
-  );
+  const connection = terminalEditorConnectionRef(presentation?.entry.target ?? null, environmentId);
   const generation = String(connectionState?.generation ?? 0);
   const connected = presentation?.connection.phase === "connected";
-  const input = useMemo(
-    () => (connection ? { connection, connectionGeneration: generation } : null),
-    [connection, generation],
-  );
+  const input = connection ? { connection, connectionGeneration: generation } : null;
   const key = JSON.stringify(input);
   const capability = useSyncExternalStore(
     subscribe,
@@ -111,16 +103,10 @@ export function useTerminalEditor(environmentId: EnvironmentId | null) {
     },
     () => DISCONNECTED,
   );
-  const refresh = useCallback(
-    async (rescan = false) => {
-      if (!connected || !input) return DISCONNECTED;
-      return probe({ ...input, ...(rescan ? { rescan: true } : {}) });
-    },
-    [connected, input],
-  );
-  const rescan = useCallback(() => refresh(true), [refresh]);
-  return useMemo(
-    () => ({ capability, connection, generation, connected, refresh, rescan }),
-    [capability, connection, generation, connected, refresh, rescan],
-  );
+  const refresh = async (rescan = false) => {
+    if (!connected || !input) return DISCONNECTED;
+    return probe({ ...input, ...(rescan ? { rescan: true } : {}) });
+  };
+  const rescan = () => refresh(true);
+  return { capability, connection, generation, connected, refresh, rescan };
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { DEFAULT_VIM_SETTINGS, type VimSettings } from "@t3tools/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import { persistClientSettingsUpdate, useClientSettings } from "../hooks/useSettings";
@@ -8,12 +8,11 @@ import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { toastManager } from "../components/ui/toast";
 import { bindingWarnings, resolveVimBindings, type VimBinding, type VimMode } from "./bindings";
-
 export function VimSettingsPanel() {
   const settings = useClientSettings((value) => value.vim);
   const legacy = useAtomValue(primaryServerKeybindingsAtom);
   const [query, setQuery] = useState("");
-  const bindings = useMemo(() => resolveVimBindings(settings), [settings]);
+  const bindings = resolveVimBindings(settings);
   const save = (update: (current: VimSettings) => VimSettings) => {
     void persistClientSettingsUpdate((current) => ({ ...current, vim: update(current.vim) })).catch(
       () => {

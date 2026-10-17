@@ -54,9 +54,8 @@ export function EditorsSettingsPanel() {
       await state.terminal.refresh(true);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not save editor settings.");
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-6">

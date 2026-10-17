@@ -138,7 +138,7 @@ const makeReconnectHarness = Effect.fn("makeReconnectHarness")(function* () {
             ),
         });
       }
-      if (args.includes("sh") && args.includes("--")) {
+      if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
         if (failNextLaunch) {
           failNextLaunch = false;
           return ChildProcessSpawner.makeHandle({
@@ -763,7 +763,7 @@ describe("ssh tunnel scripts", () => {
             tunnelKillCount += 1;
           });
         }
-        if (args.includes("sh") && args.includes("--")) {
+        if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }
         if (args.includes("sh")) {
@@ -823,7 +823,7 @@ describe("ssh tunnel scripts", () => {
             tunnelCount += 1;
             return makeRunningProcess(() => undefined);
           }
-          if (args.includes("sh") && args.includes("--")) {
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
             launchCount += 1;
             return makeSuccessfulProcess('{"remotePort":3773}\n');
           }
@@ -878,7 +878,7 @@ describe("ssh tunnel scripts", () => {
             tunnelKillCount += 1;
           });
         }
-        if (args.includes("sh") && args.includes("--")) {
+        if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
           return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
         }
         if (args.includes("sh") && args.includes("-c")) {
@@ -956,7 +956,7 @@ describe("ssh tunnel scripts", () => {
               tunnelKillCount += 1;
             });
           }
-          if (args.includes("sh") && args.includes("--")) {
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
             launchCount += 1;
             if (launchCount === 2) {
               yield* Deferred.succeed(secondLaunchStarted, undefined);
@@ -1047,7 +1047,8 @@ describe("ssh tunnel scripts", () => {
               kills += 1;
             });
           }
-          if (args.includes("--")) return makeSuccessfulProcess('{"remotePort":3773}\n');
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--"))
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
           if (args.includes("sh")) stops += 1;
           return makeSuccessfulProcess("");
         }),
@@ -1098,7 +1099,7 @@ describe("ssh tunnel scripts", () => {
               tunnelKillCount += 1;
             });
           }
-          if (args.includes("sh") && args.includes("--")) {
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
             return makeSuccessfulProcess('{"remotePort":3773}\n');
           }
           if (args.includes("sh")) {
@@ -1142,6 +1143,7 @@ describe("ssh tunnel scripts", () => {
         assert.include(firstTunnelArgs, "ControlMaster=no");
         assert.include(firstTunnelArgs, "ControlPath=none");
         assert.include(firstTunnelArgs, "ControlPersist=no");
+        assert.deepEqual(firstTunnelArgs?.slice(-2), ["--", "julius@devbox"]);
 
         const disconnected = yield* Effect.result(manager.disconnectEnvironment(target));
         if (mode === "failed stop") {
@@ -1219,7 +1221,7 @@ describe("ssh tunnel scripts", () => {
               }
               return tunnel;
             }
-            if (args.includes("--")) {
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
               if (isTarget) {
                 launches += 1;
                 remoteRunning = true;

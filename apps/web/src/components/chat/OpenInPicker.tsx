@@ -7,14 +7,13 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { useEditorDispatch } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { useRemoteOpenHint } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
-
 import { Group, GroupSeparator } from "../ui/group";
 import {
   Menu,
@@ -71,14 +70,12 @@ import {
 } from "./threadDetailsPanelStyles";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./useComposerMenuState";
-
 type OpenInOption = {
   label: string;
   Icon: Icon;
   value: EditorId;
   kind: "brand" | "generic";
 };
-
 export const resolveOpenInOptions = (
   platform: string,
   availableEditors: ReadonlyArray<EditorId>,
@@ -199,11 +196,9 @@ export const resolveOpenInOptions = (
     .filter((option) => availableEditorSet.has(option.value))
     .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
 };
-
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
-
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
@@ -248,47 +243,39 @@ export const OpenInPicker = memo(function OpenInPicker({
     terminal.state === "available" ||
     terminal.state === "check-on-open" ||
     preferredEditor?.kind === "terminal";
-  const options = useMemo(
-    () => resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors),
-    [dispatch.effectiveEditors],
-  );
+  const options = resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
   const canOpenEditor = preferredEditor?.kind === "terminal" ? canOperateTerminal : canOpenGui;
   const density = presentation === "menu" ? "touch" : "default";
-  const openInEditor = useCallback(
-    async (editor: EditorChoice | null, explicit = false) => {
-      if (!openInCwd || !editor) return;
-      if (
-        editor.kind === "terminal"
-          ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-          : !canOpenGui
-      )
-        return;
-      const result = await dispatch.open(
-        { kind: compact ? "file" : "directory", path: openInCwd },
-        editor,
-      );
-      if (isAtomCommandInterrupted(result)) return;
-      if (result._tag === "Failure") {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          type: "error",
-          title: "Unable to open editor",
-          description: error instanceof Error ? error.message : "The editor could not be opened.",
-        });
-      } else {
-        if (explicit) dispatch.select(editor);
-        if (remote.mode === "remote-links") markRemoteHintSeen();
-      }
-    },
-    [canOpenGui, compact, dispatch, environmentId, markRemoteHintSeen, openInCwd, remote.mode],
+  const openInEditor = async (editor: EditorChoice | null, explicit = false) => {
+    if (!openInCwd || !editor) return;
+    if (
+      editor.kind === "terminal"
+        ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+        : !canOpenGui
+    )
+      return;
+    const result = await dispatch.open(
+      { kind: compact ? "file" : "directory", path: openInCwd },
+      editor,
+    );
+    if (isAtomCommandInterrupted(result)) return;
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Unable to open editor",
+        description: error instanceof Error ? error.message : "The editor could not be opened.",
+      });
+    } else {
+      if (explicit) dispatch.select(editor);
+      if (remote.mode === "remote-links") markRemoteHintSeen();
+    }
+  };
+  const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "editor.openFavorite",
   );
-
-  const openFavoriteEditorShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
-    [keybindings],
-  );
-
   useEffect(() => {
     if (!enableShortcut || !canOpenEditor) return;
     const handler = (e: globalThis.KeyboardEvent) => {
@@ -320,7 +307,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   const toolbarLabel = isPanel
     ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
     : "Open";
-
   const editorItems = (
     <>
       {terminalVisible && (
@@ -435,7 +421,6 @@ export const OpenInPicker = memo(function OpenInPicker({
       </>
     );
   }
-
   return (
     <ActionGroup
       aria-label="Open in editor"

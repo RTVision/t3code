@@ -6,17 +6,14 @@ import type {
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
-import { useMemo, useState } from "react";
-
+import { useState } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
-
 function matches(candidate: PullRequestReviewerCandidate, query: string): boolean {
   if (query.length === 0) return true;
   const needle = query.toLowerCase();
@@ -25,7 +22,6 @@ function matches(candidate: PullRequestReviewerCandidate, query: string): boolea
     (candidate.name ?? "").toLowerCase().includes(needle)
   );
 }
-
 export function PullRequestReviewerPicker({
   environmentId,
   reference,
@@ -40,33 +36,24 @@ export function PullRequestReviewerPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const reviewedLogins = useMemo(
-    () =>
-      new Set(
-        comments.flatMap((comment) =>
-          (comment.kind === "review" || comment.kind === "review-comment") &&
-          comment.author !== null
-            ? [comment.author.login.toLowerCase()]
-            : [],
-        ),
-      ),
-    [comments],
+  const reviewedLogins = new Set(
+    comments.flatMap((comment) =>
+      (comment.kind === "review" || comment.kind === "review-comment") && comment.author !== null
+        ? [comment.author.login.toLowerCase()]
+        : [],
+    ),
   );
   const hasReviewed = (candidate: PullRequestReviewerCandidate) =>
     candidate.kind === "user" && reviewedLogins.has(candidate.login.toLowerCase());
-
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
   );
   const requestReviewers = useAtomCommand(pullRequestEnvironment.requestReviewers, {
     reportFailure: false,
   });
-
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
+  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+    matches(entry, query),
   );
-
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
     if (pending !== null) return;
     setPending(candidate.id);
@@ -101,7 +88,6 @@ export function PullRequestReviewerPicker({
           : `Review requested from ${candidate.login}`,
     });
   };
-
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}

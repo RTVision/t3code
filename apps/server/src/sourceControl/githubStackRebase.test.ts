@@ -84,7 +84,7 @@ const setup = Effect.fnUntraced(function* (advanceMain = true, thirdLayer = fals
   }
   yield* git(work, "push", "--quiet", "origin", "main", "feat/answer-42", "feat/answer-doc");
   if (thirdLayer) yield* git(work, "push", "--quiet", "origin", "feat/answer-example");
-  const head = (branch: string) => git(remote, "rev-parse", `refs/heads/${branch}`);
+  const head = (branch: string) => git(remote, "--git-dir=.", "rev-parse", `refs/heads/${branch}`);
   return {
     remote,
     root,
@@ -98,7 +98,7 @@ const setup = Effect.fnUntraced(function* (advanceMain = true, thirdLayer = fals
       yield* git(work, "commit", "--quiet", "-m", "Concurrent parent change");
       yield* git(work, "push", "--quiet", "origin", branch);
     }),
-    git: (...args: string[]) => git(remote, ...args),
+    git: (...args: string[]) => git(remote, "--git-dir=.", ...args),
     layers: [
       { number: 1, headBranch: "feat/answer-42", headSha: yield* head("feat/answer-42") },
       { number: 2, headBranch: "feat/answer-doc", headSha: yield* head("feat/answer-doc") },

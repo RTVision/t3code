@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, useCallback, useEffect, useRef, useState } from "react";
+import { act, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { VimNavigation } from "./VimNavigation";
 import { getVimMode, setVimMode } from "./runtime";
 import { ThreadFindBar } from "../components/chat/ThreadFindBar";
-
 const vimSettings = vi.hoisted(() => ({ enabled: true }));
-
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select({ ...DEFAULT_CLIENT_SETTINGS, vim: { ...DEFAULT_CLIENT_SETTINGS.vim, ...vimSettings } }),
@@ -22,14 +20,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vimSettings.enabled = true;
 });
-
 function ThreadFindHarness() {
   const [open, setOpen] = useState(true);
   const composerRef = useRef<HTMLInputElement>(null);
-  const close = useCallback(() => {
+  const close = () => {
     setOpen(false);
     composerRef.current?.focus();
-  }, []);
+  };
   useEffect(() => {
     // ChatView's window fallback runs after Vim's layout-effect listener.
     const dismissFind = (event: KeyboardEvent) => {
@@ -68,7 +65,6 @@ function ThreadFindHarness() {
     </>
   );
 }
-
 it.each([true, false])(
   "closes thread Find with one Escape and returns to the composer, Vim=%s",
   async (enabled) => {
