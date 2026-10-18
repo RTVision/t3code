@@ -20,7 +20,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -221,7 +221,9 @@ function ConversationCard({
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
             </div>
             <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
-              <span>{formatRelativeTimeLabel(event.at)}</span>
+              <span>
+                <RelativeTime timestamp={event.at} />
+              </span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FileCode2Icon aria-hidden className="size-3 shrink-0" />
@@ -328,7 +330,7 @@ function ConversationGroup({
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
                 {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                {formatRelativeTimeLabel(first.at)}
+                <RelativeTime timestamp={first.at} />
               </span>
             </span>
             <ChevronDownIcon
@@ -389,7 +391,9 @@ function CommitEvent({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
-            <span>{formatRelativeTimeLabel(event.at)}</span>
+            <span>
+              <RelativeTime timestamp={event.at} />
+            </span>
           </div>
         </div>
         {event.additions !== null && event.deletions !== null ? (
@@ -430,7 +434,7 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
           <span className="font-semibold text-foreground">{presentation.label}</span>
         </div>
         <div className="mt-0.5 text-2xs text-muted-foreground">
-          {formatRelativeTimeLabel(event.at)}
+          <RelativeTime timestamp={event.at} />
         </div>
       </div>
     </div>
@@ -484,7 +488,9 @@ function ReviewVerdictEvent({
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <PullRequestMetaLine className="flex-wrap text-2xs text-muted-foreground">
-              <span>{formatRelativeTimeLabel(event.at)}</span>
+              <span>
+                <RelativeTime timestamp={event.at} />
+              </span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FileCode2Icon aria-hidden className="size-3 shrink-0" />
