@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { act, type ReactElement, type ComponentProps } from "react";
@@ -610,6 +610,7 @@ describe("ChatMarkdown Windows file links", () => {
     renderText(text, {
       cwd: "C:/Users/shawn/project",
       environmentId,
+      threadRef: { environmentId, threadId: ThreadId.make("windows-file-links") },
       lineBreaks: !parseRawHtml,
       parseRawHtml,
     });

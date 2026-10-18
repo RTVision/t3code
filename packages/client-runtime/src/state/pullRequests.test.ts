@@ -1801,14 +1801,16 @@ it.effect.each(["pending", "failure"] as const)(
         );
         expect(writes).toBe(1);
         const beforeRefresh = yield* AtomRegistry.getResult(registry, runs);
+        const beforeResponse = registry.get(runs);
         const refreshedWhilePending = Latch.makeUnsafe();
         const stopPendingRefresh = registry.subscribe(runs, (result) => {
-          if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== beforeRefresh)
+          if (AsyncResult.isSuccess(result) && !result.waiting && result !== beforeResponse)
             refreshedWhilePending.openUnsafe();
         });
         yield* Effect.addFinalizer(() => Effect.sync(stopPendingRefresh));
         yield* PubSub.publish(events, { revision: 1, reference, listings: true });
         yield* refreshedWhilePending.await;
+        expect(yield* AtomRegistry.getResult(registry, runs)).toBe(beforeRefresh);
         expect(registry.get(otherView)).toBe("pending");
         finish.openUnsafe();
         const result = yield* Effect.promise(() => first);

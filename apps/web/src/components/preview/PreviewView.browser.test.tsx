@@ -94,6 +94,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   useThreadPreviewState: (() => ({
     activeTabId: "tab-1",
     serverEpoch: mocks.serverEpoch,
+    desktopProfileByTabId: { "tab-1": DEFAULT_BROWSER_PROFILE_ID },
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,

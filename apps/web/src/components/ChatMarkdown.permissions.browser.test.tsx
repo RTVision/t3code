@@ -160,7 +160,8 @@ vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,
   useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
 }));
-vi.mock("~/lib/openPullRequestLink", () => ({
+vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+  ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: ((projects: readonly { id: ProjectId }[]) => projects[0]) as never,
   matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>

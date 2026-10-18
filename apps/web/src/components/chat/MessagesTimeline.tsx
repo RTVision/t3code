@@ -2442,7 +2442,7 @@ function UserMessageIntentMarker({
     </Tooltip>
   );
 }
-export function resolvePreviewAnnotationImage(input: {
+function resolvePreviewAnnotationImage(input: {
   record: Extract<
     KnownComposerContextRecord,
     {
