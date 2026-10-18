@@ -41,9 +41,10 @@ const state = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock("@effect/atom-react", async () => {
+vi.mock("@effect/atom-react", async (original) => {
   const { useSyncExternalStore } = await import("react");
   return {
+    ...(await original<typeof import("@effect/atom-react")>()),
     useAtomValue: (atom: unknown) => {
       const allowed = useSyncExternalStore(
         (listener) => {
@@ -56,7 +57,8 @@ vi.mock("@effect/atom-react", async () => {
     },
   };
 });
-vi.mock("../hooks/useSettings", () => ({
+vi.mock("../hooks/useSettings", async (original) => ({
+  ...(await original<typeof import("../hooks/useSettings")>()),
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: ((select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS)) as never,
@@ -86,12 +88,17 @@ vi.mock("../state/shell", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/shell")>()),
   shellEnvironment: { openInEditor: { permissionAtom: () => "editor-permission" } },
 }));
-vi.mock("~/lib/selectionActions", () => ({
+vi.mock("~/lib/selectionActions", async (original) => ({
+  ...(await original<typeof import("~/lib/selectionActions")>()),
   observeSelectionActions: () => ({ dispose: vi.fn(), cancel: vi.fn(), pending: false }),
   resolveSelectionActionPosition: vi.fn(),
 }));
-vi.mock("../localApi", () => ({ readLocalApi: () => null }));
-vi.mock("../state/server", () => ({
+vi.mock("../localApi", async (original) => ({
+  ...(await original<typeof import("../localApi")>()),
+  readLocalApi: () => null,
+}));
+vi.mock("../state/server", async (original) => ({
+  ...(await original<typeof import("../state/server")>()),
   serverEnvironment: { configValueAtom: () => "config" },
 }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: "open" } }));

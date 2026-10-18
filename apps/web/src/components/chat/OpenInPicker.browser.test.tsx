@@ -1,11 +1,12 @@
 import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { RemoteOpenState } from "../../remoteOpen";
+import { Menu, MenuPopup } from "../ui/menu";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -16,6 +17,13 @@ const state = vi.hoisted(() => ({
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
   listeners: new Set<() => void>(),
+}));
+
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  Link: (({ to, ...props }: ComponentProps<"a"> & { to: string }) => (
+    <a {...props} href={to} />
+  )) as never,
 }));
 
 vi.mock(import("../../state/session"), async (importOriginal) => {
@@ -114,7 +122,15 @@ async function renderPicker(
         compact={!panel}
       />
     );
-    root.render(node);
+    root.render(
+      presentation === "menu" ? (
+        <Menu open>
+          <MenuPopup>{node}</MenuPopup>
+        </Menu>
+      ) : (
+        node
+      ),
+    );
   });
 }
 
@@ -230,15 +246,18 @@ describe("client editor links", () => {
   it("remembers an explicit SSH editor choice only after the client accepts the URL", async () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
     await renderPicker(editors, false, "menu");
-    const option = menuItems().find((item) => item.textContent?.includes("VS Code"));
-    expect(option).toBeDefined();
+    const chooseEditor = () => menuItems().find((item) => item.textContent === "Open in…")!;
+    const editorOption = () => menuItems().find((item) => item.textContent?.startsWith("VS Code"))!;
+    await click(chooseEditor());
+    expect(editorOption()).toBeDefined();
     const choiceKey = `t3code:editor-choice:v1:${selected}:`;
     state.openUrl.mockResolvedValueOnce(false);
-    await click(option!);
+    await click(editorOption());
     expect(window.localStorage.getItem(choiceKey)).toBeNull();
     expect(state.markHintSeen).not.toHaveBeenCalled();
 
-    await click(option!);
+    await click(chooseEditor());
+    await click(editorOption());
     expect(window.localStorage.getItem(choiceKey)).toBe('{"kind":"gui","editor":"vscode"}');
     expect(state.markHintSeen).toHaveBeenCalledOnce();
     expect(state.run).not.toHaveBeenCalled();

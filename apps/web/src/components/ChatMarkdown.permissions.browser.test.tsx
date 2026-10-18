@@ -56,7 +56,8 @@ vi.mock(import("@effect/atom-react"), async (original) => {
 });
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
-vi.mock("../hooks/useSettings", () => ({
+vi.mock("../hooks/useSettings", async (original) => ({
+  ...(await original<typeof import("../hooks/useSettings")>()),
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select?: (value: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select ? select(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
@@ -121,7 +122,8 @@ vi.mock("../state/shell", async (importOriginal) => ({
     revealInFileManager: "revealInFileManager",
   },
 }));
-vi.mock("../state/threads", () => ({
+vi.mock("../state/threads", async (original) => ({
+  ...(await original<typeof import("../state/threads")>()),
   threadEnvironment: { updateMetadata: "updateMetadata" },
 }));
 vi.mock(import("../hooks/useLocalStorage"), async (original) => ({
