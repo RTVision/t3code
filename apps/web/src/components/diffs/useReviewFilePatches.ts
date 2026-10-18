@@ -3,13 +3,17 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
+const DEFAULT_INDICES = [0, 1, 2, 3];
+
 export function useReviewFilePatches({
   environmentId,
   cwd,
@@ -30,40 +34,21 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  // The scope names the comparison, not its contents. Leaving the diff hash out lets a refresh
-  // reuse the loaded files and the mounted viewer, so the reader keeps their scroll position;
-  // the revision effect below refetches those files in place.
+  // A revision refreshes patches in place without discarding loaded files or scroll position.
   const scope = JSON.stringify([environmentId, cwd, source?.kind, baseRef, ignoreWhitespace]);
-  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
-  const indices = requested.scope === scope ? requested.indices : [0, 1, 2, 3];
-  const files = source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [];
-  const queries =
-    !environmentId || !cwd || !source
-      ? []
-      : indices
-          .filter((index) => index < files.length)
-          .map((index) => {
-            const file = files[index]!;
-            return {
-              index,
-              query: reviewEnvironment.diffFilePatch({
-                environmentId,
-                input: {
-                  cacheKey: scope,
-                  request: {
-                    cwd,
-                    ...(baseRef ? { baseRef } : {}),
-                    ignoreWhitespace,
-                    file: {
-                      path: file.path,
-                      previousPath: file.previousPath,
-                      sourceKind: source.kind,
-                    },
-                  },
-                },
-              }),
-            };
-          });
+  const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
+  const queries = reviewFileQueries({
+    environmentId,
+    cwd,
+    source,
+    baseRef,
+    ignoreWhitespace,
+    scope,
+    requested,
+  });
+  const queriedPatchesAtom = reviewPatchesAtom(
+    JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
+  );
   const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
   useEffect(() => {
     const previous = previousPreview.current;
@@ -76,30 +61,14 @@ export function useReviewFilePatches({
         !registry.get(query).waiting;
       if (changed || cached) registry.refresh(query);
     }
-  }, [scope, revision, queries, registry, previousPreview]);
-  // Derived atoms parse each query result once, even when another file finishes loading.
-  const parsedQuery = Atom.family((query: ReturnType<typeof reviewEnvironment.diffFilePatch>) =>
-    Atom.map(query, (result) =>
-      AsyncResult.map(result, (source) => {
-        let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
-          compactPartialHunkOffsets: true,
-        });
-        if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
-          const stat = source.files[0]!;
-          const file = { ...patch.files[0]!, name: stat.path };
-          if (stat.previousPath !== null) file.prevName = stat.previousPath;
-          else delete file.prevName;
-          patch = { ...patch, files: [file] };
-        }
-        return { source, patch };
-      }),
-    ),
-  );
-  const patches = useAtomValue(
-    Atom.make(
-      (get) => new Map(queries.map(({ index, query }) => [index, get(parsedQuery(query))])),
-    ),
-  );
+  }, [scope, revision, queries, registry]);
+  const patches = useAtomValue(queriedPatchesAtom);
+  const retry = useStableCallback((path: string) => {
+    const files = sortedReviewFiles(source);
+    const query = queries.find(({ index }) => files[index]?.path === path)?.query;
+    if (query) registry.refresh(query);
+  });
+  const files = sortedReviewFiles(source);
   const pendingIndex = files.findIndex((_, index) => {
     const patch = patches.get(index);
     return !patch || patch._tag === "Initial";
@@ -120,15 +89,6 @@ export function useReviewFilePatches({
   const loadNextFiles = () =>
     requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
   const requestFile = (index: number) => requestFiles([index]);
-  const retryInputsRef = useRef({ queries, files });
-  useLayoutEffect(() => {
-    retryInputsRef.current = { queries, files };
-  }, [queries, files]);
-  const retry = (path: string) => {
-    const { queries, files } = retryInputsRef.current;
-    const query = queries.find(({ index }) => files[index]?.path === path)?.query;
-    if (query) registry.refresh(query);
-  };
   const renderableFiles = source
     ? files.map((file, index): FileDiffMetadata => {
         const result = patches.get(index);
@@ -192,3 +152,89 @@ export function useReviewFilePatches({
     loadNextFiles,
   };
 }
+
+// The refresh effect keys on the identity of these queries.
+function reviewFileQueries({
+  environmentId,
+  cwd,
+  source,
+  baseRef,
+  ignoreWhitespace,
+  scope,
+  requested,
+}: {
+  environmentId: EnvironmentId | undefined;
+  cwd: string | undefined;
+  source: ReviewDiffPreviewSource | null;
+  baseRef: string | null;
+  ignoreWhitespace: boolean;
+  scope: string;
+  requested: { scope: string; indices: number[] };
+}) {
+  const indices = requested.scope === scope ? requested.indices : DEFAULT_INDICES;
+  const files = sortedReviewFiles(source);
+  const queries =
+    !environmentId || !cwd || !source
+      ? []
+      : indices
+          .filter((index) => index < files.length)
+          .map((index) => {
+            const file = files[index]!;
+            const target: ReviewPatchTarget = {
+              environmentId,
+              input: {
+                cacheKey: scope,
+                request: {
+                  cwd,
+                  ...(baseRef ? { baseRef } : {}),
+                  ignoreWhitespace,
+                  file: {
+                    path: file.path,
+                    previousPath: file.previousPath,
+                    sourceKind: source.kind,
+                  },
+                },
+              },
+            };
+            return { index, target, query: reviewEnvironment.diffFilePatch(target) };
+          });
+  return queries;
+}
+
+function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
+  return source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [];
+}
+
+type ReviewPatchTarget = Parameters<typeof reviewEnvironment.diffFilePatch>[0];
+
+// Derived atoms parse each query result once, even when another file finishes loading.
+const parsedPatchAtom = Atom.family((key: string) => {
+  const [theme, target] = JSON.parse(key) as ["light" | "dark", ReviewPatchTarget];
+  return Atom.map(reviewEnvironment.diffFilePatch(target), (result) =>
+    AsyncResult.map(result, (source) => {
+      let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
+        compactPartialHunkOffsets: true,
+      });
+      if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
+        const stat = source.files[0]!;
+        const file = { ...patch.files[0]!, name: stat.path };
+        if (stat.previousPath !== null) file.prevName = stat.previousPath;
+        else delete file.prevName;
+        patch = { ...patch, files: [file] };
+      }
+      return { source, patch };
+    }),
+  );
+});
+
+// Keyed by theme and query targets so every render with the same files reads the same atom.
+const reviewPatchesAtom = Atom.family((key: string) => {
+  const [theme, entries] = JSON.parse(key) as [
+    "light" | "dark",
+    ReadonlyArray<readonly [number, ReviewPatchTarget]>,
+  ];
+  const parsed = entries.map(
+    ([index, target]) => [index, parsedPatchAtom(JSON.stringify([theme, target]))] as const,
+  );
+  return Atom.make((get) => new Map(parsed.map(([index, atom]) => [index, get(atom)])));
+});

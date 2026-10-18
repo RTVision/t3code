@@ -317,11 +317,21 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
         number: input.number,
       },
     });
+  // Equal refetch data is shared, so acknowledgement follows completed responses instead.
+  const lastResponse = (result: AsyncResult.AsyncResult<PullRequestCiRuns, unknown>) =>
+    result._tag === "Success"
+      ? result
+      : result._tag === "Failure"
+        ? Option.getOrUndefined(result.previousSuccess)
+        : undefined;
   // Atom.family uses weak references; registry nodes retain atoms directly while mounted.
   const submissions = Atom.family((_key: string) =>
     Atom.make<
       | { readonly phase: "pending" }
-      | { readonly phase: "requested"; readonly observed: PullRequestCiRuns | undefined }
+      | {
+          readonly phase: "requested";
+          readonly observed: AsyncResult.Success<PullRequestCiRuns, unknown> | undefined;
+        }
       | null
     >(null).pipe(Atom.setIdleTTL(60_000)),
   );
@@ -338,8 +348,8 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
       if (current.phase === "pending") return "pending";
       const result = get(runs);
       // A fresh host response ends the acknowledgement even on hosts without run attempts.
-      const observed = Option.getOrUndefined(AsyncResult.value(result));
-      return observed === current.observed ? "requested" : "idle";
+      const observed = lastResponse(result);
+      return result.waiting || observed === current.observed ? "requested" : "idle";
     });
   });
   const stateKey = (target: {
@@ -374,7 +384,7 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
       registry.set(submission, { phase: "pending" });
       try {
         const result = await requestRerun.run(registry, target);
-        const observed = Option.getOrUndefined(AsyncResult.value(registry.get(runs)));
+        const observed = lastResponse(registry.get(runs));
         registry.set(
           submission,
           result._tag === "Success" ? { phase: "requested", observed } : null,

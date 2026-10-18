@@ -29,7 +29,6 @@ import {
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ScopedThreadRef,
-  type ServerProvider,
   type ServerProviderSkill,
   type RunId,
   ThreadId,
@@ -59,6 +58,7 @@ import {
   subagentGroupSummary,
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
+import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -285,7 +285,7 @@ import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
   isV2LifecycleItem,
-  SubagentAvatar,
+  EnvironmentSubagentAvatar,
   SubagentElapsed,
   SubagentNotificationLink,
   V2LifecycleRow,
@@ -293,6 +293,8 @@ import {
 } from "./V2LifecycleRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
+
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -312,7 +314,6 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-  providerStatuses: ReadonlyArray<ServerProvider>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
@@ -325,6 +326,7 @@ interface TimelineRowSharedState {
   displayThreadKey?: string;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
+  workflowOpening: WorkflowOpening | null;
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -459,6 +461,8 @@ interface MessagesTimelineProps {
     readonly threadId: ThreadId;
     readonly title: string;
   } | null;
+  /** Set on a workflow coordinator's thread: its script message renders as this opening. */
+  workflowOpening?: WorkflowOpening | null;
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -482,7 +486,6 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-  providerStatuses: ReadonlyArray<ServerProvider>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
@@ -561,6 +564,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onOpenTurnDiff,
   onOpenThread,
   parentThreadLink = null,
+  workflowOpening = null,
   onForkFromRun,
   onRollbackCheckpoint,
   supportsConversationRollback,
@@ -578,7 +582,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
-  providerStatuses,
   runs: runsProp,
   anchorMessageId,
   onAnchorReady,
@@ -1196,7 +1199,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     resolvedTheme,
     workspaceRoot,
     skills,
-    providerStatuses,
     runs,
     activeThreadEnvironmentId,
     onRevertToTurnCount,
@@ -1211,6 +1213,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     openPullRequest,
     onOpenTurnDiff,
     onOpenThread,
+    workflowOpening,
     onForkFromRun,
     onRollbackCheckpoint,
     onToggleTurnFold,
@@ -1352,13 +1355,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef,
     contentInsetEndAdjustment,
   });
+
+  // Each row carries its own provider. LegendList moves rows into their
+  // containers one commit after this component renders, so a provider around
+  // the list would re-render the outgoing thread's rows with the incoming
+  // thread's context just before they unmount. extraData hands a changed
+  // sharedState to the rows that stay.
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
-    <div className="messages-timeline-row-frame">
-      <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
-        <TimelineRowContent row={item} />
+    <TimelineRowCtx value={sharedState}>
+      <div className="messages-timeline-row-frame">
+        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+          <TimelineRowContent row={item} />
+        </div>
       </div>
-    </div>
+    </TimelineRowCtx>
   );
+  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+
   const forwardMinimapWheel = (event: WheelEvent) => {
     const scrollNode = listRef.current?.getScrollableNode();
     if (scrollNode) forwardWheelToTimeline(event, scrollNode);
@@ -1386,103 +1399,101 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   return (
     <MarkdownFindContext value={findActive}>
-      <TimelineRowCtx value={sharedState}>
-        <TimelineRowActivityCtx value={activityState}>
-          <TooltipScrollDismissArea
-            ref={setTimelineViewportElement}
-            className="relative h-full min-h-0"
-            data-assistant-citation-viewport="true"
-          >
-            {vimEnabled && (
-              <VimTimeline
-                key={routeThreadKey}
-                entries={timelineEntries}
-                rows={rows}
-                listRef={listRef}
-                loadEarlier={earlierHistory}
-                historyError={historyError}
-                expandRun={expandCitedRun}
-                onManualNavigation={onManualNavigation}
-                onBottom={
-                  onVimBottom ??
-                  (() => {
-                    void listRef.current?.scrollToEnd({ animated: false });
-                  })
-                }
-              />
+      <TimelineRowActivityCtx value={activityState}>
+        <TooltipScrollDismissArea
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          data-assistant-citation-viewport="true"
+        >
+          {vimEnabled && (
+            <VimTimeline
+              key={routeThreadKey}
+              entries={timelineEntries}
+              rows={rows}
+              listRef={listRef}
+              loadEarlier={earlierHistory}
+              historyError={historyError}
+              expandRun={expandCitedRun}
+              onManualNavigation={onManualNavigation}
+              onBottom={
+                onVimBottom ??
+                (() => {
+                  void listRef.current?.scrollToEnd({ animated: false });
+                })
+              }
+            />
+          )}
+          {onCiteAssistantText && citationThreadRef ? (
+            <AssistantSelectionToolbar
+              viewport={timelineViewportElement}
+              threadRef={citationThreadRef}
+              onCite={onCiteAssistantText}
+            />
+          ) : null}
+          <LegendList<MessagesTimelineRow>
+            ref={setTimelineList}
+            data={rows}
+            extraData={listExtraData}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd={
+              !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+            }
+            // Legend needs a data refresh to mount new pins without a scroll event.
+            dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+            {...(alwaysRender ? { alwaysRender } : {})}
+            onLoad={handleListLoad}
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+            maintainScrollAtEnd={
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+              anchoredEndSpace ||
+              !liveFollowEnabled ||
+              fullscreenAppRowId !== null ||
+              disclosureToggleSettling
+                ? false
+                : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                  : TIMELINE_MAINTAIN_SCROLL_AT_END
+            }
+            maintainVisibleContentPosition={
+              findActive ||
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                ? false
+                : maintainVisibleContentPosition
+            }
+            maintainScrollAtEndThreshold={1}
+            onScroll={handleScroll}
+            onItemSizeChanged={handleItemSizeChanged}
+            className={cn(
+              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              topFadeEnabled && "topbar-scroll-fade",
             )}
-            {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
-              />
-            ) : null}
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={`${listIdentityKey}:${rows.length}`}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              onLoad={handleListLoad}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
-              maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              onScroll={handleScroll}
-              onItemSizeChanged={handleItemSizeChanged}
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              stripMap={minimapStripMap}
-              onWheel={forwardMinimapWheel}
-              onSelect={(item) => {
-                onManualNavigation();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: true,
-                  viewOffset: 24,
-                });
-              }}
-            />
-          </TooltipScrollDismissArea>
-        </TimelineRowActivityCtx>
-      </TimelineRowCtx>
+            ListHeaderComponent={listHeader}
+            ListFooterComponent={timelineListFooter}
+          />
+          <TimelineMinimap
+            items={minimapItems}
+            hasPersistentGutter={minimapHasPersistentGutter}
+            hitStripWidth={minimapHitStripWidth}
+            currentIndex={minimapCurrentIndex}
+            stripMap={minimapStripMap}
+            onWheel={forwardMinimapWheel}
+            onSelect={(item) => {
+              onManualNavigation();
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: 24,
+              });
+            }}
+          />
+        </TooltipScrollDismissArea>
+      </TimelineRowActivityCtx>
     </MarkdownFindContext>
   );
 });
@@ -1916,7 +1927,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -2039,16 +2050,21 @@ const MESSAGE_HEADING_LEVEL = 3;
 function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
-function UserTimelineRow({
-  row,
-}: {
-  row: Extract<
-    TimelineRow,
-    {
-      kind: "message";
-    }
-  >;
-}) {
+
+function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return ctx.workflowOpening?.messageId === row.message.id ? (
+    <WorkflowOpeningBlock
+      opening={ctx.workflowOpening}
+      environmentId={ctx.activeThreadEnvironmentId}
+      onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
+    />
+  ) : (
+    <UserTimelineRow row={row} />
+  );
+}
+
+function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
@@ -2426,7 +2442,7 @@ function UserMessageIntentMarker({
     </Tooltip>
   );
 }
-export function resolvePreviewAnnotationImage(input: {
+function resolvePreviewAnnotationImage(input: {
   record: Extract<
     KnownComposerContextRecord,
     {
@@ -2968,7 +2984,6 @@ function V2EventTimelineRow({
         resourceSummary={row.resourceSummary}
         createdAt={row.createdAt}
         timestampFormat={ctx.timestampFormat}
-        providerStatuses={ctx.providerStatuses}
         runs={ctx.runs}
         onOpenThread={ctx.onOpenThread}
       />
@@ -3220,12 +3235,11 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         >
           <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
             {agents.slice(0, 3).map(({ item, status }) => (
-              <SubagentAvatar
+              <EnvironmentSubagentAvatar
                 key={item.id}
+                environmentId={ctx.activeThreadEnvironmentId}
+                providerInstanceId={item.providerInstanceId}
                 driver={item.driver}
-                provider={ctx.providerStatuses.find(
-                  (provider) => provider.instanceId === item.providerInstanceId,
-                )}
                 status={agents.length === 1 ? status : undefined}
               />
             ))}
@@ -3268,7 +3282,6 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
                   item={item}
                   createdAt={row.createdAt}
                   timestampFormat={ctx.timestampFormat}
-                  providerStatuses={ctx.providerStatuses}
                   runs={ctx.runs}
                   onOpenThread={ctx.onOpenThread}
                 />
@@ -5212,7 +5225,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
       outcome={item.outcome}
       createdAt={props.workEntry.createdAt}
       timestampFormat={ctx.timestampFormat}
-      providerStatuses={ctx.providerStatuses}
       onOpenThread={ctx.onOpenThread}
       fallback={<WorkEntryLogRow {...props} />}
     />

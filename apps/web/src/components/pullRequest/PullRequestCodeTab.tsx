@@ -261,10 +261,13 @@ function PullRequestCodeTab({
   } | null;
 }) {
   const { resolvedTheme } = useTheme();
-  const settings = useClientSettings();
+  const settings = useClientSettings((settings) => ({
+    diffFilesCollapsed: settings.diffFilesCollapsed,
+    diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
+    diffLayout: settings.diffLayout,
+    wordWrap: settings.wordWrap,
+  }));
   const [foldChoices, setFoldChoices] = useState<DiffFoldChoices>(() => new Map());
-  // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
-  // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
   // An expanded default still folds what has been ticked off; only the toolbar opens everything.
