@@ -1,4 +1,6 @@
+import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -8,6 +10,7 @@ const state = vi.hoisted(() => ({
   canWriteSettings: true,
   connected: true,
   openEditor: vi.fn(),
+  editorPermission: null as Atom.Writable<boolean> | null,
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -22,7 +25,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
       serverConfig: {
         keybindings: [],
         keybindingsConfigPath: "/fixture/keybindings.json",
-        availableEditors: [],
+        availableEditors: ["vscode"],
       },
     };
     return (
@@ -46,18 +49,46 @@ vi.mock(import("../../state/session"), async (original) => {
       new Set(state.canWriteSettings ? ["primary-settings"] : [])) as never,
   };
 });
-vi.mock(import("../../editorPreferences"), async (original) => ({
+vi.mock(import("../../state/shell"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    shellEnvironment: {
+      ...actual.shellEnvironment,
+      openInEditor: {
+        ...actual.shellEnvironment.openInEditor,
+        permissionAtom: () => state.editorPermission!,
+      },
+    },
+  };
+});
+vi.mock(import("../../remoteOpen"), async (original) => ({
   ...(await original()),
-  useOpenInPreferredEditor: ((environmentId: EnvironmentId) => (path: string) =>
-    state.openEditor({ environmentId, path })) as never,
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+}));
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.openEditor) as never,
 }));
 
 import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 
 let root: Root;
 let container: HTMLDivElement;
 
-const render = () => act(async () => root.render(<KeybindingsSettingsPanel />));
+const render = () =>
+  act(async () =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <KeybindingsSettingsPanel />
+      </RegistryContext.Provider>,
+    ),
+  );
+const setOperate = (allowed: boolean) => {
+  state.canOperate = allowed;
+  appAtomRegistry.set(state.editorPermission!, allowed);
+};
 const openButton = () => {
   const button = container.querySelector<HTMLButtonElement>(
     'button[aria-label="Open keybindings.json"]',
@@ -68,10 +99,12 @@ const openButton = () => {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.editorPermission = Atom.make(false);
   state.canOperate = false;
+  localStorage.setItem("t3code:last-editor", JSON.stringify("vscode"));
   state.canWriteSettings = true;
   state.connected = true;
-  state.openEditor.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
+  state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -79,6 +112,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -93,24 +127,27 @@ describe("KeybindingsSettings editor permission", () => {
   it("opens the primary environment's file after operate is granted without settings writes", async () => {
     state.canWriteSettings = false;
     await render();
-    state.canOperate = true;
+    await act(async () => setOperate(true));
     await render();
     expect(openButton().disabled).toBe(false);
     await act(async () => openButton().click());
 
     expect(state.openEditor).toHaveBeenCalledWith({
       environmentId: "primary-settings",
-      path: "/fixture/keybindings.json",
+      input: { cwd: "/fixture/keybindings.json", editor: "vscode" },
     });
   });
 
   it("rejects a queued editor launch after operate is revoked", async () => {
-    state.canOperate = true;
     await render();
+    await act(async () => setOperate(true));
     const button = openButton();
-    state.canOperate = false;
-    // The rendered button is still enabled; the click must recheck the live grant.
-    await act(async () => button.click());
+    expect(button.disabled).toBe(false);
+    // The click lands before React renders the revoked grant.
+    await act(async () => {
+      setOperate(false);
+      button.click();
+    });
 
     expect(state.openEditor).not.toHaveBeenCalled();
     await render();

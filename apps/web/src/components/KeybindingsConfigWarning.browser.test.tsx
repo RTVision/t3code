@@ -27,6 +27,10 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
     })) as never,
   };
 });
+vi.mock(import("../remoteOpen"), async (original) => ({
+  ...(await original()),
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+}));
 vi.mock(import("../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => state.run) as never,
