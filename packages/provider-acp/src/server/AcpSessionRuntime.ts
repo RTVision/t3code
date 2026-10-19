@@ -278,8 +278,6 @@ export function wrapCommandForLinuxCgroup(
         "done < /proc/self/cgroup || exit 125",
         '[ "$actual" = "$expected" ] || exit 126',
         "unset ELECTRON_RUN_AS_NODE T3_ACP_CGROUP_WRAPPER",
-        // A failed exec can bypass EXIT traps in non-interactive shells.
-        'command -v "$1" >/dev/null 2>&1 || exit 125',
         "trap 'exit 125' 0",
         // The trap alone does not cover a failed `exec`: bash — which is
         // /bin/sh on Arch derivatives — exits 127 without running the EXIT

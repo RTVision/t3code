@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_MODEL,
@@ -18,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -61,6 +63,12 @@ it.effect.each([
 ] as const)("keeps bootstrap launch failures separate from project failures: %s", (scenario) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-startup-" });
+      const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined).pipe(
+        Effect.provide(Path.layer),
+      );
+      yield* fs.makeDirectory(paths.stateDir, { recursive: true });
       const projectId = ProjectId.make("bootstrap-project");
       const instanceId = ProviderInstanceId.make(
         scenario === "disabled-default" ? "custom" : "codex",
@@ -78,10 +86,8 @@ it.effect.each([
         NodeCrypto.layer,
         Path.layer,
         Layer.mock(ServerConfig.ServerConfig)({
-          ...(yield* ServerConfig.deriveServerPaths("/bootstrap-project", undefined).pipe(
-            Effect.provide(Path.layer),
-          )),
-          baseDir: "/bootstrap-project",
+          ...paths,
+          baseDir,
           logLevel: "Error",
           traceMinLevel: "Info",
           traceTimingEnabled: false,
@@ -241,7 +247,7 @@ it.effect.each([
         Effect.provide(ServerRuntimeStartup.layerWithOptions().pipe(Layer.provide(dependencies))),
         Effect.provideService(ServerActivation, Effect.never),
       );
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   ),
 );
 

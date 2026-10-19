@@ -1,5 +1,4 @@
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -123,7 +122,9 @@ export function getLastNonEmptyOutputLine(stdout: string): string | null {
   );
 }
 
-const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
+export const collectProcessOutput = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
     Stream.runFold(
