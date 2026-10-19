@@ -107,6 +107,7 @@ afterEach(async () => {
 async function renderPicker(
   availableEditors: readonly EditorId[] = editors,
   panel = false,
+  { openInCwd = "/work/project", revealFileManager = false } = {},
   presentation: "toolbar" | "menu" = "toolbar",
 ) {
   await act(async () => {
@@ -116,7 +117,8 @@ async function renderPicker(
         environmentId={selected}
         keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
         availableEditors={availableEditors}
-        openInCwd="/work/project"
+        openInCwd={openInCwd}
+        revealFileManager={revealFileManager}
         displayMode={panel ? "panel" : "toolbar"}
         presentation={presentation}
         compact={!panel}
@@ -229,6 +231,19 @@ describe("host editor access", () => {
   });
 });
 
+it("reveals a file in the file manager instead of opening it", async () => {
+  state.allowed.add(selected);
+  await renderPicker(["file-manager"], false, {
+    openInCwd: "/work/project/README.md",
+    revealFileManager: true,
+  });
+  await click(primaryButton());
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: selected,
+    input: { cwd: "/work/project/README.md", editor: "file-manager", reveal: true },
+  });
+});
+
 describe("client editor links", () => {
   it("opens an SSH editor URL without host operate permission", async () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
@@ -245,7 +260,7 @@ describe("client editor links", () => {
 
   it("remembers an explicit SSH editor choice only after the client accepts the URL", async () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
-    await renderPicker(editors, false, "menu");
+    await renderPicker(editors, false, {}, "menu");
     const chooseEditor = () => menuItems().find((item) => item.textContent === "Open in…")!;
     const editorOption = () => menuItems().find((item) => item.textContent?.startsWith("VS Code"))!;
     await click(chooseEditor());

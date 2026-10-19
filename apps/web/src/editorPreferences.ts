@@ -120,7 +120,11 @@ export function useEditorDispatch(
       : remote.isResolved &&
         remote.state.mode !== "remote-unavailable" &&
         (remote.state.mode !== "local-exec" || canOpenLocalEditor));
-  const open = async (input: string | EditorOpenTarget, selected: EditorChoice | null = choice) => {
+  const open = async (
+    input: string | EditorOpenTarget,
+    selected: EditorChoice | null = choice,
+    { reveal = false } = {},
+  ) => {
     const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
     if (!environmentId)
       return AsyncResult.failure(
@@ -196,7 +200,11 @@ export function useEditorDispatch(
       return mapAtomCommandResult(
         await openGui({
           environmentId,
-          input: { cwd: guiEditorTarget(target), editor: selected.editor },
+          input: {
+            cwd: guiEditorTarget(target),
+            editor: selected.editor,
+            ...(reveal && selected.editor === "file-manager" ? { reveal: true } : {}),
+          },
         }),
         () => selected.editor,
       );

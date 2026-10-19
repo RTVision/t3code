@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.86",
+  "version": "0.0.87",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,7 +15,7 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/bin.ts",
+    "dev": "node --watch --watch-path=src --watch-path=../../packages --watch-path=package.json src/bin.ts",
     "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",

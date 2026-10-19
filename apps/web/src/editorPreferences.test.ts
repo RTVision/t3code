@@ -65,7 +65,7 @@ vi.mock("./hooks/useLocalStorage", () => ({
   useLocalStorage: vi.fn(),
 }));
 
-import { useOpenInPreferredEditor } from "./editorPreferences";
+import { useEditorDispatch, useOpenInPreferredEditor } from "./editorPreferences";
 
 const primary = EnvironmentId.make("primary");
 const secondary = EnvironmentId.make("secondary");
@@ -136,4 +136,35 @@ it("requires terminal permission for a saved Neovim choice before invoking deskt
     requiredScope: AuthTerminalOperateScope,
   });
   expect(state.run).not.toHaveBeenCalled();
+});
+
+it("reveals a file through the shared dispatch without changing editor preferences", async () => {
+  state.allowed.add(secondary);
+  const dispatch = useEditorDispatch(secondary, ["file-manager"]);
+  expect(
+    await dispatch.open(
+      { kind: "file", path: "/work/readme.md" },
+      { kind: "gui", editor: "file-manager" },
+      { reveal: true },
+    ),
+  ).toMatchObject({ _tag: "Success" });
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: secondary,
+    input: { cwd: "/work/readme.md", editor: "file-manager", reveal: true },
+  });
+  expect(state.setPreference).not.toHaveBeenCalled();
+});
+
+it("does not apply file-manager reveal semantics to a code editor", async () => {
+  state.allowed.add(secondary);
+  const dispatch = useEditorDispatch(secondary, ["vscode"]);
+  await dispatch.open(
+    { kind: "file", path: "/work/readme.md" },
+    { kind: "gui", editor: "vscode" },
+    { reveal: true },
+  );
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: secondary,
+    input: { cwd: "/work/readme.md", editor: "vscode" },
+  });
 });

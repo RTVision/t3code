@@ -101,7 +101,7 @@ vi.mock("~/hooks/useSettings", () => ({
     wordWrap: false,
     diffIgnoreWhitespace: false,
   }),
-  useUpdateClientSettings: () => vi.fn(),
+  updateClientSettings: vi.fn(),
 }));
 vi.mock("~/hooks/useLocalStorage", () => ({ useLocalStorage: () => useState(false) }));
 vi.mock("./pullRequestReviewStore", () => ({

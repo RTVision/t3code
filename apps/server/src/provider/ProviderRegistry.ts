@@ -144,16 +144,29 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.driver === ProviderDriverKind.make("pi")) {
+    // Pi reports known auth only after RPC inventory discovery completes.
+    // An empty inventory is warning/unauthenticated; failed or interactive
+    // discovery stays ready/unknown and must keep the last known models.
+    return !(
+      provider.installed &&
+      (provider.status === "ready" || provider.status === "warning") &&
+      provider.auth.status !== "unknown"
+    );
+  }
+
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
     // ACP Registry discovery probes return the agent's complete inventory, so
-    // a completed probe (ready and authenticated) replaces the model list —
-    // otherwise agents that rename or collapse models leave stale entries
-    // pinned forever through the snapshot cache. Readiness-only and failed
-    // probe snapshots only know the "default" placeholder and stay partial.
+    // a completed probe replaces the model list — otherwise agents that rename
+    // or collapse models leave stale entries pinned forever through the
+    // snapshot cache. Only a completed probe reports `nativeSessions`;
+    // readiness-only and failed probe snapshots only know the "default"
+    // placeholder and stay partial. Auth is no signal here: agents without
+    // sign-in stay "unknown" after every probe.
     return !(
       provider.installed &&
       provider.status === "ready" &&
-      provider.auth.status === "authenticated"
+      provider.nativeSessions !== undefined
     );
   }
 
@@ -919,32 +932,33 @@ export const layer = Layer.effect(
           return refreshMachineSnapshot.pipe(
             Effect.andThen(snapshotForCwd(input.cwd)),
             Effect.flatMap((scopedSnapshot) =>
-              scopedSnapshot.status === "error" && scopedSnapshot.slashCommandsPending === undefined
-                ? Ref.get(providersRef)
-                : instanceRegistry.getInstance(input.instanceId).pipe(
-                    Effect.flatMap((currentInstance) => {
-                      if (currentInstance !== instance) return Ref.get(providersRef);
-                      // Check ownership inside the update so a newer scan cannot start
-                      // between the check and write. Session metadata must still win.
-                      return updateProviders((currentProviders) => {
-                        if (
-                          Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !==
-                          scan
-                        ) {
-                          return currentProviders;
-                        }
-                        return currentProviders.map((candidate) =>
-                          candidate.instanceId === input.instanceId &&
-                          Equal.equals(workspaceSnapshotOf(candidate), claimed.scannedFrom)
-                            ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                                ...scopedSnapshot,
-                                checkedAt: scannedAt,
-                              })
-                            : candidate,
-                        );
-                      });
-                    }),
-                  ),
+              instanceRegistry.getInstance(input.instanceId).pipe(
+                Effect.flatMap((currentInstance) => {
+                  if (currentInstance !== instance) return Ref.get(providersRef);
+                  // Check ownership inside the update so a newer scan cannot start
+                  // between the check and write. Session metadata must still win.
+                  return updateProviders((currentProviders) => {
+                    if (
+                      Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== scan
+                    ) {
+                      return currentProviders;
+                    }
+                    return currentProviders.map((candidate) =>
+                      candidate.instanceId === input.instanceId &&
+                      Equal.equals(workspaceSnapshotOf(candidate), claimed.scannedFrom)
+                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                            ...scopedSnapshot,
+                            checkedAt: scannedAt,
+                            // A failed health check leaves command discovery unknown.
+                            slashCommandsPending:
+                              scopedSnapshot.slashCommandsPending ??
+                              scopedSnapshot.status === "error",
+                          })
+                        : candidate,
+                    );
+                  });
+                }),
+              ),
             ),
           );
         },

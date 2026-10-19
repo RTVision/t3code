@@ -37,7 +37,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
@@ -105,6 +105,7 @@ import {
   type DiffSliceState,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
+import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
@@ -273,7 +274,6 @@ function PullRequestCodeTab({
   // An expanded default still folds what has been ticked off; only the toolbar opens everything.
   const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
-  const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
@@ -1358,7 +1358,12 @@ function PullRequestCodeTab({
   }
   if (diffQuery.error && loadedSlices.length === 0) {
     return withToolbar(
-      <p className="px-4 py-5 text-sm text-muted-foreground">{diffQuery.error}</p>,
+      <PullRequestDiffUnavailableState
+        error={diffQuery.error}
+        provider={detail.provider}
+        url={detail.url}
+        onRetry={() => diffQuery.refresh()}
+      />,
     );
   }
   // Only once the diff is whole: returning here while a cursor is outstanding would take the
