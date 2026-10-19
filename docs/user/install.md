@@ -5,7 +5,7 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
-The `@rtvision/t3` npm package runs on Node.js 22.16+ in the 22.x line,
+The `@rtvision/t3` npm package runs on Node.js 22.19+ in the 22.x line,
 23.11+ in the 23.x line, or 24.10 and later. Install Node.js and npm on the
 server and connect to RTVision's network to reach its npm registry. The desktop
 app includes its server runtime.

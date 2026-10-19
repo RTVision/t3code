@@ -1,6 +1,6 @@
 {
   "name": "t3",
-  "version": "0.0.87",
+  "version": "0.0.88",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -81,6 +81,6 @@
     "vite-plus": "catalog:"
   },
   "engines": {
-    "node": "^22.16 || ^23.11 || >=24.10"
+    "node": "^22.19 || ^23.11 || >=24.10"
   }
 }

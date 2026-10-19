@@ -1,3 +1,4 @@
+import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -6,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
@@ -30,6 +33,31 @@ const PackageManifest = Schema.Struct({
 type PackageManifest = typeof PackageManifest.Type;
 
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest));
+
+it("advertises Node versions supported by the required Undici dependency", () => {
+  const requireFromServer = NodeModule.createRequire(
+    new URL("../../apps/server/package.json", import.meta.url),
+  );
+  const undici = requireFromServer("undici/package.json") as { engines: { node: string } };
+
+  for (const version of [
+    "22.16.0",
+    "22.17.0",
+    "22.18.0",
+    "22.19.0",
+    "23.11.0",
+    "24.10.0",
+    "26.8.2",
+  ]) {
+    if (satisfiesSemverRange(version, serverPackageJson.engines.node)) {
+      assert.strictEqual(
+        satisfiesSemverRange(version, undici.engines.node),
+        true,
+        `Advertised Node ${version} does not satisfy Undici ${undici.engines.node}`,
+      );
+    }
+  }
+});
 
 describe("shouldBundleCliDependency", () => {
   it("bundles ordinary runtime dependencies", () => {
