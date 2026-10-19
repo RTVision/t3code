@@ -18,7 +18,7 @@ Install the **RTVision fork** of the Windows desktop app. Its updates come from
 Inside the WSL distro you intend to use:
 
 - Install OpenSSH client tools.
-- Install a compatible Node.js: 22.16+ in the 22.x line, 23.11+ in the 23.x line,
+- Install a compatible Node.js: 22.19+ in the 22.x line, 23.11+ in the 23.x line,
   or 24.10 and later.
 - Make sure your SSH config and keys are in that distro's `~/.ssh` directory.
 
