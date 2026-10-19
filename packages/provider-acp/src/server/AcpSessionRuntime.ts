@@ -278,16 +278,15 @@ export function wrapCommandForLinuxCgroup(
         "done < /proc/self/cgroup || exit 125",
         '[ "$actual" = "$expected" ] || exit 126',
         "unset ELECTRON_RUN_AS_NODE T3_ACP_CGROUP_WRAPPER",
-        // A failed exec can bypass EXIT traps in non-interactive shells.
-        'command -v "$1" >/dev/null 2>&1 || exit 125',
         "trap 'exit 125' 0",
         // The trap alone does not cover a failed `exec`: bash — which is
         // /bin/sh on Arch derivatives — exits 127 without running the EXIT
         // trap, so a missing agent binary reported "killed by the wrapper"
         // instead of "never launched". The caller always hands us an absolute
         // target, so test it as an executable file rather than asking the
-        // shell to resolve it.
-        '[ -f "$1" ] && [ -x "$1" ] || exit 125',
+        // shell to resolve it. Name the target before exiting: exit 125 alone
+        // does not say which path was rejected.
+        '[ -f "$1" ] && [ -x "$1" ] || { printf "%s: %s: not an executable file\\n" "$0" "$1" >&2; exit 125; }',
         'exec "$@"',
       ].join("\n"),
       "t3-acp-cgroup-wrapper",

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
+import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useThreadFindHighlights } from "./threadFindHighlights";
@@ -88,6 +89,7 @@ async function render(script: string, query = "") {
     ),
   );
   await act(async () => {
+    await getSyntaxHighlighterPromise("javascript");
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   });
 }

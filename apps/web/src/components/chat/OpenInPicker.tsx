@@ -209,6 +209,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact = false,
   enableShortcut = true,
   displayMode = "toolbar",
+  revealFileManager = false,
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
@@ -219,6 +220,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
   displayMode?: "toolbar" | "panel";
+  revealFileManager?: boolean;
 }) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -258,6 +260,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     const result = await dispatch.open(
       { kind: compact ? "file" : "directory", path: openInCwd },
       editor,
+      { reveal: revealFileManager },
     );
     if (isAtomCommandInterrupted(result)) return;
     if (result._tag === "Failure") {

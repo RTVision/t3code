@@ -14,6 +14,7 @@ import type {
   PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
@@ -141,7 +142,6 @@ interface AnnotationSession {
 }
 
 let activeSession: AnnotationSession | null = null;
-let idSequence = 0;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
 const applyAnnotationTheme = (
@@ -228,18 +228,7 @@ window.addEventListener("mousedown", suppressNavigationButton, true);
 window.addEventListener("mouseup", requestNavigationForButton, true);
 window.addEventListener("auxclick", suppressNavigationButton, true);
 
-const nextId = (prefix: string): string => {
-  idSequence += 1;
-  return `${prefix}_${idSequence.toString(36)}`;
-};
-
-/** Keeps fresh ids from colliding with ids a restored draft brought along. */
-const reserveIds = (ids: ReadonlyArray<string>): void => {
-  for (const id of ids) {
-    const sequence = Number.parseInt(id.slice(id.lastIndexOf("_") + 1), 36);
-    if (Number.isFinite(sequence)) idSequence = Math.max(idSequence, sequence);
-  }
-};
+const nextId = createAnnotationIdSource();
 
 const rectFromDomRect = (rect: DOMRect): PreviewAnnotationRect => ({
   x: rect.left,
@@ -1603,11 +1592,6 @@ function startAnnotation(sendEnabled: boolean, draft: PreviewAnnotationDraft | n
    * as a region and is swapped back in if it shows up before the timeout.
    */
   function restoreDraft(restored: PreviewAnnotationDraft): void {
-    reserveIds([
-      ...restored.elements.map((element) => element.id),
-      ...restored.regions.map((region) => region.id),
-      ...restored.strokes.map((stroke) => stroke.id),
-    ]);
     comment.value = restored.comment;
     resizeComment();
     tool = restored.tool;
