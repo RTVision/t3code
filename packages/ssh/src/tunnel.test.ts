@@ -1958,7 +1958,16 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         // A crashed server whose parent never reaps it stays a zombie, which
         // kill -0 still reports. Its pid file and runtime record keep naming it.
         const parent = yield* spawner.spawn(
-          ChildProcess.make("sh", ["-c", "sleep 600 & echo $!; exec sleep 600"]),
+          ChildProcess.make("node", [
+            "-e",
+            `const { spawn } = require("node:child_process");
+const child = spawn("sleep", ["600"], { stdio: "ignore" });
+child.once("spawn", () => {
+  require("node:fs").writeSync(1, String(child.pid) + "\\n");
+  // Stay inside this callback so libuv cannot reap the child after SIGKILL.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+});`,
+          ]),
         );
         const zombie = Number(
           Option.getOrThrow(
