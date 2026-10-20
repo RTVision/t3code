@@ -194,6 +194,9 @@ vi.mock("~/components/ui/menu", () => ({
   MenuItem: "MenuItem",
   MenuItemLabel: "MenuItemLabel",
   MenuPopup: "MenuPopup",
+  MenuSub: "MenuSub",
+  MenuSubTrigger: "MenuSubTrigger",
+  MenuSubPopup: "MenuSubPopup",
   MenuTrigger: "MenuTrigger",
 }));
 vi.mock("~/components/ui/popover", () => ({
