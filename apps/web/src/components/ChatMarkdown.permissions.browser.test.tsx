@@ -157,6 +157,7 @@ vi.mock("../editorPreferenceStorage", () => ({
   ],
 }));
 vi.mock("../remoteOpen", () => ({
+  resolveRemoteOpenState: () => ({ mode: "local-exec" }),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
   useRemoteCapableEditors: () => [],
   openRemoteEditorUrl: vi.fn(),

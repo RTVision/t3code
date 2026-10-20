@@ -137,6 +137,7 @@ vi.mock("~/editorPreferenceStorage", () => ({
   ],
 }));
 vi.mock("~/remoteOpen", () => ({
+  resolveRemoteOpenState: () => state.remote,
   useRemoteOpenResolution: () => ({ state: state.remote, isResolved: true }),
   useRemoteCapableEditors: () => ["vscode"],
   openRemoteEditorUrl: async (url: string) => {
@@ -212,7 +213,7 @@ vi.mock("~/components/ui/radio-group", () => ({ RadioGroup: "RadioGroup" }));
 vi.mock("~/components/ui/scroll-area", () => ({ ScrollArea: "ScrollArea" }));
 vi.mock("~/components/ui/spinner", () => ({ Spinner: "Spinner" }));
 vi.mock("~/components/ui/textarea", () => ({ Textarea: "Textarea" }));
-vi.mock("~/components/ui/toggle", () => ({ toggleVariants: () => "" }));
+vi.mock("~/components/ui/toggle", () => ({ Toggle: "Toggle", toggleVariants: () => "" }));
 vi.mock("./AnimatedHeight", () => ({ AnimatedHeight: "AnimatedHeight" }));
 
 import GitActionsControl from "./GitActionsControl";
