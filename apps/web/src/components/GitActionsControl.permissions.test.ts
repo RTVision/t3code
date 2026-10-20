@@ -224,7 +224,14 @@ import GitActionsControl from "./GitActionsControl";
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
-vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }),
+  );
+  vi.stubGlobal("document", new EventTarget());
+});
 
 let renderer: ReactTestRenderer | null = null;
 
@@ -266,6 +273,7 @@ afterEach(async () => {
     renderer?.unmount();
   });
   renderer = null;
+  vi.unstubAllGlobals();
 });
 
 describe("Git actions while thread details load", () => {

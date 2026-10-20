@@ -26,6 +26,7 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useCallback: hooks.useCallback,
+    useEffectEvent: hooks.useCallback,
     useMemo: hooks.useMemo,
     useRef: hooks.useRef,
     useState: hooks.useState,
