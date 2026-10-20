@@ -54,7 +54,10 @@ vi.mock(import("@effect/atom-react"), async (original) => {
     },
   };
 });
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
 vi.mock("../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../hooks/useSettings")>()),
@@ -154,6 +157,7 @@ vi.mock("../editorPreferenceStorage", () => ({
   ],
 }));
 vi.mock("../remoteOpen", () => ({
+  resolveRemoteOpenState: () => ({ mode: "local-exec" }),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
   useRemoteCapableEditors: () => [],
   openRemoteEditorUrl: vi.fn(),
@@ -214,6 +218,10 @@ beforeEach(() => {
   state.toast.mockReset();
   useRightPanelStore.setState({ openFile: state.openFile });
   vi.spyOn(navigator.clipboard, "writeText").mockImplementation(state.copy);
+  vi.spyOn(navigator.clipboard, "write").mockImplementation(async (items) => {
+    const item = items[0]!;
+    await state.copy(await (await item.getType("text/plain")).text());
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 });
 
@@ -268,6 +276,26 @@ it("removes host actions after revocation while keeping file preview and copying
   await act(async () => anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
+});
+
+it("starts copying before the nested-file lookup finishes", async () => {
+  let finishLookup: () => void = () => {
+    throw new Error("Lookup not started");
+  };
+  state.search.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishLookup = () =>
+          resolve(AsyncResult.success({ entries: [{ path: "src/readme.md", kind: "file" }] }));
+      }),
+  );
+  state.choose.mockResolvedValue("copy-full");
+  await renderMarkdown("`readme.md:10:2`");
+  await openContextMenu();
+  expect(navigator.clipboard.write).toHaveBeenCalledOnce();
+  expect(state.copy).not.toHaveBeenCalled();
+  await act(async () => finishLookup());
+  await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/src/readme.md:10:2"));
 });
 
 it("does not launch an editor after revocation during a native context menu", async () => {

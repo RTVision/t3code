@@ -314,7 +314,13 @@ vi.mock("./AgentBrowserCursor", () => ({
   AgentBrowserCursor: () => createElement("agent-cursor"),
 }));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
-vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
+vi.mock("./usePreviewSession", () => ({
+  usePreviewSession: vi.fn(),
+  useDesktopHostedPreviewSessions: vi.fn(),
+}));
+vi.mock("~/browser/useBrowserLayoutZoomFactor", () => ({
+  useBrowserLayoutZoomFactor: (previewZoomFactor: number) => previewZoomFactor,
+}));
 
 import { PreviewView } from "./PreviewView";
 import { toastManager } from "~/components/ui/toast";

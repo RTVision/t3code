@@ -152,60 +152,61 @@ export function prepareTargetForSshRunner(
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = (options: DesktopSshEnvironmentLayerOptions = {}) =>
-  Effect.gen(function* () {
-    const manager = yield* SshTunnel.SshEnvironmentManager;
-    const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-    const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
-    const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
-    const platform = yield* HostProcess.Platform;
-    const resolveRunner = options.resolveSshRunner ?? Effect.succeed({ kind: "native" } as const);
-    const withRunner = Effect.fn("desktop.ssh.withRunner")(function* <A, E, R>(
-      operation: (runner: SshRunner) => Effect.Effect<A, E, R>,
-    ) {
-      const runner = yield* resolveRunner;
-      return yield* operation(runner).pipe(Effect.provideService(SshRunner, runner));
-    });
-    return DesktopSshEnvironment.of({
-      discoverHosts: (input) =>
-        withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.discoverHosts"),
-        ),
-      resolveHost: (alias) =>
-        withRunner((runner) =>
-          resolveSshTarget(alias.trim()).pipe(
-            Effect.map((target) => {
-              const identity = sshRunnerIdentity(runner, platform);
-              return { ...target, ...(identity === undefined ? {} : { runner: identity }) };
-            }),
-          ),
-        ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost")),
-      ensureEnvironment: (target, ensureOptions) =>
-        withRunner((runner) =>
-          prepareTargetForSshRunner(
-            target,
-            runner,
-            platform,
-            ensureOptions?.isNewTarget === true,
-          ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
-        ).pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.ensureEnvironment"),
-        ),
-      disconnectEnvironment: (target) =>
-        withRunner((runner) =>
-          prepareTargetForSshRunner(target, runner, platform, false).pipe(
-            Effect.flatMap((resolved) => manager.disconnectEnvironment(resolved)),
-          ),
-        ).pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.disconnectEnvironment"),
-        ),
-    });
+export const make = Effect.fn("DesktopSshEnvironment.make")(function* (
+  options: DesktopSshEnvironmentLayerOptions = {},
+) {
+  const manager = yield* SshTunnel.SshEnvironmentManager;
+  const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+  const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
+  const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+  const platform = yield* HostProcess.Platform;
+  const resolveRunner = options.resolveSshRunner ?? Effect.succeed({ kind: "native" } as const);
+  const withRunner = Effect.fn("desktop.ssh.withRunner")(function* <A, E, R>(
+    operation: (runner: SshRunner) => Effect.Effect<A, E, R>,
+  ) {
+    const runner = yield* resolveRunner;
+    return yield* operation(runner).pipe(Effect.provideService(SshRunner, runner));
   });
+  return DesktopSshEnvironment.of({
+    discoverHosts: (input) =>
+      withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.discoverHosts"),
+      ),
+    resolveHost: (alias) =>
+      withRunner((runner) =>
+        resolveSshTarget(alias.trim()).pipe(
+          Effect.map((target) => {
+            const identity = sshRunnerIdentity(runner, platform);
+            return { ...target, ...(identity === undefined ? {} : { runner: identity }) };
+          }),
+        ),
+      ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost")),
+    ensureEnvironment: (target, ensureOptions) =>
+      withRunner((runner) =>
+        prepareTargetForSshRunner(
+          target,
+          runner,
+          platform,
+          ensureOptions?.isNewTarget === true,
+        ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
+      ).pipe(
+        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.ensureEnvironment"),
+      ),
+    disconnectEnvironment: (target) =>
+      withRunner((runner) =>
+        prepareTargetForSshRunner(target, runner, platform, false).pipe(
+          Effect.flatMap((resolved) => manager.disconnectEnvironment(resolved)),
+        ),
+      ).pipe(
+        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.disconnectEnvironment"),
+      ),
+  });
+});
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make(options)).pipe(

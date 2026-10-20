@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -233,7 +233,8 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
     });
     assert.strictEqual(result.state, "open");
     assert.strictEqual(result.checks[0]?.status, "failure");
-    assert.deepStrictEqual(paths, [
+    assert.deepStrictEqual(paths.toSorted(), [
+      "repos/acme/web/branches/main",
       "repos/acme/web/pulls/1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=2",
@@ -243,16 +244,18 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
           paths.push(input.path);
-          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head)/);
+          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head|branches\/main)/);
           return Effect.succeed(
             processOutput(
-              input.path.endsWith("pulls/1")
-                ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
+              input.path.endsWith("branches/main")
+                ? `{"name":"main","protected":false,"enable_status_check":false,"status_check_contexts":[]}`
+                : input.path.endsWith("pulls/1")
+                  ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
             "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
             "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
-                : input.path.endsWith("page=1")
-                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
-                  : "[]",
+                  : input.path.endsWith("page=1")
+                    ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                    : "[]",
             ),
           );
         },
@@ -332,6 +335,9 @@ it.effect.each([
                 break;
               case "repos/maria/project/statuses/head":
                 response = [];
+                break;
+              case "repos/maria/project/branches/main":
+                response = { name: "main", protected: false };
                 break;
               default:
                 return Effect.die(`Unexpected Forgejo request: ${input.path}`);

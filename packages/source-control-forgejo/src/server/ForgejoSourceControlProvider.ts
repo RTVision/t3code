@@ -311,44 +311,46 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
-    listChangeRequests: (input) =>
-      Effect.gen(function* () {
+    listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
         // Forgejo cannot filter PRs by head branch, so matches come from paging the PR list.
-        const scan = (endpointState: "open" | "closed", maxPages: number) =>
-          Effect.gen(function* () {
-            for (let page = 1; results.length < limit && page <= maxPages; page++) {
-              const items = yield* request(
-                {
-                  ...input,
-                  path: `${repositoryPath(repo.repository)}/pulls?state=${endpointState}&sort=recentupdate&limit=50&page=${page}`,
-                },
-                Schema.Array(ForgejoPullRequestSchema),
-              );
-              for (const item of items) {
-                if (
-                  item.head.ref !== branch ||
-                  (source?.repository && item.head.repo?.full_name !== source.repository) ||
-                  (source?.owner && item.head.repo?.owner.login !== source.owner)
-                )
-                  continue;
-                const normalized = toForgejoChangeRequest(item);
-                if (input.state === "all" || normalized.state === input.state)
-                  results.push(normalized);
-              }
-              if (items.length === 0 || results.length >= limit) break;
-              if (page >= MAX_PULL_REQUEST_PAGES)
-                return yield* new ForgejoCli.ForgejoCliError({
-                  command: "tea",
-                  cwd: input.cwd,
-                  detail: "Too many Forgejo PR pages to resolve this branch reliably.",
-                });
+        const scan = Effect.fn("ForgejoSourceControlProvider.scan")(function* (
+          endpointState: "open" | "closed",
+          maxPages: number,
+        ) {
+          for (let page = 1; results.length < limit && page <= maxPages; page++) {
+            const items = yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls?state=${endpointState}&sort=recentupdate&limit=50&page=${page}`,
+              },
+              Schema.Array(ForgejoPullRequestSchema),
+            );
+            for (const item of items) {
+              if (
+                item.head.ref !== branch ||
+                (source?.repository && item.head.repo?.full_name !== source.repository) ||
+                (source?.owner && item.head.repo?.owner.login !== source.owner)
+              )
+                continue;
+              const normalized = toForgejoChangeRequest(item);
+              if (input.state === "all" || normalized.state === input.state)
+                results.push(normalized);
             }
-          });
+            if (items.length === 0 || results.length >= limit) break;
+            if (page >= MAX_PULL_REQUEST_PAGES)
+              return yield* new ForgejoCli.ForgejoCliError({
+                command: "tea",
+                cwd: input.cwd,
+                detail: "Too many Forgejo PR pages to resolve this branch reliably.",
+              });
+          }
+        });
         if (input.state === "open" || input.state === "all")
           yield* scan("open", MAX_PULL_REQUEST_PAGES);
         if (input.state !== "open")
@@ -357,14 +359,16 @@ export const make = Effect.gen(function* () {
             input.state === "all" ? ALL_STATES_CLOSED_PULL_REQUEST_PAGES : MAX_PULL_REQUEST_PAGES,
           );
         return results.slice(0, limit);
-      }).pipe(mapError("listChangeRequests", input.cwd)),
+      },
+      (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
+    ),
     getChangeRequest: (input) =>
       getPull(input).pipe(
         Effect.map(toForgejoChangeRequest),
         mapError("getChangeRequest", input.cwd),
       ),
-    createChangeRequest: (input) =>
-      Effect.gen(function* () {
+    createChangeRequest: Effect.fn("ForgejoSourceControlProvider.createChangeRequest")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const owner = source?.owner ?? source?.repository?.split("/")[0];
@@ -380,16 +384,20 @@ export const make = Effect.gen(function* () {
             body: yield* fs.readFileString(input.bodyFile),
           },
         });
-      }).pipe(mapError("createChangeRequest", input.cwd)),
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("createChangeRequest", input.cwd)),
+    ),
+    getRepositoryCloneUrls: Effect.fn("ForgejoSourceControlProvider.getRepositoryCloneUrls")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return cloneUrls(
           yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
         );
-      }).pipe(mapError("getRepositoryCloneUrls", input.cwd)),
-    createRepository: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("getRepositoryCloneUrls", input.cwd)),
+    ),
+    createRepository: Effect.fn("ForgejoSourceControlProvider.createRepository")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const user = yield* request(
           { ...input, path: "user" },
@@ -410,17 +418,21 @@ export const make = Effect.gen(function* () {
             RepositorySchema,
           ),
         );
-      }).pipe(mapError("createRepository", input.cwd)),
-    getDefaultBranch: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("createRepository", input.cwd)),
+    ),
+    getDefaultBranch: Effect.fn("ForgejoSourceControlProvider.getDefaultBranch")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return (
           (yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema))
             .default_branch ?? null
         );
-      }).pipe(mapError("getDefaultBranch", input.cwd)),
-    checkoutChangeRequest: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("getDefaultBranch", input.cwd)),
+    ),
+    checkoutChangeRequest: Effect.fn("ForgejoSourceControlProvider.checkoutChangeRequest")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const pull = yield* getPull(input);
         if (repo.command === "fj") {
@@ -491,6 +503,8 @@ export const make = Effect.gen(function* () {
             args: ["reset", "--keep", pull.head.sha],
           });
         }
-      }).pipe(mapError("checkoutChangeRequest", input.cwd)),
+      },
+      (effect, input) => effect.pipe(mapError("checkoutChangeRequest", input.cwd)),
+    ),
   });
 });

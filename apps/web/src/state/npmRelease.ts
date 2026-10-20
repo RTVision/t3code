@@ -4,8 +4,8 @@ import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-export const npmReleasePublished = (version: string) =>
-  Effect.gen(function* () {
+export const npmReleasePublished = Effect.fn("npmReleasePublished")(
+  function* (version: string) {
     const response = yield* HttpClient.get(
       `${T3_NPM_REGISTRY}${T3_NPM_PACKAGE.replace("/", "%2F")}/${encodeURIComponent(version)}`,
     );
@@ -16,10 +16,10 @@ export const npmReleasePublished = (version: string) =>
     return typeof body === "object" && body !== null && "version" in body
       ? body.version === version
       : false;
-  }).pipe(
-    // Tracing headers trigger an unnecessary browser CORS preflight.
-    Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-  );
+  },
+  // Tracing headers trigger an unnecessary browser CORS preflight.
+  Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+);
 
 /**
  * Whether `@rtvision/t3@<version>` is published on npm. A 404 is false; network and
