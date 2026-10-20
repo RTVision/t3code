@@ -58,6 +58,7 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
   pullRequestEnvironment: {
     detail: () => "detail",
     activity: () => "activity",
+    changeBreakdown: () => "change-breakdown",
     setReaction: { permissionAtom: () => Atom.make(true) },
     // The header menu reads the stored guide to label "Write guide" or "Rewrite guide".
     reviewGuide: () => "review-guide",
