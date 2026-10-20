@@ -11,6 +11,7 @@ import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { pinPreviewDesktopProfile, useActivePreviewSessions } from "~/previewStateStore";
+import { useDesktopHostedPreviewSessions } from "~/components/preview/usePreviewSession";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -26,6 +27,7 @@ export function ElectronBrowserHost() {
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   const hydrated = useClientSettingsHydrated();
   const defaultProfileId = useBrowserDefaults().profileId;
+  useDesktopHostedPreviewSessions(primaryEnvironmentId);
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
     return threadRef

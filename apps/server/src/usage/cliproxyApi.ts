@@ -306,18 +306,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : null;
       const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
+      const planType =
+        usage.plan_type?.trim() ||
+        account.id_token?.plan_type?.trim() ||
+        account.id_token?.chatgpt_plan_type?.trim();
       return {
         ...base,
-        plan: codexPlanLabel(
-          usage.plan_type?.trim() ||
-            account.id_token?.plan_type?.trim() ||
-            account.id_token?.chatgpt_plan_type?.trim(),
-        ),
+        plan: codexPlanLabel(planType),
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
             snapshot: {
-              planType: usage.plan_type ?? null,
+              planType: planType ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
             },

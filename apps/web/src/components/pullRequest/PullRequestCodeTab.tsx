@@ -38,7 +38,7 @@ import {
 } from "react";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment, canResolvePullRequestThread } from "./pullRequestEditing.logic";
@@ -261,7 +261,7 @@ function PullRequestCodeTab({
     readonly nonce: number;
   } | null;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
@@ -302,8 +302,6 @@ function PullRequestCodeTab({
   );
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
-  // One commit's own changes and the whole change are two different diffs, paged separately, so
-  // everything below is keyed by both.
   const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
@@ -430,6 +428,8 @@ function PullRequestCodeTab({
   // A comment is posted against the pull request's head diff, so a line number taken from one
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines = review.inlineComment && commit === null;
+  const canSelectLines =
+    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
   const filePaths = files.map((file) => resolveFileDiffPath(file));
   const viewedFilesStore = detail.capabilities.viewedFiles;
   const filesViewed = usePullRequestFilesViewed({
@@ -746,7 +746,7 @@ function PullRequestCodeTab({
       item: CodeViewItem<ReviewAnnotationGroup>;
     },
   ) => {
-    if (!range || !canCommentOnLines) return;
+    if (!range || !canSelectLines) return;
     const item = context.item;
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -887,8 +887,8 @@ function PullRequestCodeTab({
     themeType: resolvedTheme,
     stickyHeaders: true,
     loadDiffFiles,
-    enableGutterUtility: canCommentOnLines && draft === null,
-    enableLineSelection: canCommentOnLines && draft === null,
+    enableGutterUtility: canSelectLines && draft === null,
+    enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
   };
@@ -993,8 +993,8 @@ function PullRequestCodeTab({
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
-          submitLabel="Add to review"
-          {...(onAddToAgentSelection
+          submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
+          {...(canCommentOnLines && onAddToAgentSelection
             ? {
                 secondaryAction: {
                   label: "Add to agent",
@@ -1010,6 +1010,14 @@ function PullRequestCodeTab({
             setSelectedLines(null);
           }}
           onComment={(body) => {
+            if (!canCommentOnLines) {
+              if (onAddToAgentSelection) {
+                finishSelection(draft, body, (comment) =>
+                  onAddToAgentSelection({ comment, request: body }),
+                );
+              }
+              return;
+            }
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
               path: draft.path,

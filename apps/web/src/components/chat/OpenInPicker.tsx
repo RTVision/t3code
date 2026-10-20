@@ -205,6 +205,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors,
   openInCwd,
   workspacePath,
+  openInCwdIsFile,
   presentation = "toolbar",
   compact = false,
   enableShortcut = true,
@@ -216,6 +217,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
   workspacePath?: string;
+  openInCwdIsFile?: boolean;
   presentation?: "toolbar" | "menu";
   compact?: boolean;
   enableShortcut?: boolean;
@@ -258,7 +260,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     )
       return;
     const result = await dispatch.open(
-      { kind: compact ? "file" : "directory", path: openInCwd },
+      { kind: (openInCwdIsFile ?? compact) ? "file" : "directory", path: openInCwd },
       editor,
       { reveal: revealFileManager },
     );
@@ -282,7 +284,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   useEffect(() => {
     if (!enableShortcut || !canOpenEditor) return;
     const handler = (e: globalThis.KeyboardEvent) => {
-      if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
+      if (e.defaultPrevented || !isOpenFavoriteEditorShortcut(e, keybindings)) return;
       if (!openInCwd) return;
       if (!preferredEditor) return;
       if (
@@ -295,8 +297,8 @@ export const OpenInPicker = memo(function OpenInPicker({
       e.preventDefault();
       void openInEditor(preferredEditor);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, [
     canOpenEditor,
     enableShortcut,

@@ -54,6 +54,7 @@ import {
 } from "react";
 import {
   filterPullRequestsByInvolvement,
+  findProjectForRepository,
   findScopedProject,
   collectPullRequestListFacets,
   groupPullRequestsByInvolvement,
@@ -1797,25 +1798,6 @@ function usePullRequestScope(search: PullRequestsSearch) {
   const scopedProject = findScopedProject(projects, scopedEnvironmentId, scopedProjectId);
   const scopedProjects = pullRequestFilterProjects(projects, environmentLabels, scopedProject);
   const selectedHost = search.selectedHost ?? search.host;
-  const projectIdForRepository = (() => {
-    const repository = search.repository?.toLowerCase();
-    if (repository === undefined) return undefined;
-    const identity = projects.find(
-      (project) =>
-        project.repositoryIdentity?.owner &&
-        project.repositoryIdentity.name &&
-        `${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`.toLowerCase() ===
-          repository &&
-        (selectedHost === undefined ||
-          pullRequestHostOf(
-            project.repositoryIdentity,
-            project.repositoryIdentity.provider as SourceControlProviderKind,
-          ) === selectedHost.toLowerCase()),
-    );
-    return identity?.id;
-  })();
-  const linkedProjectId = resolveProjectScope(search.selectedProjectId, projects, projectsKnown);
-  const selectedProjectId = linkedProjectId ?? projectIdForRepository ?? scopedProjectId;
   // A named server still connecting is kept named rather than falling back: falling back while it
   // is merely not ready yet would resolve the project against whatever other server has answered,
   // which can be the wrong one where two servers share a project id.
@@ -1824,7 +1806,21 @@ function usePullRequestScope(search: PullRequestsSearch) {
     knownEnvironmentIds,
     scopedEnvironmentId,
   );
-  const selectedProject = findScopedProject(projects, selectedEnvironmentId, selectedProjectId);
+  const projectForRepository =
+    search.repository === undefined
+      ? undefined
+      : findProjectForRepository(projects, {
+          repository: search.repository,
+          host: selectedHost,
+          selectedEnvironmentId,
+          scopedProjectId,
+          scopedEnvironmentId,
+        });
+  const linkedProjectId = resolveProjectScope(search.selectedProjectId, projects, projectsKnown);
+  const selectedProject =
+    linkedProjectId === undefined && search.repository !== undefined
+      ? projectForRepository
+      : findScopedProject(projects, selectedEnvironmentId, linkedProjectId ?? scopedProjectId);
   const queryEnvironmentIds = resolveQueryEnvironmentIds(
     environmentIds,
     projects,

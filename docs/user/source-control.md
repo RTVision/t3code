@@ -88,6 +88,11 @@ export T3CODE_BITBUCKET_EMAIL="you@example.com"
 export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
 
+For a background service, put these `KEY=VALUE` entries in
+[`service.env`](./background-service.md#configure-the-service-environment)
+under T3 home, then run `t3 service restart`. Service installation and updates
+preserve that file.
+
 ### RTVision Gitea review features
 
 Install [tea 0.16 or later](https://gitea.com/gitea/tea/releases) on the machine running
@@ -182,7 +187,8 @@ make your first commit before pushing.
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
-messages, review titles, and descriptions from your changes.
+messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
+the thread, including the checks it ran.
 
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to

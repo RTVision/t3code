@@ -36,12 +36,12 @@ export const serviceRuntimeStatePath = (baseDir: string) =>
   Effect.map(Path.Path, (path) => path.join(baseDir, "runtime", "server-runtime.json"));
 
 /** Retained during child restarts; discovery checks the supervisor is still alive. */
-export const persistServiceRuntimeState = (input: {
-  readonly baseDir: string;
-  readonly state: PersistedServerRuntimeState;
-  readonly launcherPid: number;
-}) =>
-  Effect.gen(function* () {
+export const persistServiceRuntimeState = Effect.fn("server.persistServiceRuntimeState")(
+  function* (input: {
+    readonly baseDir: string;
+    readonly state: PersistedServerRuntimeState;
+    readonly launcherPid: number;
+  }) {
     yield* persistServerRuntimeState({
       path: yield* serviceRuntimeStatePath(input.baseDir),
       state: { ...input.state, launcherPid: input.launcherPid },
@@ -52,7 +52,8 @@ export const persistServiceRuntimeState = (input: {
         ),
       ),
     );
-  });
+  },
+);
 
 /** Retain service discovery during handoff; shared discovery belongs to ServerOwnership. */
 export const acquireServiceRuntimeState = Effect.fn("server.acquireServiceRuntimeState")(
@@ -157,34 +158,35 @@ export const persistServerRuntimeState = (input: {
     ),
   );
 
-export const clearPersistedServerRuntimeState = (path: string, expectedPid?: number) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    if (expectedPid !== undefined) {
-      const current = yield* readPersistedServerRuntimeState(path);
-      if (Option.isNone(current) || current.value.pid !== expectedPid) return;
-    }
-    yield* fs.remove(path, { force: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerRuntimeStateError({
-            operation: "clear",
-            statePath: path,
-            cause,
+export const clearPersistedServerRuntimeState = Effect.fn(
+  "server.clearPersistedServerRuntimeState",
+)(function* (path: string, expectedPid?: number) {
+  const fs = yield* FileSystem.FileSystem;
+  if (expectedPid !== undefined) {
+    const current = yield* readPersistedServerRuntimeState(path);
+    if (Option.isNone(current) || current.value.pid !== expectedPid) return;
+  }
+  yield* fs.remove(path, { force: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerRuntimeStateError({
+          operation: "clear",
+          statePath: path,
+          cause,
+        }),
+    ),
+    Effect.catchTags({
+      ServerRuntimeStateError: (error) =>
+        Effect.logWarning(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            statePath: error.statePath,
+            cause: error,
           }),
-      ),
-      Effect.catchTags({
-        ServerRuntimeStateError: (error) =>
-          Effect.logWarning(error.message).pipe(
-            Effect.annotateLogs({
-              operation: error.operation,
-              statePath: error.statePath,
-              cause: error,
-            }),
-          ),
-      }),
-    );
-  });
+        ),
+    }),
+  );
+});
 
 /**
  * Signal 0 delivers nothing; it only reports whether the pid exists. EPERM
@@ -200,8 +202,10 @@ export const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-export const readPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
+export const readPersistedServerRuntimeState = Effect.fn(
+  "serverRuntimeState.readPersistedServerRuntimeState",
+)(
+  function* (path: string) {
     const fs = yield* FileSystem.FileSystem;
     const raw = yield* fs.readFileString(path).pipe(
       Effect.matchEffect({
@@ -238,16 +242,16 @@ export const readPersistedServerRuntimeState = (path: string) =>
           }),
       ),
     );
-  }).pipe(
-    Effect.catchTags({
-      ServerRuntimeStateError: (error) =>
-        Effect.logWarning(error.message).pipe(
-          Effect.annotateLogs({
-            operation: error.operation,
-            statePath: error.statePath,
-            cause: error,
-          }),
-          Effect.as(Option.none<PersistedServerRuntimeState>()),
-        ),
-    }),
-  );
+  },
+  Effect.catchTags({
+    ServerRuntimeStateError: (error) =>
+      Effect.logWarning(error.message).pipe(
+        Effect.annotateLogs({
+          operation: error.operation,
+          statePath: error.statePath,
+          cause: error,
+        }),
+        Effect.as(Option.none<PersistedServerRuntimeState>()),
+      ),
+  }),
+);
