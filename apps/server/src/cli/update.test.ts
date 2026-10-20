@@ -16,6 +16,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimePaths } from "../cloud/pinnedRuntime.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import {
   repointLauncher,
   resolveLauncherPath,
@@ -55,7 +56,7 @@ it.effect("authenticates each release page until the requested channel is found"
     const httpClient = HttpClient.make((request) => {
       const url = new URL(request.url);
       assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
+      assert.equal(url.pathname, "/repos/RTVision/t3code/releases");
       assert.equal(request.headers.accept, "application/vnd.github+json");
       assert.equal(request.headers.authorization, "Bearer gh-token");
       const page = url.searchParams.get("page") ?? "";
@@ -168,20 +169,20 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update service", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "reports the service switch as pending after installing the target runtime",
+    "reports the service switch as pending after validating the cached npm runtime",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-service-" });
         const targetVersion = "999.0.0";
-        const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
-        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+        const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux", "npm");
+        yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
+        yield* fs.writeFileString(runtime.entryPath, `console.log("t3 v${targetVersion}");\n`);
         yield* fs.writeFileString(
-          runtime.entryPath,
-          `#!/bin/sh\nprintf 't3 v${targetVersion}\\n'\n`,
+          path.join(runtime.versionDir, "node_modules/t3/package.json"),
+          JSON.stringify({ name: "@rtvision/t3", version: targetVersion }),
         );
-        yield* fs.chmod(runtime.entryPath, 0o755);
         yield* fs.writeFileString(runtime.sentinelPath, `${targetVersion}\n`);
         const logPath = path.join(baseDir, "userdata/logs/boot-service.log");
         const unitPath = path.join(baseDir, "t3code.service");
@@ -201,7 +202,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
               Effect.sync(() => {
                 installs.push(options);
                 return {
-                  program: [runtime.entryPath],
+                  program: [process.execPath, runtime.entryPath],
                   baseDir,
                   logPath,
                   unitPath,
@@ -211,6 +212,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
             restart: Effect.die("unexpected restart"),
             uninstall: Effect.die("unexpected uninstall"),
             withStopped: () => Effect.die("unexpected maintenance"),
+          }),
+        );
+        const runner = yield* ProcessRunner.make();
+        let versionChecks = 0;
+        vi.spyOn(ProcessRunner, "layer", "get").mockReturnValue(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              // Reject installs before spawning so a stale fixture cannot contact the registry.
+              assert.equal(input.command, process.execPath);
+              assert.deepStrictEqual(input.args, [runtime.entryPath, "--version"]);
+              versionChecks++;
+              return runner.run(input);
+            },
           }),
         );
         const lines: string[] = [];
@@ -232,6 +246,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
         );
 
+        expect(versionChecks).toBe(1);
         expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
         const output = lines.join("\n");
         expect(output).not.toContain("Background service restarted");

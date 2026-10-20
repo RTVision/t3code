@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { DesktopPreviewBridge, DesktopPreviewPointerEvent } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,7 +8,13 @@ vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
 vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("~/hooks/useSettings", () => ({ useClientSettingsHydrated: () => true }));
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("~/previewStateStore", () => ({ useActivePreviewSessions: () => ({}) }));
+vi.mock("~/previewStateStore", () => ({
+  useActivePreviewSessions: () => ({}),
+  pinPreviewDesktopProfile: vi.fn(),
+}));
+vi.mock("~/components/preview/usePreviewSession", () => ({
+  useDesktopHostedPreviewSessions: vi.fn(),
+}));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("~/state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => undefined }));

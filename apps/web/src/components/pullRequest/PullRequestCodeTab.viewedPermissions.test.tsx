@@ -93,7 +93,10 @@ vi.mock("~/state/query", () => ({
     refresh: state.refresh,
   }),
 }));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("~/hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: () => ({
     diffFilesCollapsed: false,

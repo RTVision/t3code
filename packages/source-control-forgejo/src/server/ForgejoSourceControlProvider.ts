@@ -319,36 +319,38 @@ export const make = Effect.gen(function* () {
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
         // Forgejo cannot filter PRs by head branch, so matches come from paging the PR list.
-        const scan = (endpointState: "open" | "closed", maxPages: number) =>
-          Effect.gen(function* () {
-            for (let page = 1; results.length < limit && page <= maxPages; page++) {
-              const items = yield* request(
-                {
-                  ...input,
-                  path: `${repositoryPath(repo.repository)}/pulls?state=${endpointState}&sort=recentupdate&limit=50&page=${page}`,
-                },
-                Schema.Array(ForgejoPullRequestSchema),
-              );
-              for (const item of items) {
-                if (
-                  item.head.ref !== branch ||
-                  (source?.repository && item.head.repo?.full_name !== source.repository) ||
-                  (source?.owner && item.head.repo?.owner.login !== source.owner)
-                )
-                  continue;
-                const normalized = toForgejoChangeRequest(item);
-                if (input.state === "all" || normalized.state === input.state)
-                  results.push(normalized);
-              }
-              if (items.length === 0 || results.length >= limit) break;
-              if (page >= MAX_PULL_REQUEST_PAGES)
-                return yield* new ForgejoCli.ForgejoCliError({
-                  command: "tea",
-                  cwd: input.cwd,
-                  detail: "Too many Forgejo PR pages to resolve this branch reliably.",
-                });
+        const scan = Effect.fn("ForgejoSourceControlProvider.scan")(function* (
+          endpointState: "open" | "closed",
+          maxPages: number,
+        ) {
+          for (let page = 1; results.length < limit && page <= maxPages; page++) {
+            const items = yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls?state=${endpointState}&sort=recentupdate&limit=50&page=${page}`,
+              },
+              Schema.Array(ForgejoPullRequestSchema),
+            );
+            for (const item of items) {
+              if (
+                item.head.ref !== branch ||
+                (source?.repository && item.head.repo?.full_name !== source.repository) ||
+                (source?.owner && item.head.repo?.owner.login !== source.owner)
+              )
+                continue;
+              const normalized = toForgejoChangeRequest(item);
+              if (input.state === "all" || normalized.state === input.state)
+                results.push(normalized);
             }
-          });
+            if (items.length === 0 || results.length >= limit) break;
+            if (page >= MAX_PULL_REQUEST_PAGES)
+              return yield* new ForgejoCli.ForgejoCliError({
+                command: "tea",
+                cwd: input.cwd,
+                detail: "Too many Forgejo PR pages to resolve this branch reliably.",
+              });
+          }
+        });
         if (input.state === "open" || input.state === "all")
           yield* scan("open", MAX_PULL_REQUEST_PAGES);
         if (input.state !== "open")

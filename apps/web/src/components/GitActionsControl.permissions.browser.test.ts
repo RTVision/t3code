@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -85,6 +84,7 @@ vi.mock("~/state/query", () => ({
       hasPrimaryRemote: true,
       hasWorkingTreeChanges: true,
       workingTree: {
+        rootPath: "/repo",
         files: [{ path: "file.ts", status: "modified", insertions: 1, deletions: 0 }],
       },
     },

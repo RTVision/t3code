@@ -819,6 +819,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       // Stopping the unit from inside it kills this process before the start.
       // A transient unit runs the same install from outside, stop first, so it
       // still serialises with a remote update the launcher may be starting.
+      const runtime = pinnedRuntimeCommand(runtimePaths, host.execPath);
       yield* runStep("handing the install to a transient unit", "systemd-run", [
         "--user",
         "--collect",
@@ -827,7 +828,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         `--property=StandardOutput=append:${logPath}`,
         `--property=StandardError=append:${logPath}`,
         `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
-        runtimePaths.entryPath,
+        runtime.command,
+        // Unlike the executable, npm's script path is subject to variable expansion.
+        ...runtime.args.map((arg) => arg.replaceAll("$", () => "$$")),
         "service",
         "install",
         "--base-dir",

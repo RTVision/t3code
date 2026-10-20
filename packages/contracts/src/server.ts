@@ -779,7 +779,7 @@ export const ServerConfigStreamLowDiskSpaceUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamLowDiskSpaceUpdatedEvent =
   typeof ServerConfigStreamLowDiskSpaceUpdatedEvent.Type;
 
-export const ServerConfigStreamEvent = Schema.Union([
+const serverConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
@@ -788,7 +788,12 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
   ServerConfigStreamLowDiskSpaceUpdatedEvent,
 ]);
-export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
+export type ServerConfigStreamEvent = typeof serverConfigStreamEvent.Type;
+// Bound the public codec to prevent native TypeScript from widening RPC requirements to any.
+export const ServerConfigStreamEvent: Schema.Codec<
+  ServerConfigStreamEvent,
+  typeof serverConfigStreamEvent.Encoded
+> = serverConfigStreamEvent;
 
 export const ServerSelfUpdateOutcome = Schema.Struct({
   id: TrimmedNonEmptyString,

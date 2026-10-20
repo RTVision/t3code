@@ -200,7 +200,7 @@ const decodeRequest = Schema.decodeUnknownSync(
 );
 const account = {
   account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
-  requiresOpenaiAuth: false,
+  requiresOpenaiAuth: true,
 } as const;
 
 const startProbe = Effect.fn("startProbe")(function* (hang: ReadonlyArray<string>) {

@@ -131,6 +131,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
   executable = true,
+  execPath = executable ? "/usr/bin/t3" : "/usr/bin/node",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -191,7 +192,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         stdout: input.args.includes("--version")
           ? // The runtime under test reports the version of the directory it
             // was launched from, like the real executable.
-            `t3 v${/versions\/([^/]+)\//.exec(command)?.[1] ?? "1.2.3"}\n`
+            `t3 v${/runtime\/versions\/([^/]+)\//.exec(command)?.[1] ?? "1.2.3"}\n`
           : input.command === "loginctl" && input.args[0] === "show-user"
             ? `${control.linger}\n`
             : input.args[1] === "is-enabled"
@@ -244,7 +245,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
-        host: { execPath: executable ? "/usr/bin/t3" : "/usr/bin/node" },
+        host: { execPath },
       });
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -252,7 +253,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, platform),
           Layer.succeed(HostProcess.UserId, 501),
-          Layer.succeed(HostProcess.ExecutablePath, executable ? "/usr/bin/t3" : "/usr/bin/node"),
+          Layer.succeed(HostProcess.ExecutablePath, execPath),
           Layer.succeed(HostProcess.IsExecutable, executable),
           Layer.succeed(
             HttpClient.HttpClient,
@@ -798,6 +799,52 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(control.active).toBe(true);
+      expect(commands).not.toContain("systemctl --user stop t3code.service");
+    }),
+  );
+
+  it.effect("hands npm installs to systemd with the current Node executable", () =>
+    Effect.gen(function* () {
+      const nodeExecutable = "/home/theo/.nvm/versions/node/v24.15.0/bin/node";
+      const { fs, commands, invocations, makeService } = yield* makeHarness(
+        "linux",
+        "/usr/bin:/bin",
+        false,
+        nodeExecutable,
+      );
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-handoff-" });
+      const baseDir = path.join(home, "T3 Data 100%", "${UNSET}", "$literal");
+      const outside = yield* makeService(undefined, "1.2.3", baseDir);
+      const plan = yield* outside.install();
+      const statePath = path.join(baseDir, "runtime", "service-state.json");
+      const state = yield* fs.readFileString(statePath);
+      const unit = yield* fs.readFileString(plan.unitPath);
+      const inside = yield* makeService(undefined, "1.2.4", baseDir, true);
+      commands.length = 0;
+      invocations.length = 0;
+
+      expect(yield* inside.install()).toMatchObject({ handedOff: true });
+
+      const handoffs = invocations.filter(({ command }) => command === "systemd-run");
+      expect(handoffs).toHaveLength(1);
+      const runtime = pinnedRuntimePaths(path, baseDir, "1.2.4", "linux", "npm");
+      expect(handoffs[0]?.args).toEqual([
+        "--user",
+        "--collect",
+        "--quiet",
+        `--property=StandardOutput=append:${plan.logPath}`,
+        `--property=StandardError=append:${plan.logPath}`,
+        "--setenv=T3_BOOT_SERVICE_UNIT=",
+        nodeExecutable,
+        runtime.entryPath.replaceAll("$", () => "$$"),
+        "service",
+        "install",
+        "--base-dir",
+        baseDir.replaceAll("$", () => "$$"),
+      ]);
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).not.toContain("systemctl --user stop t3code.service");
     }),
   );

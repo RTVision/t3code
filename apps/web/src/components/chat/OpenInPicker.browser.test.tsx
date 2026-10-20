@@ -235,7 +235,7 @@ it.each(["local-exec", "remote-links"] as const)(
 );
 
 it.each(["remote-links", "remote-unavailable"] as const)(
-  "does not launch an editor from the %s fallback when no picker is mounted",
+  "uses the shared editor dispatcher for the %s fallback when no picker is mounted",
   async (mode) => {
     state.allowed.add(selected);
     state.remote =
@@ -245,7 +245,13 @@ it.each(["remote-links", "remote-unavailable"] as const)(
     await pressOpenFavorite();
 
     expect.soft(state.run).not.toHaveBeenCalled();
-    expect.soft(state.openUrl).not.toHaveBeenCalled();
+    if (mode === "remote-links") {
+      expect(state.openUrl).toHaveBeenCalledExactlyOnceWith(
+        "vscode://vscode-remote/ssh-remote+test-host/work/project",
+      );
+    } else {
+      expect(state.openUrl).not.toHaveBeenCalled();
+    }
   },
 );
 

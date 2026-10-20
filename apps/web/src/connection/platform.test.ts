@@ -189,7 +189,10 @@ describe("desktop SSH pairing", () => {
       const provisioned = yield* Fiber.join(retry);
 
       expect(provisioned.bearerToken).toBe("bearer-token");
-      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: true });
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, {
+        issuePairingToken: true,
+        isNewTarget: true,
+      });
       expect(exchange).toHaveBeenCalledExactlyOnceWith(
         SSH_BOOTSTRAP.httpBaseUrl,
         "abandoned-token",

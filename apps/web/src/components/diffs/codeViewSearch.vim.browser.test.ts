@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
 import type { CodeViewItem } from "@pierre/diffs";
+import diffsUrl from "@pierre/diffs?url";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -37,7 +37,8 @@ function fixture() {
     },
   };
 }
-const searchUrl = new URL("./components/CodeViewSearch.js", import.meta.resolve("@pierre/diffs"));
+// The patched search module is not exported; Vite supplies a browser-loadable sibling URL.
+const searchUrl = new URL("./components/CodeViewSearch.js", new URL(diffsUrl, import.meta.url));
 const { CodeViewSearch } = (await import(/* @vite-ignore */ searchUrl.href)) as {
   CodeViewSearch: new (view: ReturnType<typeof fixture>["view"]) => {
     open(): void;

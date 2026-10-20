@@ -116,6 +116,26 @@ vi.mock(import("~/state/server"), async (original) => {
     serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => config) as never },
   };
 });
+// The fixture has no registered environment, so supply its editor route and destination grant.
+vi.mock(import("~/remoteOpen"), async (original) => ({
+  ...(await original()),
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+}));
+vi.mock(import("~/state/shell"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const openInEditor = {
+    ...actual.shellEnvironment.openInEditor,
+    permissionAtom: (environmentId: EnvironmentId | null) =>
+      Atom.make(
+        environmentId !== null &&
+          (environmentId === "environment" ? state.scopes : state.primaryScopes).has(
+            AuthOrchestrationOperateScope,
+          ),
+      ),
+  };
+  return { ...actual, shellEnvironment: { ...actual.shellEnvironment, openInEditor } };
+});
 vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
   ...(await original()),
   useSourceControlActionRunning: () => false,
@@ -357,6 +377,8 @@ describe("Changed-file editor targets", () => {
     await render("thread", "/repo/nested");
     await openCommitDialog();
 
+    await expect.element(button("Open nested/new.txt in editor")).toBeEnabled();
+    await expect.element(button("Open nested/tracked.txt in editor")).toBeEnabled();
     await userEvent.click(button("Open nested/new.txt in editor"));
     await userEvent.click(button("Open nested/tracked.txt in editor"));
 
@@ -368,6 +390,16 @@ describe("Changed-file editor targets", () => {
         input: { cwd: "/repo/nested/tracked.txt", editor: "cursor" },
       },
     ]);
+  });
+
+  it("does not use the primary environment's editor grant for changed files", async () => {
+    state.workingTreeRoot = "/repo";
+    state.scopes.delete(AuthOrchestrationOperateScope);
+    await render();
+    await openCommitDialog();
+
+    await expect.element(button("Open nested/new.txt in editor")).toBeDisabled();
+    expect(state.editorOpens).toEqual([]);
   });
 
   it("does not guess a file location when the server reports no root", async () => {

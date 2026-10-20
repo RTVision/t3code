@@ -54,7 +54,10 @@ vi.mock(import("@effect/atom-react"), async (original) => {
     },
   };
 });
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
 vi.mock("../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../hooks/useSettings")>()),

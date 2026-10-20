@@ -64,6 +64,11 @@ function trimOptionalString(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function qualifiedRepository(value: string | null | undefined): string | null {
+  const repository = trimOptionalString(value);
+  return repository?.includes("/") ? repository : null;
+}
+
 function normalizeRepositoryIdentity(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -91,8 +96,8 @@ function normalizeBitbucketPullRequestState(state: string | null | undefined) {
 export function normalizeBitbucketPullRequestRecord(
   raw: Schema.Schema.Type<typeof BitbucketPullRequestSchema>,
 ): NormalizedBitbucketPullRequestRecord {
-  const headRepositoryNameWithOwner = trimOptionalString(raw.source.repository?.full_name);
-  const baseRepositoryNameWithOwner = trimOptionalString(raw.destination.repository?.full_name);
+  const headRepositoryNameWithOwner = qualifiedRepository(raw.source.repository?.full_name);
+  const baseRepositoryNameWithOwner = qualifiedRepository(raw.destination.repository?.full_name);
   const headSha = trimOptionalString(raw.source.commit?.hash);
   const headRepositoryOwnerLogin = raw.source.repository
     ? repositoryOwner(raw.source.repository)

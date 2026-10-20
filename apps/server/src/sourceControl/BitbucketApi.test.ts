@@ -258,6 +258,60 @@ it.effect("does not expose a bare source repository name as an identity", () => 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("does not expose a bare source repository name in list responses", () => {
+  const { layer } = makeLayer({
+    response: () =>
+      Response.json({
+        values: [
+          {
+            ...bitbucketPullRequest,
+            source: {
+              ...bitbucketPullRequest.source,
+              repository: { full_name: "t3code", workspace: { slug: "octocat" } },
+            },
+          },
+        ],
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.listPullRequests({
+      cwd: "/repo",
+      headSelector: "feature/source-control",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.strictEqual(result.length, 1);
+    assert.isUndefined(result[0]?.headRepositoryNameWithOwner);
+    assert.isUndefined(result[0]?.isCrossRepository);
+    assert.strictEqual(result[0]?.headRepositoryOwnerLogin, "octocat");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("does not infer a fork from a bare destination repository name", () => {
+  const { layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        destination: {
+          ...bitbucketPullRequest.destination,
+          repository: { full_name: "t3code" },
+        },
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const result = yield* bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+    assert.strictEqual(result.headRepositoryNameWithOwner, "octocat/t3code");
+    assert.strictEqual(result.headRepositoryOwnerLogin, "octocat");
+    assert.isUndefined(result.isCrossRepository);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("compares Bitbucket repository identities without case sensitivity", () => {
   const { layer } = makeLayer({
     response: () =>

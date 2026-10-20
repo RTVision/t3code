@@ -1940,7 +1940,7 @@ export default function GitActionsControl({
                                 <button
                                   type="button"
                                   className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                                  disabled={!canOpenEditor}
+                                  disabled={workingTreeRoot === null || !canOpenEditor}
                                   aria-label={`Open ${file.path} in editor`}
                                   onClick={() => openChangedFileInEditor(file.path)}
                                 >

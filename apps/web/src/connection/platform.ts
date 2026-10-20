@@ -198,7 +198,10 @@ const ensureDesktopSshEnvironment = (bridge: DesktopBridge, target: DesktopSshEn
         return pending.promise;
       }
       const setup = {
-        promise: bridge.ensureSshEnvironment(target, { issuePairingToken: true }),
+        promise: bridge.ensureSshEnvironment(target, {
+          issuePairingToken: true,
+          isNewTarget: true,
+        }),
         signal,
       };
       pendingSshSetups.set(key, setup);

@@ -1102,8 +1102,8 @@ export const make = Effect.gen(function* () {
   const viewerTeamsCache = yield* Cache.make({
     capacity: 1,
     timeToLive: "1 minute",
-    lookup: () =>
-      Effect.gen(function* () {
+    lookup: Effect.fn("GiteaPullRequestApi.getViewerTeams")(
+      function* () {
         const teamIDs = new Set<number>();
         let path = query("/user/teams", { page: 1, limit: PAGE_SIZE });
         let rowsSeen = 0;
@@ -1129,11 +1129,11 @@ export const make = Effect.gen(function* () {
           reason: "failed",
           detail: "Gitea viewer team pagination exceeded the safe page limit.",
         });
-      }).pipe(
-        // Public-only tokens can read pull requests while Gitea rejects their team lookup.
-        // Team membership enriches individual review requests and must not hide those matches.
-        Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
-      ),
+      },
+      // Public-only tokens can read pull requests while Gitea rejects their team lookup.
+      // Team membership enriches individual review requests and must not hide those matches.
+      Effect.orElseSucceed(() => ({ ids: new Set<number>(), available: false })),
+    ),
   });
   const getViewerTeams = Cache.get(viewerTeamsCache, undefined);
 
@@ -2077,99 +2077,97 @@ export const make = Effect.gen(function* () {
       });
       return { patch: response.body, truncated: response.truncated };
     }),
-    getDiffFileContents: (input) =>
-      Effect.gen(function* () {
-        if (encodedFilePath(input.oldPath) === null || encodedFilePath(input.newPath) === null) {
+    getDiffFileContents: Effect.fn("GiteaPullRequestApi.getDiffFileContents")(function* (input) {
+      if (encodedFilePath(input.oldPath) === null || encodedFilePath(input.newPath) === null) {
+        return yield* new GiteaPullRequestApiError({
+          operation: "getDiffFileContents",
+          reason: "failed",
+          detail: "Gitea file paths must be repository-relative paths without traversal segments.",
+        });
+      }
+      const pr = yield* getPullRequest(input);
+      let oldRef = pr.mergeBaseSha || (input.oldObjectId ? pr.baseSha : "");
+      let newRef = pr.headSha;
+      if (input.commit !== undefined) {
+        const operation = "getDiffFileContents";
+        const response = yield* request({
+          operation,
+          host: input.host,
+          repository: input.repository,
+          method: "GET",
+          path: query(
+            `${basePath(input.repository)}/git/commits/${encodeURIComponent(input.commit)}`,
+            {
+              stat: "false",
+              verification: "false",
+              files: "false",
+            },
+          ),
+        });
+        const commit = yield* decode(operation, RawCommit, response);
+        newRef = commit.sha.trim();
+        oldRef = commit.parents?.[0]?.sha?.trim() ?? "";
+      }
+      if (input.changeType !== "new" && oldRef === "") {
+        return yield* new GiteaPullRequestApiError({
+          operation: "getDiffFileContents",
+          reason: "failed",
+          detail: "Gitea did not report the immutable revision before this change.",
+        });
+      }
+      if (input.commit === undefined && pr.state === "open") {
+        const features = yield* getFeatures.pipe(Effect.option);
+        const freshComparison = Option.isNone(features) || features.value.includes("pull-revert");
+        if (
+          freshComparison &&
+          ((input.changeType !== "new" && input.oldObjectId === undefined) ||
+            (input.changeType !== "deleted" && input.newObjectId === undefined))
+        ) {
           return yield* new GiteaPullRequestApiError({
             operation: "getDiffFileContents",
             reason: "failed",
             detail:
-              "Gitea file paths must be repository-relative paths without traversal segments.",
+              "This diff does not identify the file revisions needed to expand context safely.",
           });
         }
-        const pr = yield* getPullRequest(input);
-        let oldRef = pr.mergeBaseSha || (input.oldObjectId ? pr.baseSha : "");
-        let newRef = pr.headSha;
-        if (input.commit !== undefined) {
-          const operation = "getDiffFileContents";
-          const response = yield* request({
-            operation,
-            host: input.host,
-            repository: input.repository,
-            method: "GET",
-            path: query(
-              `${basePath(input.repository)}/git/commits/${encodeURIComponent(input.commit)}`,
-              {
-                stat: "false",
-                verification: "false",
-                files: "false",
-              },
-            ),
-          });
-          const commit = yield* decode(operation, RawCommit, response);
-          newRef = commit.sha.trim();
-          oldRef = commit.parents?.[0]?.sha?.trim() ?? "";
-        }
-        if (input.changeType !== "new" && oldRef === "") {
-          return yield* new GiteaPullRequestApiError({
-            operation: "getDiffFileContents",
-            reason: "failed",
-            detail: "Gitea did not report the immutable revision before this change.",
-          });
-        }
-        if (input.commit === undefined && pr.state === "open") {
-          const features = yield* getFeatures.pipe(Effect.option);
-          const freshComparison = Option.isNone(features) || features.value.includes("pull-revert");
-          if (
-            freshComparison &&
-            ((input.changeType !== "new" && input.oldObjectId === undefined) ||
-              (input.changeType !== "deleted" && input.newObjectId === undefined))
-          ) {
-            return yield* new GiteaPullRequestApiError({
-              operation: "getDiffFileContents",
-              reason: "failed",
-              detail:
-                "This diff does not identify the file revisions needed to expand context safely.",
-            });
-          }
-        }
-        if (input.commit === undefined && input.changeType !== "deleted" && input.newObjectId) {
-          newRef = yield* pullRequestHead({ ...input, operation: "getDiffFileContents" });
-        }
-        if (input.changeType !== "deleted" && newRef === "") {
-          return yield* new GiteaPullRequestApiError({
-            operation: "getDiffFileContents",
-            reason: "failed",
-            detail: "Gitea did not report the immutable revision after this change.",
-          });
-        }
-        return yield* Effect.all(
-          {
-            oldContents:
-              input.changeType === "new"
-                ? Effect.succeed("")
-                : fileContents({
-                    ...input,
-                    path: input.oldPath,
-                    ref: oldRef,
-                    ...(input.oldObjectId === undefined ? {} : { objectId: input.oldObjectId }),
-                    ...(input.commit !== undefined || input.oldObjectId === undefined
-                      ? {}
-                      : { alternateRef: pr.baseSha }),
-                  }),
-            newContents:
-              input.changeType === "deleted"
-                ? Effect.succeed("")
-                : fileContents({
-                    ...input,
-                    path: input.newPath,
-                    ref: newRef,
-                    ...(input.newObjectId === undefined ? {} : { objectId: input.newObjectId }),
-                  }),
-          },
-          { concurrency: 2 },
-        );
-      }),
+      }
+      if (input.commit === undefined && input.changeType !== "deleted" && input.newObjectId) {
+        newRef = yield* pullRequestHead({ ...input, operation: "getDiffFileContents" });
+      }
+      if (input.changeType !== "deleted" && newRef === "") {
+        return yield* new GiteaPullRequestApiError({
+          operation: "getDiffFileContents",
+          reason: "failed",
+          detail: "Gitea did not report the immutable revision after this change.",
+        });
+      }
+      return yield* Effect.all(
+        {
+          oldContents:
+            input.changeType === "new"
+              ? Effect.succeed("")
+              : fileContents({
+                  ...input,
+                  path: input.oldPath,
+                  ref: oldRef,
+                  ...(input.oldObjectId === undefined ? {} : { objectId: input.oldObjectId }),
+                  ...(input.commit !== undefined || input.oldObjectId === undefined
+                    ? {}
+                    : { alternateRef: pr.baseSha }),
+                }),
+          newContents:
+            input.changeType === "deleted"
+              ? Effect.succeed("")
+              : fileContents({
+                  ...input,
+                  path: input.newPath,
+                  ref: newRef,
+                  ...(input.newObjectId === undefined ? {} : { objectId: input.newObjectId }),
+                }),
+        },
+        { concurrency: 2 },
+      );
+    }),
     runAction: (input) => {
       const path = `${basePath(input.repository)}/pulls/${input.number}`;
       switch (input.action) {
