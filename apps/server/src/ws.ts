@@ -102,6 +102,9 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+import type * as Rpc from "effect/rpc/Rpc";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type * as Scope from "effect/Scope";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
@@ -1207,6 +1210,21 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+type ServerWsRpcs = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
+
+// tsc-rs 0.7.0 widens RpcGroup.HandlersServices to any across this export.
+// Mapping the registered tags preserves each handler's inferred dependencies.
+const toWsRpcLayer = <Handlers extends RpcGroup.HandlersFrom<ServerWsRpcs>, E, R>(
+  build: Effect.Effect<Handlers, E, R>,
+): Layer.Layer<
+  Rpc.ToHandler<ServerWsRpcs>,
+  E,
+  | Exclude<R, Scope.Scope>
+  | {
+      [K in ServerWsRpcs["_tag"]]: RpcGroup.HandlerServices<ServerWsRpcs, K, Handlers[K]>;
+    }[ServerWsRpcs["_tag"]]
+> => ServerWsRpcGroup.toLayer(build);
+
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1214,7 +1232,7 @@ export const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  toWsRpcLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
