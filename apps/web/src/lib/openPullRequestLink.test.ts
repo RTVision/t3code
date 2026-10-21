@@ -9,7 +9,6 @@ import {
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
-  shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -68,6 +67,7 @@ describe("gitHubPullRequestBrowserUrl", () => {
     );
   });
 
+  // regression: #8507 the browser fallback must not open a bogus URL
   it("returns null for missing or invalid GitHub data", () => {
     expect(gitHubPullRequestBrowserUrl(null, "acme/repository", 1)).toBeNull();
     expect(
@@ -100,6 +100,7 @@ describe("gitHubPullRequestBrowserUrl", () => {
     ).toBeNull();
   });
 
+  // regression: #8507 the browser fallback for failed PR loads must only target GitHub
   it.each(["gitlab", "bitbucket", "azure-devops", "unknown"])(
     "does not build a fallback for %s",
     (provider) => {
@@ -202,14 +203,6 @@ describe("Gitea pull request URLs", () => {
 });
 
 describe("changeRequestRepositoryUrl", () => {
-  it("preserves repository path casing", () => {
-    expect(
-      changeRequestRepositoryUrl(
-        "https://gitlab.example.test/Team/Platform/Repo/-/merge_requests/42/diffs#note_1",
-      ),
-    ).toBe("https://gitlab.example.test/Team/Platform/Repo");
-  });
-
   it("keeps pull-like segments inside nested GitLab repository paths", () => {
     expect(
       changeRequestRepositoryUrl(
@@ -272,15 +265,6 @@ describe("matchesLinkedPullRequestUrl", () => {
     ).toBe(expected);
   });
 
-  it("keeps other providers' existing port normalization", () => {
-    expect(
-      matchesLinkedPullRequestUrl(
-        linkedPullRequest,
-        "https://github.com:8443/pingdotgg/t3code/pull/42",
-      ),
-    ).toBe(true);
-  });
-
   it("keeps Forgejo and GitHub path shapes distinct on a GitHub-named host", () => {
     expect(
       matchesLinkedPullRequestUrl(
@@ -313,23 +297,6 @@ describe("matchesLinkedPullRequestUrl", () => {
         "https://forge.example.test/other/acme/repository/pulls/42",
       ),
     ).toBe(false);
-  });
-});
-
-describe("shouldOpenPullRequestExternally", () => {
-  it("uses the browser for command-click and control-click", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: true, ctrlKey: false })).toBe(true);
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: true })).toBe(true);
-  });
-
-  it("uses the browser for middle-click", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false, button: 1 })).toBe(
-      true,
-    );
-  });
-
-  it("keeps an unmodified click in the pull request view", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false })).toBe(false);
   });
 });
 

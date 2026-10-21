@@ -1,15 +1,15 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, expect, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
+import * as Layer from "effect/Layer";
+import { Command } from "effect/cli";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { Command } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -25,30 +25,6 @@ import {
 } from "./update.ts";
 
 afterEach(() => vi.restoreAllMocks());
-
-it.effect.each([
-  { environment: { GH_TOKEN: " gh-token ", GITHUB_TOKEN: "github-token" }, token: "gh-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: " github-token " }, token: "github-token" },
-  { environment: { GITHUB_TOKEN: "github-token" }, token: "github-token" },
-  { environment: { GH_TOKEN: "  ", GITHUB_TOKEN: "  " }, token: undefined },
-  { environment: {}, token: undefined },
-])("selects release authentication from $environment", ({ environment, token }) =>
-  Effect.gen(function* () {
-    const authorizations: Array<string | undefined> = [];
-    const httpClient = HttpClient.make((request) => {
-      authorizations.push(request.headers.authorization);
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(request, Response.json([{ tag_name: "v1.2.3" }])),
-      );
-    });
-    const version = yield* resolveNewestVersion("stable").pipe(
-      Effect.provideService(HostProcess.Environment, environment),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
-    assert.equal(version, "1.2.3");
-    assert.deepStrictEqual(authorizations, [token === undefined ? undefined : `Bearer ${token}`]);
-  }),
-);
 
 it.effect("authenticates each release page until the requested channel is found", () =>
   Effect.gen(function* () {

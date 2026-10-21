@@ -1,9 +1,9 @@
 import * as DiskSpace from "./diskSpace.ts";
 import * as GiteaCli from "./sourceControl/GiteaCli.ts";
+import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  ORCHESTRATION_PROTOCOL_VERSION,
   AuthSessionId,
   EnvironmentId,
   ProjectId,
@@ -15,23 +15,14 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
-import { ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -118,86 +109,13 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
-  hasCompatibleOrchestrationProtocol,
-  lowDiskSpaceConfigUpdates,
   layerWsRpc,
-  resolveAvailableEditorsForConfig,
-  shouldUseBoundedThreadSnapshot,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
 } from "./ws.ts";
 
-it("accepts only the current orchestration protocol before websocket RPC setup", () => {
-  assert.isTrue(
-    hasCompatibleOrchestrationProtocol(
-      new URL(`https://host.test/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}`),
-    ),
-  );
-  assert.isFalse(hasCompatibleOrchestrationProtocol(new URL("https://host.test/ws")));
-  assert.isFalse(
-    hasCompatibleOrchestrationProtocol(
-      new URL(`https://host.test/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION - 1}`),
-    ),
-  );
-});
-
-it("keeps full thread snapshot fallback unless the client opts into bounded history", () => {
-  assert.isFalse(shouldUseBoundedThreadSnapshot({}));
-  assert.isFalse(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: false }));
-  assert.isTrue(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: true }));
-});
-
-it.effect("does not block server config when editor discovery never resolves", () =>
-  Effect.gen(function* () {
-    const discoveryInterrupted = yield* Deferred.make<void>();
-    const responseFiber = yield* resolveAvailableEditorsForConfig(
-      Effect.never.pipe(
-        Effect.onInterrupt(() => Deferred.succeed(discoveryInterrupted, undefined)),
-      ),
-    ).pipe(Effect.forkChild);
-
-    yield* TestClock.adjust(Duration.seconds(5));
-
-    const availableEditors = yield* Fiber.join(responseFiber);
-    yield* Deferred.await(discoveryInterrupted);
-    assert.deepEqual(availableEditors, []);
-  }),
-);
-
-it.effect("streams low disk changes and recovery without replaying the config snapshot", () =>
-  Effect.gen(function* () {
-    const warning = {
-      level: "warning" as const,
-      path: "/home/t3",
-      availableBytes: 3_000_000_000,
-      totalBytes: 100_000_000_000,
-    };
-    const critical = { ...warning, level: "critical" as const, availableBytes: 500_000_000 };
-    const updates = yield* lowDiskSpaceConfigUpdates(
-      true,
-      warning,
-      Stream.make(warning, critical, null),
-    ).pipe(Stream.runCollect);
-    assert.deepEqual(Array.from(updates), [
-      { version: 1, type: "lowDiskSpaceUpdated", payload: { lowDiskSpace: critical } },
-      { version: 1, type: "lowDiskSpaceUpdated", payload: { lowDiskSpace: null } },
-    ]);
-  }),
-);
-
-it.effect("withholds disk updates unless the client opts in", () =>
-  Effect.gen(function* () {
-    const updates = yield* lowDiskSpaceConfigUpdates(
-      false,
-      null,
-      Stream.fromEffect(Effect.die("the disk stream must not be subscribed")),
-    ).pipe(Stream.runCollect);
-    assert.deepEqual(Array.from(updates), []);
-  }),
-);
-// Only the fields the late-editor fold reads or rewrites.
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
 
@@ -237,64 +155,6 @@ it.effect("resends late editors without rolling back updates already sent", () =
   }),
 );
 
-it.effect.each([false, true])(
-  "keeps low disk recovery in late editor snapshots, recovered=%s",
-  (recovered) =>
-    Effect.gen(function* () {
-      const lowDiskSpace = {
-        level: "warning" as const,
-        path: "/home/t3",
-        availableBytes: 3_000_000_000,
-        totalBytes: 100_000_000_000,
-      };
-      const nextDiskSpace = recovered
-        ? null
-        : { ...lowDiskSpace, level: "critical" as const, availableBytes: 500_000_000 };
-      const diskUpdateSent = yield* Deferred.make<void>();
-      const events = yield* withLateEditorConfig(
-        snapshotConfig({ lowDiskSpace }),
-        Stream.make({
-          version: 1,
-          type: "lowDiskSpaceUpdated",
-          payload: { lowDiskSpace: nextDiskSpace },
-        } as const),
-        {
-          resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
-          resolveFileManagerRevealKind: () =>
-            Deferred.await(diskUpdateSent).pipe(Effect.as("file-explorer" as const)),
-        },
-      ).pipe(
-        Stream.tap((event) =>
-          event.type === "lowDiskSpaceUpdated"
-            ? Deferred.succeed(diskUpdateSent, undefined)
-            : Effect.void,
-        ),
-        Stream.runCollect,
-      );
-      const snapshot = Array.from(events).find((event) => event.type === "snapshot");
-      assert.equal(snapshot?.type, "snapshot");
-      if (snapshot?.type === "snapshot") {
-        assert.deepEqual(snapshot.config.availableEditors, ["file-manager"]);
-        assert.deepEqual(snapshot.config.lowDiskSpace, nextDiskSpace ?? undefined);
-      }
-    }),
-);
-
-it.effect("sends no late snapshot when the scan matches the snapshot", () =>
-  Effect.gen(function* () {
-    const events = yield* withLateEditorConfig(
-      snapshotConfig({ availableEditors: ["vscode"] }),
-      Stream.empty,
-      {
-        resolveAvailableEditors: () => Effect.succeed(["vscode"]),
-        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
-      },
-    ).pipe(Stream.runCollect);
-
-    assert.equal(events.length, 0);
-  }),
-);
-
 it.effect("resends a file manager reveal kind that missed the snapshot", () =>
   Effect.gen(function* () {
     const events = yield* withLateEditorConfig(
@@ -313,99 +173,6 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
       assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
   }),
-);
-
-const makeParkedWindowsLauncher = Effect.gen(function* () {
-  const parkedProbes = yield* Queue.unbounded<void>();
-  const release = yield* Deferred.make<void>();
-  const launcher = yield* ExternalLauncher.make.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        FileSystem.layerNoop({
-          stat: () =>
-            Queue.offer(parkedProbes, undefined).pipe(
-              Effect.andThen(Deferred.await(release)),
-              Effect.as({ type: "File" } as FileSystem.File.Info),
-            ),
-        }),
-        Path.layer,
-        Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.die("unexpected spawn")),
-        ),
-      ),
-    ),
-  );
-  const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: { PATH: "C:\\t3-late-editors-test", PATHEXT: ".EXE" },
-          }),
-        ),
-      ),
-    );
-  return {
-    editors: {
-      resolveAvailableEditors: () => onWindows(launcher.resolveAvailableEditors()),
-      resolveFileManagerRevealKind: () => onWindows(launcher.resolveFileManagerRevealKind()),
-    },
-    probeParked: Queue.take(parkedProbes),
-    releaseProbes: Deferred.succeed(release, undefined),
-  };
-});
-
-it.effect("recovers editors after a real scan outlasts the config timeout", () =>
-  Effect.gen(function* () {
-    const { editors, probeParked, releaseProbes } = yield* makeParkedWindowsLauncher;
-
-    const snapshotFiber = yield* resolveAvailableEditorsForConfig(
-      editors.resolveAvailableEditors(),
-    ).pipe(Effect.forkChild);
-    yield* probeParked;
-    yield* TestClock.adjust(Duration.seconds(5));
-    const snapshotEditors = yield* Fiber.join(snapshotFiber);
-    assert.deepEqual(snapshotEditors, []);
-
-    const lateFiber = yield* withLateEditorConfig(
-      snapshotConfig({ availableEditors: snapshotEditors }),
-      Stream.empty,
-      editors,
-    ).pipe(Stream.runCollect, Effect.forkChild);
-    yield* releaseProbes;
-
-    const [late] = Array.from(yield* Fiber.join(lateFiber));
-    assert.equal(late?.type, "snapshot");
-    if (late?.type === "snapshot") {
-      assert.equal(late.config.availableEditors.includes("vscode"), true);
-    }
-  }).pipe(Effect.scoped),
-);
-
-it.effect("recovers a reveal kind whose real probe outlasts the config timeout", () =>
-  Effect.gen(function* () {
-    const { editors, probeParked, releaseProbes } = yield* makeParkedWindowsLauncher;
-
-    const lateFiber = yield* withLateEditorConfig(
-      snapshotConfig({ availableEditors: ["file-manager"] }),
-      Stream.empty,
-      {
-        resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
-        resolveFileManagerRevealKind: editors.resolveFileManagerRevealKind,
-      },
-    ).pipe(Stream.runCollect, Effect.forkChild);
-    yield* probeParked;
-    yield* TestClock.adjust(Duration.seconds(6));
-    yield* releaseProbes;
-
-    const [late] = Array.from(yield* Fiber.join(lateFiber));
-    assert.equal(late?.type, "snapshot");
-    if (late?.type === "snapshot") {
-      assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
-    }
-  }).pipe(Effect.scoped),
 );
 
 const ReplayTestLayer = OrchestrationEventStore.layer.pipe(

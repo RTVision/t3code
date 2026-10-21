@@ -20,6 +20,7 @@ import {
   resolveCatalogDependencies,
   resolveServerPublishDependencies,
 } from "../../../scripts/lib/resolve-catalog.ts";
+import { createServerPublishConfig } from "../../../scripts/lib/server-publish-config.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -38,7 +39,7 @@ import {
 interface PackageJson {
   name: string;
   license: string;
-  publishConfig: { registry: string };
+  publishConfig: { registry: string; executableFiles: string[] };
   repository: {
     type: string;
     url: string;
@@ -325,10 +326,18 @@ const publishCmd = Command.make(
           const workspaceConfig = yield* readWorkspaceConfig();
           const workspaceCatalog = workspaceConfig.catalog ?? {};
           const workspaceOverrides = workspaceConfig.overrides ?? {};
+          const resourceMonitorDir = path.join(serverDir, "dist/resource-monitor");
+          const resourceMonitorFiles = (yield* fs.exists(resourceMonitorDir))
+            ? yield* fs.readDirectory(resourceMonitorDir, { recursive: true })
+            : [];
           const pkg: PackageJson = {
             name: T3_NPM_PACKAGE,
             license: serverPackageJson.license,
-            publishConfig: { registry: T3_NPM_REGISTRY },
+            publishConfig: createServerPublishConfig(
+              T3_NPM_REGISTRY,
+              resourceMonitorFiles,
+              (serverPackageJson as Partial<PackageJson>).publishConfig,
+            ),
             repository: {
               ...serverPackageJson.repository,
               url: "https://github.com/RTVision/t3code",

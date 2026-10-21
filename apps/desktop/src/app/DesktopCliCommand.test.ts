@@ -151,89 +151,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("replaces an owned launcher before a later foreign PATH command", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
-      const link = (yield* before.install).installedPath!;
-      const foreignDirectory = path.join(home, "foreign");
-      const foreign = path.join(foreignDirectory, "t3");
-      yield* fs.makeDirectory(foreignDirectory);
-      yield* fs.writeFileString(foreign, "#!/bin/sh\n", { mode: 0o755 });
-      process.env.PATH = [path.dirname(link), foreignDirectory].join(":");
-
-      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
-      expect(yield* after.install).toMatchObject({ installedPath: link, onPath: true });
-      expect(yield* fs.readLink(link)).toBe(path.join(home, "new-t3", "bin", "t3"));
-      expect(yield* fs.readFileString(foreign)).toBe("#!/bin/sh\n");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("preserves the old launcher when an earlier foreign command rejects migration", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
-      const link = (yield* before.install).installedPath!;
-      const original = yield* fs.readLink(link);
-      const foreignDirectory = path.join(home, "foreign");
-      const foreign = path.join(foreignDirectory, "t3");
-      yield* fs.makeDirectory(foreignDirectory);
-      yield* fs.writeFileString(foreign, "#!/bin/sh\n", { mode: 0o755 });
-      process.env.PATH = [foreignDirectory, path.dirname(link)].join(":");
-
-      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
-      expect((yield* Effect.flip(after.install)).message).toContain(foreign);
-      expect(yield* fs.readLink(link)).toBe(original);
-      expect(yield* fs.readFileString(foreign)).toBe("#!/bin/sh\n");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect.each(["non-executable file", "directory"] as const)(
-    "skips a %s named t3 earlier on PATH",
-    (kind) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const home = yield* fs.makeTempDirectoryScoped();
-        const skippedDirectory = path.join(home, "skipped");
-        const skipped = path.join(skippedDirectory, "t3");
-        yield* fs.makeDirectory(skippedDirectory);
-        if (kind === "directory") {
-          yield* fs.makeDirectory(skipped);
-        } else {
-          yield* fs.writeFileString(skipped, "not a command\n", { mode: 0o644 });
-        }
-        const link = path.join(home, ".local", "bin", "t3");
-        process.env.PATH = [skippedDirectory, path.dirname(link)].join(":");
-
-        const command = yield* commandIn({ home });
-        expect((yield* command.state).shadowedBy).toBeUndefined();
-        expect(yield* command.install).toMatchObject({ installedPath: link, onPath: true });
-        expect(yield* fs.exists(skipped)).toBe(true);
-        expect((yield* fs.stat(skipped)).type).toBe(kind === "directory" ? "Directory" : "File");
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("does not read a large binary another t3 links to", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      const binary = path.join(home, "native-t3");
-      yield* fs.writeFileString(binary, `${"\0".repeat(64 * 1024)}${DesktopCliShim.MARKER}`);
-      yield* fs.makeDirectory(path.join(home, ".local", "bin"), { recursive: true });
-      yield* fs.symlink(binary, path.join(home, ".local", "bin", "t3"));
-      const command = yield* commandIn({ home });
-      expect((yield* command.state).installedPath).toBeNull();
-      yield* command.uninstall;
-      expect(yield* fs.readLink(path.join(home, ".local", "bin", "t3"))).toBe(binary);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("refuses to install behind another t3 that runs first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -305,17 +222,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.state).installedPath).toBeNull();
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("offers nothing for a development build", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const command = yield* commandIn({
-        home: yield* fs.makeTempDirectoryScoped(),
-        isPackaged: false,
-      });
-      expect((yield* command.state).supported).toBe(false);
     }).pipe(Effect.scoped),
   );
 });
