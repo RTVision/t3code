@@ -1,3 +1,4 @@
+import { act } from "../../../test/act";
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
@@ -14,7 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
-import { act, createElement, useState, type ReactNode } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -235,7 +236,7 @@ async function mount(allowed: boolean, viewed = false) {
 }
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   vi.stubGlobal("HTMLElement", HeaderNode);
   vi.clearAllMocks();
 });

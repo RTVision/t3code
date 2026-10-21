@@ -1,5 +1,6 @@
+import { act } from "../../../test/act";
 import type { FileContents } from "@pierre/diffs";
-import { act, useLayoutEffect } from "react";
+import { useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -25,7 +26,6 @@ const file = (name: string, contents: string, cacheKey = name): FileContents => 
   cacheKey,
 });
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   worker.primeFileHighlightCache.mockReset().mockResolvedValue(undefined);
   worker.getFileResultCache.mockReset().mockReturnValue(undefined);
 });

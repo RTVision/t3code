@@ -114,7 +114,7 @@ function suggestedPackageSpec(version: string): string {
   return channel === undefined ? T3_NPM_PACKAGE : `${T3_NPM_PACKAGE}@${channel}`;
 }
 
-export function formatCliCommand(input: {
+function formatCliCommand(input: {
   readonly subcommand: string;
   readonly entryPath: string;
   readonly version: string;

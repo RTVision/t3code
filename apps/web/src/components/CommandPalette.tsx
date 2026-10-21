@@ -1,4 +1,3 @@
-"use client";
 import { rememberVimOverlayFocus, restoreVimOverlayFocus } from "../vim/runtime";
 import { onAppCommand } from "../vim/commandBus";
 import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";

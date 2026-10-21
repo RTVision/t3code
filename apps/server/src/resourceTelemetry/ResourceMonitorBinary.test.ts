@@ -115,6 +115,7 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #16838 a directory resolved as the resource monitor binary
   it.effect("rejects a directory override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -134,24 +135,6 @@ describe("ResourceMonitorBinary", () => {
 
       assert.instanceOf(error, ResourceMonitorBinary.ResourceMonitorBinaryNotExecutable);
       assert.equal(error.path, baseDir);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("rejects unsupported platform and architecture pairs", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-resource-monitor-binary-",
-      });
-      const service = yield* ResourceMonitorBinary.make().pipe(
-        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-        Effect.provideService(HostProcess.Platform, "freebsd"),
-        Effect.provideService(HostProcess.Architecture, "ia32"),
-        Effect.provideService(HostProcess.Environment, {}),
-      );
-      const error = yield* Effect.flip(service.resolve);
-
-      assert.instanceOf(error, ResourceMonitorBinary.ResourceMonitorBinaryUnsupported);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

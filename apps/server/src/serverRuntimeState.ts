@@ -36,7 +36,7 @@ export const serviceRuntimeStatePath = (baseDir: string) =>
   Effect.map(Path.Path, (path) => path.join(baseDir, "runtime", "server-runtime.json"));
 
 /** Retained during child restarts; discovery checks the supervisor is still alive. */
-export const persistServiceRuntimeState = Effect.fn("server.persistServiceRuntimeState")(
+const persistServiceRuntimeState = Effect.fn("server.persistServiceRuntimeState")(
   function* (input: {
     readonly baseDir: string;
     readonly state: PersistedServerRuntimeState;

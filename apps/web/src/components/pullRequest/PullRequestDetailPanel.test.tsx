@@ -1,3 +1,4 @@
+import { act } from "../../../test/act";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   EnvironmentId,
@@ -9,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
+import { type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -254,7 +255,6 @@ let renderer: ReactTestRenderer;
 
 beforeEach(() => {
   access.allowed = true;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   newThread
@@ -265,8 +265,8 @@ beforeEach(() => {
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
 });
-afterEach(() => {
-  act(() => renderer?.unmount());
+afterEach(async () => {
+  await act(() => renderer?.unmount());
   vi.unstubAllGlobals();
 });
 

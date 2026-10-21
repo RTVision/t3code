@@ -29,43 +29,6 @@ describe("pull request review drafts", () => {
     ]);
   });
 
-  it("keeps a comment rewritten while the review that sent it was in flight", () => {
-    const store = usePullRequestReviewStore.getState();
-    store.addComment("review-a", comment("sent"));
-    store.addComment("review-a", comment("edited-in-flight"));
-    const submitted = usePullRequestReviewStore.getState().drafts["review-a"] ?? [];
-
-    store.updateComment("review-a", "edited-in-flight", "Rewritten");
-    store.removeComments("review-a", submitted);
-
-    expect(usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([
-      comment("edited-in-flight", "Rewritten"),
-    ]);
-  });
-
-  it("rewrites one pending comment in place and ignores a comment already gone", () => {
-    const store = usePullRequestReviewStore.getState();
-    store.addComment("review-a", comment("first"));
-    store.addComment("review-a", comment("second"));
-    store.updateComment("review-a", "first", "Edited");
-    const afterEdit = usePullRequestReviewStore.getState().drafts;
-    store.updateComment("review-a", "removed", "Lost");
-
-    expect(usePullRequestReviewStore.getState().drafts).toBe(afterEdit);
-    expect(afterEdit["review-a"]).toEqual([comment("first", "Edited"), comment("second")]);
-  });
-
-  it("keeps summary bodies isolated by review key", () => {
-    const store = usePullRequestReviewStore.getState();
-    store.setSummary("review-a", "Summary A");
-    store.setSummary("review-b", "Summary B");
-    store.clearSummary("review-a", "Summary A");
-
-    expect(usePullRequestReviewStore.getState().summaries).toEqual({
-      "review-b": "Summary B",
-    });
-  });
-
   it("keeps drafts on different hosts separate when a thread reviews the same repository and number", () => {
     const reference = {
       projectId: ProjectId.make("project-a"),

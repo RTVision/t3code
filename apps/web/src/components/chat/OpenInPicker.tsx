@@ -76,10 +76,8 @@ type OpenInOption = {
   value: EditorId;
   kind: "brand" | "generic";
 };
-export const resolveOpenInOptions = (
-  platform: string,
-  availableEditors: ReadonlyArray<EditorId>,
-) => {
+
+const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,

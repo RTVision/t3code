@@ -78,7 +78,7 @@ export interface PreviewBrowserRelease {
   readonly sha256: string;
 }
 
-export const previewBrowserRelease = (
+const previewBrowserRelease = (
   platform: NodeJS.Platform,
   arch: NodeJS.Architecture,
 ): PreviewBrowserRelease | null => {

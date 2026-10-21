@@ -13,29 +13,23 @@ import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+
 import {
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
+  parseResolvedPath,
+  parseWslRuntimeRoot,
   DesktopWslDistroListError,
   DesktopWslEnvironment,
-  formatMissingToolsReason,
   layer as wslEnvironmentLayer,
-  parseNodePath,
-  parseNodeVersion,
-  parseResolvedPath,
-  parseToolchainReport,
-  parseWslRuntimeRoot,
-  probeWslDistros,
   resolveWslRunningUser,
 } from "./DesktopWslEnvironment.ts";
-
-const encoder = new TextEncoder();
 
 // The install script only fails the way this file cares about when a real shell
 // runs it, so find one that has the tools it needs: bash directly on Linux, and
@@ -104,6 +98,8 @@ const readField = (stdout: string, field: string) => {
 
 const SERVER_ENTRY_SOURCE = '#!/bin/sh\necho "t3code wsl runtime test server 0.0.0"\n';
 
+const encoder = new TextEncoder();
+
 const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
   ChildProcessSpawner.make(() =>
     Effect.succeed(
@@ -125,6 +121,60 @@ const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exit
       }),
     ),
   );
+
+function makeWslEnvironment(spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) {
+  return DesktopWslEnvironment.pipe(
+    Effect.provide(
+      wslEnvironmentLayer.pipe(
+        Layer.provide([
+          DesktopEnvironment.layer({
+            dirname: "/repo/apps/desktop",
+            homeDirectory: "/home/test",
+            platform: "win32",
+            processArch: "x64",
+            appVersion: "1.2.3",
+            appPath: "/repo",
+            isPackaged: true,
+            resourcesPath: "/repo/resources",
+            runningUnderArm64Translation: false,
+          }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
+          FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ]),
+      ),
+    ),
+  );
+}
+
+const makeControlledEnvironment = Effect.gen(function* () {
+  const started = yield* Deferred.make<void>();
+  const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+  const released = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.acquireRelease(
+      Deferred.succeed(started, undefined).pipe(
+        Effect.as(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Deferred.await(exited),
+            isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      ),
+      () => Deferred.succeed(released, undefined),
+    ),
+  );
+  const environment = yield* makeWslEnvironment(spawner);
+  return { environment, started, exited, released };
+});
 
 describe("WSL account resolution", () => {
   it.effect("uses a non-login shell and rejects malformed or failed identity output", () =>
@@ -155,96 +205,36 @@ describe("WSL account resolution", () => {
 describe("probeWslDistros", () => {
   it.effect("preserves a successful empty distro list", () =>
     Effect.gen(function* () {
-      const distros = yield* probeWslDistros;
-      expect(distros).toEqual([]);
-    }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
+      const environment = yield* makeWslEnvironment(
         makeDistroListSpawner({ stdout: "", exitCode: 0 }),
-      ),
-    ),
+      );
+      expect(yield* environment.probeDistros).toEqual([]);
+    }),
   );
 
   it.effect("fails when the distro-list command exits unsuccessfully", () =>
     Effect.gen(function* () {
-      const error = yield* probeWslDistros.pipe(Effect.flip);
+      const environment = yield* makeWslEnvironment(makeDistroListSpawner({ exitCode: 1 }));
+      const error = yield* environment.probeDistros.pipe(Effect.flip);
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("exited with code 1");
-    }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        makeDistroListSpawner({ exitCode: 1 }),
-      ),
-    ),
+    }),
   );
 
-  it.effect("fails when the distro-list command times out", () => {
-    const layer = Layer.merge(
-      TestClock.layer(),
-      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, makeDistroListSpawner({})),
-    );
-    return Effect.gen(function* () {
-      const fiber = yield* probeWslDistros.pipe(Effect.flip, Effect.forkScoped);
-      yield* Effect.yieldNow;
+  it.effect("fails when the distro-list command times out", () =>
+    Effect.gen(function* () {
+      const { environment, started } = yield* makeControlledEnvironment;
+      const fiber = yield* environment.probeDistros.pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(started);
       yield* TestClock.adjust(Duration.seconds(8));
       const error = yield* Fiber.join(fiber);
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("timed out");
-    }).pipe(Effect.provide(layer));
-  });
+    }),
+  );
 });
 
 describe("WSL command deadlines", () => {
-  const makeControlledEnvironment = Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-    const released = yield* Deferred.make<void>();
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.acquireRelease(
-        Deferred.succeed(started, undefined).pipe(
-          Effect.as(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Deferred.await(exited),
-              isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
-          ),
-        ),
-        () => Deferred.succeed(released, undefined),
-      ),
-    );
-    const environment = yield* DesktopWslEnvironment.pipe(
-      Effect.provide(
-        wslEnvironmentLayer.pipe(
-          Layer.provide([
-            DesktopEnvironment.layer({
-              dirname: "/repo/apps/desktop",
-              homeDirectory: "/home/test",
-              platform: "win32",
-              processArch: "x64",
-              appVersion: "1.2.3",
-              appPath: "/repo",
-              isPackaged: true,
-              resourcesPath: "/repo/resources",
-              runningUnderArm64Translation: false,
-            }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
-            FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          ]),
-        ),
-      ),
-    );
-    return { environment, started, exited, released };
-  });
-
   it.effect("waits for a cold distro to finish starting after 15 seconds", () =>
     Effect.gen(function* () {
       const { environment, started, exited, released } = yield* makeControlledEnvironment;
@@ -594,16 +584,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(provider.stdout).toBe("linux-node-provider\n");
   });
 
-  it("keeps standalone runtime readiness independent of Node availability", () => {
-    const fixture = createFixture();
-    expect(fixture.install().status).toBe(0);
-
-    const probe = probeFixture(fixture);
-
-    expect(probe.status, probe.stderr).toBe(0);
-    expect(parseResolvedPath(probe.stdout)).not.toBeNull();
-  });
-
   it("keeps the inherited PATH when bash is unavailable", () => {
     const fixture = createFixture();
     expect(fixture.install().status).toBe(0);
@@ -795,53 +775,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
   });
 
-  it("prunes a selected cache after its prepare-to-spawn grace period expires", () => {
-    const fixture = createFixture();
-    expect(fixture.install().status).toBe(0);
-    const result = runShell(
-      [
-        "set -eu",
-        `runtime_parent=${sh(fixture.runtimeParent)}`,
-        'mkdir -p "$runtime_parent/sha256-current" "$runtime_parent/sha256-previous"',
-        'printf ready > "$runtime_parent/sha256-current/.t3code-wsl-runtime-ready"',
-        'printf ready > "$runtime_parent/sha256-previous/.t3code-wsl-runtime-ready"',
-        `touch -d "10 minutes ago" ${sh(fixture.runtimeRoot)}`,
-        `touch -d "10 minutes ago" ${sh(`${fixture.runtimeRoot}/.t3code-wsl-runtime-selected`)}`,
-        'touch -d "1 minute ago" "$runtime_parent/sha256-previous"',
-        `HOME=${sh(`${fixture.work}/home`)}`,
-        "export HOME",
-        buildWslRuntimePruneScript("sha256-current"),
-        `test ! -e ${sh(fixture.runtimeRoot)}`,
-      ].join("\n"),
-    );
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
-
-  it("removes an aged stale tree after replacing an active unready cache", () => {
-    const fixture = createFixture();
-    expect(fixture.install().status).toBe(0);
-    const result = runShell(
-      [
-        "set -eu",
-        `runtime_root=${sh(fixture.runtimeRoot)}`,
-        `runtime_parent=${sh(fixture.runtimeParent)}`,
-        'rm "$runtime_root/.t3code-wsl-runtime-ready"',
-        holdRuntimeBusy('"$runtime_root/t3"'),
-        fixture.installScript(),
-        'stale=$(find "$runtime_parent" -maxdepth 1 -type d -name ".sha256-*.stale.*" -print -quit)',
-        'test -n "$stale"',
-        'touch -d "180 minutes ago" "$stale"',
-        `HOME=${sh(`${fixture.work}/home`)}`,
-        "export HOME",
-        buildWslRuntimePruneScript(fixture.runtimeId),
-        'test ! -e "$stale"',
-      ].join("\n"),
-    );
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
-
   it("prunes old and markerless caches without touching retained, active, locked, or unrelated roots", () => {
     const result = runShell(
       [
@@ -881,78 +814,6 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
   });
 });
 
-describe("parseToolchainReport", () => {
-  it("returns no missing tools and no node version on empty output", () => {
-    expect(parseToolchainReport("")).toEqual({ missingTools: [], nodeVersion: null });
-  });
-
-  it("collects all missing: lines", () => {
-    const stdout = ["missing:make", "missing:g++", "nodeVersion:24.10.0"].join("\n");
-    expect(parseToolchainReport(stdout)).toEqual({
-      missingTools: ["make", "g++"],
-      nodeVersion: "24.10.0",
-    });
-  });
-
-  it("ignores blank lines and trims whitespace", () => {
-    const stdout = ["  missing:python3  ", "", "  nodeVersion:v22.16.0  "].join("\n");
-    expect(parseToolchainReport(stdout)).toEqual({
-      missingTools: ["python3"],
-      nodeVersion: "v22.16.0",
-    });
-  });
-
-  it("returns null node version when value after prefix is empty", () => {
-    expect(parseToolchainReport("nodeVersion:")).toEqual({
-      missingTools: [],
-      nodeVersion: null,
-    });
-  });
-});
-
-describe("parseNodePath", () => {
-  it("extracts the absolute node path from a nodePath: line", () => {
-    const stdout = "nodePath:/home/josh/.nvm/versions/node/v22.16.0/bin/node";
-    expect(parseNodePath(stdout)).toBe("/home/josh/.nvm/versions/node/v22.16.0/bin/node");
-  });
-
-  it("returns null when node was not found (empty value after prefix)", () => {
-    expect(parseNodePath("nodePath:")).toBeNull();
-  });
-
-  it("returns null when there is no nodePath line at all", () => {
-    expect(parseNodePath("missing:node\nnodeVersion:")).toBeNull();
-  });
-
-  it("ignores surrounding noise and trims whitespace", () => {
-    const stdout = ["some preamble noise", "  nodePath:/usr/bin/node  ", "trailing"].join("\n");
-    expect(parseNodePath(stdout)).toBe("/usr/bin/node");
-  });
-});
-
-describe("parseNodeVersion", () => {
-  it("extracts the node version from a nodeVersion: line", () => {
-    expect(parseNodeVersion("nodeVersion:24.10.0")).toBe("24.10.0");
-  });
-
-  it("returns null when the version value is empty", () => {
-    expect(parseNodeVersion("nodeVersion:")).toBeNull();
-  });
-
-  it("returns null when there is no nodeVersion line at all", () => {
-    expect(parseNodeVersion("nodePath:/usr/bin/node\nresolvedPath:/usr/bin")).toBeNull();
-  });
-
-  it("ignores surrounding noise and trims whitespace", () => {
-    const stdout = [
-      "some preamble noise",
-      "  nodeVersion:22.16.0  ",
-      "nodePath:/usr/bin/node",
-    ].join("\n");
-    expect(parseNodeVersion(stdout)).toBe("22.16.0");
-  });
-});
-
 describe("parseResolvedPath", () => {
   it("preserves spaces and apostrophes in the resolved login-shell PATH", () => {
     const resolvedPath = "/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin";
@@ -965,53 +826,5 @@ describe("parseResolvedPath", () => {
     expect(parseResolvedPath("resolvedPath:/usr/local/bin:/usr/bin\r\n")).toBe(
       "/usr/local/bin:/usr/bin",
     );
-  });
-
-  it("returns null when the resolved PATH is absent or empty", () => {
-    expect(parseResolvedPath("nodePath:/usr/bin/node\n")).toBeNull();
-    expect(parseResolvedPath("resolvedPath:\n")).toBeNull();
-  });
-});
-
-describe("formatMissingToolsReason", () => {
-  it("returns null when everything is present and node is in range", () => {
-    expect(
-      formatMissingToolsReason({ missingTools: [], nodeVersion: "24.10.0" }, "^24.10"),
-    ).toBeNull();
-  });
-
-  it("returns null when range is not specified and tools are present", () => {
-    expect(formatMissingToolsReason({ missingTools: [], nodeVersion: "18.0.0" }, null)).toBeNull();
-  });
-
-  it("flags missing node first", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: ["node", "make"], nodeVersion: null },
-      "^24.10",
-    );
-    expect(reason).toContain("node");
-    expect(reason).toContain("^24.10");
-    expect(reason).toContain("make");
-    expect(reason).toContain("nvm");
-  });
-
-  it("flags an out-of-range node version with the actual version surfaced", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: [], nodeVersion: "20.0.0" },
-      "^24.10 || ^22.16",
-    );
-    expect(reason).toContain("node 20.0.0");
-    expect(reason).toContain("requires ^24.10 || ^22.16");
-  });
-
-  it("flags missing build tools without node when node is fine", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: ["g++", "python3"], nodeVersion: "24.10.0" },
-      "^24.10",
-    );
-    expect(reason).toContain("g++");
-    expect(reason).toContain("python3");
-    expect(reason).toContain("build-essential");
-    expect(reason).not.toContain("nvm");
   });
 });

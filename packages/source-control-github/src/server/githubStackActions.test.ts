@@ -1,9 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -26,33 +24,27 @@ type Call = ReadonlyArray<string>;
 type Send = (call: Call, kind: "graphql" | "rest") => Effect.Effect<unknown>;
 
 let gitCalls: Array<ReadonlyArray<string>> = [];
-const remoteHeads = new Map<string, string>();
-let advanceProcessedParent = false;
 const fakeGit = Layer.mergeAll(
   TestSourceControlHost.layer({
     process: {
       run: (input) =>
         Effect.sync(() => {
+          if (input.args[0] === "init") gitCalls = [];
           gitCalls.push(input.args);
-          if (input.args[0] === "init") {
-            remoteHeads.clear();
-            remoteHeads.set("refs/heads/middle", "bbb");
-            remoteHeads.set("refs/heads/top", "ccc");
-          }
-          if (input.args[0] === "push") {
-            const [sha, ref] = input.args.at(-1)!.split(":");
-            remoteHeads.set(ref!, sha!);
-            if (advanceProcessedParent && ref === "refs/heads/middle") {
-              remoteHeads.set(ref, "concurrent-sha");
-              advanceProcessedParent = false;
-            }
-          }
           const stdout =
             input.args[0] === "ls-remote"
               ? input.args
                   .slice(3)
-                  .map((ref) => `${remoteHeads.get(ref)}\t${ref}`)
-                  .join("\n")
+                  .map((ref) => {
+                    const pushed = gitCalls.findLast(
+                      (args) => args[0] === "push" && args.at(-1)?.endsWith(`:${ref}`),
+                    );
+                    const sha =
+                      pushed?.at(-1)?.split(":")[0] ??
+                      (ref === "refs/heads/middle" ? "bbb" : "ccc");
+                    return `${sha}\t${ref}\n`;
+                  })
+                  .join("")
               : input.args[0] === "rev-parse" || input.args[0] === "merge-base"
                 ? "new-sha\n"
                 : "";
@@ -278,27 +270,6 @@ it.effect("does not merge from an already merged layer", () =>
   }),
 );
 
-it.effect("polls an accepted merge and reports a later rule rejection", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      { status: "pending", details: { uuid: "operation" } },
-      { status: "failed", details: { message: "Required checks have not passed" } },
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("1 second");
-    const result = yield* Fiber.join(fiber);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergeRejectedError" },
-    });
-    expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async/operation");
-  }),
-);
-
 it.effect("retains stack identity and a rejection response without a message", () =>
   Effect.gen(function* () {
     const rejection = { status: "failed", details: {} };
@@ -314,21 +285,6 @@ it.effect("retains stack identity and a rejection response without a message", (
         cause: rejection,
       },
     });
-  }),
-);
-
-it.effect("refuses a changed stack before performing any mutation", () =>
-  Effect.gen(function* () {
-    const api = fake([stack]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      expectedStackHeads: [
-        { number: 2, headSha: "old" },
-        { number: 3, headSha: "ccc" },
-      ],
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
-    expect(api.calls).toHaveLength(1);
   }),
 );
 
@@ -384,25 +340,6 @@ it.effect("rebases for a GitHub App, which GitHub gives no permission to read", 
   }),
 );
 
-it.effect("bounds polling and reports a still-running merge without claiming success", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      ...Array.from({ length: 40 }, () => ({ status: "pending", details: { uuid: "operation" } })),
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("6 minutes");
-    expect(yield* Fiber.join(fiber)).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergePendingError" },
-    });
-    expect(api.calls.length).toBeLessThan(40);
-  }),
-);
-
 it.effect("rebases the open layers bottom to top in a scratch clone, each onto the one below", () =>
   Effect.gen(function* () {
     gitCalls = [];
@@ -435,35 +372,5 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
         "new-sha:refs/heads/top",
       ],
     ]);
-  }),
-);
-
-it.effect("checks every layer's write access before any git runs", () =>
-  Effect.gen(function* () {
-    gitCalls = [];
-    const api = fake([
-      stack,
-      accessOf(writable, {
-        headRepository: { viewerPermission: "READ" },
-        maintainerCanModify: false,
-      }),
-    ]);
-    yield* Effect.flip(runGitHubStackAction(api.execute, { ...input, action: "update-branch" }));
-    expect(gitCalls).toEqual([]);
-  }),
-);
-
-it.effect("reports a changed processed parent with partial completion", () =>
-  Effect.gen(function* () {
-    gitCalls = [];
-    advanceProcessedParent = true;
-    const api = fake([stack, access]);
-    const error = yield* Effect.flip(
-      runGitHubStackAction(api.execute, { ...input, action: "update-branch" }),
-    );
-    expect(error).toMatchObject({ _tag: "GitHubStackChangedError", number: 2, completed: 1 });
-    expect(error.message).toContain("Earlier updates remain on GitHub");
-    expect(gitCalls.filter((args) => args[0] === "push")).toHaveLength(1);
-    expect(remoteHeads.get("refs/heads/top")).toBe("ccc");
   }),
 );

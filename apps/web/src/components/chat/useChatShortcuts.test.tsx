@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act } from "../../../test/act";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
@@ -50,7 +50,7 @@ function key() {
 }
 beforeEach(() => {
   state.vim = true;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", { activeElement: null });
 });

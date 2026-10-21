@@ -1,10 +1,11 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act } from "../test/act";
+import { useLayoutEffect } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { useEditorPreference } from "./editorPreferenceStorage";
 
-let root: Root;
+let root: ReactTestRenderer;
 let current: string;
 let setValue: (value: string) => void;
 const backing = new Map<string, string>();
@@ -20,18 +21,18 @@ function Consumer() {
   return null;
 }
 async function renderConsumers(count: number) {
-  await act(() => root.render(Array.from({ length: count }, (_, key) => <Consumer key={key} />)));
+  await act(() =>
+    root.update(
+      <>
+        {Array.from({ length: count }, (_, key) => (
+          <Consumer key={key} />
+        ))}
+      </>,
+    ),
+  );
 }
-beforeEach(() => {
+beforeEach(async () => {
   const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
-  const container = {
-    nodeType: 1,
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener() {},
-    removeEventListener() {},
-  };
   windowEvents = new EventTarget();
   const added = vi.spyOn(windowEvents, "addEventListener");
   listenerNames = () => added.mock.calls.map(([name]) => name);
@@ -48,10 +49,12 @@ beforeEach(() => {
       },
     }),
   );
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   backing.clear();
   read.mockClear();
-  root = createRoot(container as unknown as HTMLElement);
+  await act(() => {
+    root = create(<></>);
+  });
 });
 afterEach(async () => {
   await act(() => root.unmount());

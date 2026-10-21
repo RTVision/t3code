@@ -1,4 +1,5 @@
-import { act, createElement, useSyncExternalStore } from "react";
+import { act } from "../../../test/act";
+import { createElement, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -88,7 +89,6 @@ const button = (label: string) =>
   renderer.root.findAllByType("button").find((node) => node.props.children === label)!;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.pending = false;
   registry = AtomRegistry.make();
   mocks.open.mockResolvedValue(undefined);

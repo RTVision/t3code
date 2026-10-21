@@ -1,3 +1,4 @@
+import { act } from "../../test/act";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -222,10 +223,9 @@ vi.mock("./AnimatedHeight", () => ({ AnimatedHeight: "AnimatedHeight" }));
 import GitActionsControl from "./GitActionsControl";
 
 import { createElement } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal(
     "window",
     Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }),

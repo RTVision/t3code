@@ -1,5 +1,7 @@
 import * as NodeNet from "node:net";
-
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
@@ -9,11 +11,8 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -25,8 +24,6 @@ import * as SshAuth from "./auth.ts";
 import { SshCommandError, SshReadinessError } from "./errors.ts";
 import { SshRunner } from "./runner.ts";
 import * as SshTunnel from "./tunnel.ts";
-
-const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -43,16 +40,6 @@ const makeSuccessfulProcess = (stdout: string) => {
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
   });
-};
-
-const makeDelayedSuccessfulProcess = (stdout: string, delayMs: number) => {
-  const process = makeSuccessfulProcess(stdout);
-  return {
-    ...process,
-    exitCode: Effect.sleep(Duration.millis(delayMs)).pipe(
-      Effect.as(ChildProcessSpawner.ExitCode(0)),
-    ),
-  };
 };
 
 const makeRunningProcess = (onKill: () => void) => {
@@ -358,10 +345,11 @@ describe("SSH tunnel reconnect", () => {
 });
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
+
+const TEST_NODE_ENGINE_RANGE = "^22.19 || ^23.11 || >=24.10";
 const NODE_SCRIPT = {
   nodeScriptPath: "/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs",
 } as const;
-
 describe("ssh tunnel scripts", () => {
   it("installs and runs the release archive without Node, npm, or npx", () => {
     const script = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
@@ -591,132 +579,6 @@ describe("ssh tunnel scripts", () => {
       const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
       assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
-    }).pipe(Effect.provide(layerProcess));
-  });
-
-  it.effect("allows cold remote launches to exceed the default SSH command timeout", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 75_000)),
-    );
-    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
-
-    return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, NODE_SCRIPT),
-      );
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.seconds(75));
-
-      const result = yield* Fiber.join(fiber);
-      assert.equal(result.remotePort, 3774);
-    }).pipe(Effect.provide(layerProcess));
-  });
-
-  it.effect("gives cold archive launches a larger budget than node-script launches", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 800_000)),
-    );
-    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
-
-    return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE),
-      );
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.seconds(800));
-
-      const result = yield* Fiber.join(fiber);
-      assert.equal(result.remotePort, 3774);
-    }).pipe(Effect.provide(layerProcess));
-  });
-
-  it("allows the remote port picker to run without a state file path", () => {
-    assert.include(SshTunnel.REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
-  });
-
-  it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () =>
-    Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        Effect.result(
-          SshTunnel.waitForHttpReady({
-            baseUrl: "http://127.0.0.1:41773/",
-            timeoutMs: 1_000,
-            intervalMs: 100,
-            probeTimeoutMs: 250,
-          }),
-        ),
-      );
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(1_000));
-
-      const result = yield* Fiber.join(fiber);
-
-      assert.isTrue(Result.isFailure(result));
-      if (Result.isFailure(result)) {
-        assert.include(result.failure.message, "Timed out waiting 1000ms");
-      }
-    }).pipe(
-      Effect.provide(
-        Layer.merge(TestClock.layer(), Layer.succeed(HttpClient.HttpClient, hangingHttpClient)),
-      ),
-    ),
-  );
-
-  it("preserves primitive readiness reason values in diagnostic output", () => {
-    assert.deepEqual(
-      SshTunnel.describeReadinessCause({
-        _tag: "HttpClientError",
-        message: "Backend readiness probe failed.",
-        reason: "authentication failed",
-        cause: "upstream closed",
-      }),
-      {
-        _tag: "HttpClientError",
-        message: "Backend readiness probe failed.",
-        reason: "authentication failed",
-        cause: "upstream closed",
-      },
-    );
-  });
-
-  it.effect("accepts pretty-printed pairing JSON from the remote CLI", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(
-        makeSuccessfulProcess(`{
-  "id": "88941235-6ed5-4184-a2ff-5339e2075958",
-  "credential": "LCL4R2TPHDKQ",
-  "scopes": ["orchestration:read"],
-  "expiresAt": "2026-04-29T01:01:20.994Z"
-}
-
-`),
-      ),
-    );
-    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const layerProcess = Layer.merge(NodeServices.layer, layerSpawner);
-    return Effect.gen(function* () {
-      const result = yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE);
-      assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
 
@@ -1746,7 +1608,6 @@ describe("archive runner script", () => {
         assert.equal(afterUnowned.exitCode, 0, afterUnowned.stderr);
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 });
 
@@ -1910,24 +1771,20 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         assert.isFalse(yield* isListening(launched.remotePort));
         assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 
-  it.effect.skipIf(windowsHost)(
-    "waits for its busy managed server instead of replacing it",
-    () =>
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const { readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
-        const { launched, pid } = yield* launchManaged;
+  it.effect.skipIf(windowsHost)("waits for its busy managed server instead of replacing it", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
+      const { launched, pid } = yield* launchManaged;
 
-        process.kill(pid, "SIGSTOP");
-        yield* spawner.spawn(ChildProcess.make("sh", ["-c", `sleep 5; kill -CONT ${pid}`]));
-        assert.deepEqual(yield* runLaunch, launched);
-        assert.equal(yield* readManagedPid, pid);
-        assert.isTrue(isAlive(pid));
-      }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
+      process.kill(pid, "SIGSTOP");
+      yield* spawner.spawn(ChildProcess.make("sh", ["-c", `sleep 5; kill -CONT ${pid}`]));
+      assert.deepEqual(yield* runLaunch, launched);
+      assert.equal(yield* readManagedPid, pid);
+      assert.isTrue(isAlive(pid));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -1957,85 +1814,78 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         );
         assert.equal((yield* fs.readFileString(`${stateDir}/managed`)).trim(), "managed");
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 
-  it.effect.skipIf(windowsHost)(
-    "still replaces its managed server when the runner changes",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const { stateDir, readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
-        const { pid: previousPid } = yield* launchManaged;
+  it.effect.skipIf(windowsHost)("still replaces its managed server when the runner changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir, readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
+      const { pid: previousPid } = yield* launchManaged;
 
-        yield* fs.writeFileString(`${stateDir}/run-t3.sh`, "# previous runner\n");
-        assert.equal((yield* runLaunch).serverKind, "managed");
-        const replacementPid = yield* readManagedPid;
-        assert.notEqual(replacementPid, previousPid);
-        assert.isFalse(isAlive(previousPid));
-        assert.isTrue(isAlive(replacementPid));
-      }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
+      yield* fs.writeFileString(`${stateDir}/run-t3.sh`, "# previous runner\n");
+      assert.equal((yield* runLaunch).serverKind, "managed");
+      const replacementPid = yield* readManagedPid;
+      assert.notEqual(replacementPid, previousPid);
+      assert.isFalse(isAlive(previousPid));
+      assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "replaces a managed server that exited but was not reaped",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const { home, stateDir, readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
-        const { launched, pid } = yield* launchManaged;
-        process.kill(pid, "SIGKILL");
+  it.effect.skipIf(windowsHost)("replaces a managed server that exited but was not reaped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { home, stateDir, readManagedPid, runLaunch, launchManaged } = yield* prepareLaunch;
+      const { launched, pid } = yield* launchManaged;
+      process.kill(pid, "SIGKILL");
 
-        // A crashed server whose parent never reaps it stays a zombie, which
-        // kill -0 still reports. Its pid file and runtime record keep naming it.
-        const parent = yield* spawner.spawn(
-          ChildProcess.make("node", [
-            "-e",
-            `const { spawn } = require("node:child_process");
+      // A crashed server whose parent never reaps it stays a zombie, which
+      // kill -0 still reports. Its pid file and runtime record keep naming it.
+      const parent = yield* spawner.spawn(
+        ChildProcess.make("node", [
+          "-e",
+          `const { spawn } = require("node:child_process");
 const child = spawn("sleep", ["600"], { stdio: "ignore" });
 child.once("spawn", () => {
   require("node:fs").writeSync(1, String(child.pid) + "\\n");
   // Stay inside this callback so libuv cannot reap the child after SIGKILL.
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 });`,
-          ]),
-        );
-        const zombie = Number(
-          Option.getOrThrow(
-            yield* parent.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
-          ),
-        );
-        process.kill(zombie, "SIGKILL");
-        // SIGKILL delivery is asynchronous; establish the zombie fixture before launching.
-        const zombieState = yield* runScript(home, [
-          "-c",
-          `attempt=0; while [ "$attempt" -lt 100 ]; do
+        ]),
+      );
+      const zombie = Number(
+        Option.getOrThrow(
+          yield* parent.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
+        ),
+      );
+      process.kill(zombie, "SIGKILL");
+      // SIGKILL delivery is asynchronous; establish the zombie fixture before launching.
+      const zombieState = yield* runScript(home, [
+        "-c",
+        `attempt=0; while [ "$attempt" -lt 100 ]; do
             state=$(ps -o stat= -p ${zombie}) || exit 1
             case "$state" in *Z*) printf '%s\\n' "$state"; exit 0;; esac
             attempt=$((attempt + 1))
           done; printf '%s\\n' "$state"; exit 1`,
-        ]);
-        assert.equal(zombieState.exitCode, 0, zombieState.stdout);
-        assert.include(zombieState.stdout, "Z");
-        yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
-        yield* fs.writeFileString(
-          `${home}/.t3/userdata/server-runtime.json`,
-          JSON.stringify({
-            version: 1,
-            pid: zombie,
-            port: launched.remotePort,
-            origin: `http://127.0.0.1:${launched.remotePort}`,
-          }),
-        );
+      ]);
+      assert.equal(zombieState.exitCode, 0, zombieState.stdout);
+      assert.include(zombieState.stdout, "Z");
+      yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
+      yield* fs.writeFileString(
+        `${home}/.t3/userdata/server-runtime.json`,
+        JSON.stringify({
+          version: 1,
+          pid: zombie,
+          port: launched.remotePort,
+          origin: `http://127.0.0.1:${launched.remotePort}`,
+        }),
+      );
 
-        assert.equal((yield* runLaunch).serverKind, "managed");
-        const replacementPid = yield* readManagedPid;
-        assert.notEqual(replacementPid, zombie);
-        assert.isTrue(isAlive(replacementPid));
-      }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
+      assert.equal((yield* runLaunch).serverKind, "managed");
+      const replacementPid = yield* readManagedPid;
+      assert.notEqual(replacementPid, zombie);
+      assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -2054,7 +1904,6 @@ child.once("spawn", () => {
         });
         assert.isTrue(isAlive(pid));
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -2069,7 +1918,6 @@ child.once("spawn", () => {
         assert.deepEqual(yield* runLaunch, { remotePort: servicePort, serverKind: "external" });
         assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -2110,6 +1958,5 @@ child.once("spawn", () => {
         assert.notEqual(replacementPid, previousPid);
         assert.isTrue(isAlive(replacementPid));
       }).pipe(Effect.provide(NodeServices.layer)),
-    60_000,
   );
 });

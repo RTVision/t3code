@@ -1,3 +1,4 @@
+import { act } from "../../test/act";
 import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
@@ -12,7 +13,7 @@ import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runti
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
@@ -101,7 +102,6 @@ const session = (scopes: readonly AuthEnvironmentScope[]): AuthSessionState => (
 });
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.registry = AtomRegistry.make();
   state.sessions.set(
     environmentId,
