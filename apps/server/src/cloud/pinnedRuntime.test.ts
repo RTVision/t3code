@@ -975,6 +975,56 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     return { baseDir, versionsDir, install };
   });
 
+  it.effect(
+    "keeps npm service launchers across successive updates for launcher-owned cleanup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { baseDir, versionsDir } = yield* setup(["0.9.0", "1.0.0", "1.1.0", "1.2.0"]);
+        const launcher = path.join(
+          versionsDir,
+          "1.0.0",
+          "node_modules/t3/dist/service-launcher.mjs",
+        );
+        for (const version of ["1.0.0", "1.1.0", "1.2.0"]) {
+          const dist = path.join(versionsDir, version, "node_modules/t3/dist");
+          yield* fs.makeDirectory(dist, { recursive: true });
+          yield* fs.writeFileString(path.join(dist, "bin.mjs"), "// npm entry\n");
+          yield* fs.writeFileString(path.join(dist, "service-launcher.mjs"), "// launcher\n");
+        }
+        yield* fs.writeFileString(path.join(baseDir, "runtime", ".boot-version"), "1.0.0\n");
+        for (const [fromVersion, targetVersion] of [
+          ["1.0.0", "1.1.0"],
+          ["1.1.0", "1.2.0"],
+        ] as const) {
+          yield* fs.writeFileString(
+            path.join(baseDir, "runtime", "service-state.json"),
+            JSON.stringify({
+              protocol: SERVICE_LAUNCHER_PROTOCOL,
+              activeVersion: targetVersion,
+              update: { id: targetVersion, fromVersion, targetVersion, status: "committed" },
+            }),
+          );
+          yield* prunePinnedRuntimes({ baseDir, keep: [targetVersion] }).pipe(
+            Effect.provideService(
+              ProcessRunner.ProcessRunner,
+              lsofRunner("p1\nftxt\nn/usr/bin/node\n"),
+            ),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, { T3CODE_INSTALL_BIN_DIR: baseDir }),
+          );
+          assert.equal(yield* fs.readFileString(launcher), "// launcher\n");
+        }
+        assert.isFalse(yield* fs.exists(path.join(versionsDir, "0.9.0")));
+        for (const version of ["1.0.0", "1.1.0", "1.2.0"]) {
+          assert.isTrue(
+            yield* fs.exists(path.join(versionsDir, version, "node_modules/t3/dist/bin.mjs")),
+          );
+        }
+      }),
+  );
+
   it.effect("removes only completed runtimes nothing references", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

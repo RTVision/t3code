@@ -638,6 +638,9 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
   for (const version of entries) {
     if (!isExactServiceVersion(version)) continue;
     const versionDir = path.join(versionsDir, version);
+    // Node's process executable does not identify its pinned launcher script. The npm service
+    // launcher owns cleanup and preserves its boot/restart markers and script across updates.
+    if (yield* fs.exists(path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"))) continue;
     const sentinelPath = path.join(versionDir, ".install-complete");
     const isLink = yield* fs.readLink(versionDir).pipe(Effect.isSuccess);
     const sentinel = yield* fs.readFileString(sentinelPath).pipe(Effect.option);
