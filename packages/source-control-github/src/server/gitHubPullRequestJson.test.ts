@@ -63,6 +63,8 @@ const row = (fields: Record<string, unknown>) => ({
   url: "https://github.com/pingdotgg/t3code/pull/1",
   author: null,
   headRefName: "feat/page",
+  headRepository: { nameWithOwner: "pingdotgg/t3code" },
+  isCrossRepository: false,
   baseRefName: "main",
   state: "OPEN",
   isDraft: false,

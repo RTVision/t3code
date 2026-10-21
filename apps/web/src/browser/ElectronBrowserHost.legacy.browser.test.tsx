@@ -1,7 +1,6 @@
 import type { DesktopPreviewBridge, DesktopPreviewPointerEvent } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { render, stubGlobal } from "../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
@@ -26,16 +25,9 @@ vi.mock("./previewRuntime", () => ({ rendersServerTabNatively: () => false }));
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
 import { useBrowserPointerStore } from "./browserPointerStore";
 
-afterEach(() => {
-  useBrowserPointerStore.setState({ byTabId: {} });
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
-
 it("mounts in an older desktop shell and preserves pointer events without new-tab support", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("requestAnimationFrame", () => 0);
-  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  using _frames = stubGlobal("requestAnimationFrame", () => 0);
+  using _cancelFrames = stubGlobal("cancelAnimationFrame", () => undefined);
   let pointerListener: ((event: DesktopPreviewPointerEvent) => void) | undefined;
   // The older preload has pointer events but no onOpenLink capability.
   const preview = {
@@ -47,25 +39,25 @@ it("mounts in an older desktop shell and preserves pointer events without new-ta
       };
     },
   } satisfies Pick<DesktopPreviewBridge, "setAnnotationTheme" | "onPointerEvent">;
-  vi.stubGlobal("desktopBridge", { preview });
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  try {
-    await act(async () => root.render(<ElectronBrowserHost />));
-    const pointer: DesktopPreviewPointerEvent = {
-      tabId: "legacy-tab",
-      phase: "move",
-      x: 20,
-      y: 30,
-      sequence: 1,
-      createdAt: "2026-10-09T00:00:00.000Z",
-    };
-    expect(pointerListener).toBeDefined();
-    pointerListener?.(pointer);
-    expect(useBrowserPointerStore.getState().byTabId["legacy-tab"]).toEqual(pointer);
-  } finally {
-    await act(async () => root.unmount());
-  }
+  using _bridge = stubGlobal("desktopBridge", { preview });
+  using _pointerState = {
+    [Symbol.dispose]() {
+      useBrowserPointerStore.setState({ byTabId: {} });
+    },
+  };
+  // The desktop bridge host does not use router state.
+  await using screen = await render(<ElectronBrowserHost />, { router: false });
+  const pointer: DesktopPreviewPointerEvent = {
+    tabId: "legacy-tab",
+    phase: "move",
+    x: 20,
+    y: 30,
+    sequence: 1,
+    createdAt: "2026-10-09T00:00:00.000Z",
+  };
+  expect(pointerListener).toBeDefined();
+  pointerListener?.(pointer);
+  expect(useBrowserPointerStore.getState().byTabId["legacy-tab"]).toEqual(pointer);
+  await screen.unmount();
   expect(pointerListener).toBeUndefined();
 });

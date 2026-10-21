@@ -1,4 +1,5 @@
-import { act, useState } from "react";
+import { act } from "../../../test/act";
+import { useState } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MentionSuggestionsContext, MentionTextarea } from "./mention-textarea";
@@ -33,7 +34,6 @@ const keyboard = (key: string, ctrlKey = false) => ({
 });
 
 beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
     callback();
     return 1;

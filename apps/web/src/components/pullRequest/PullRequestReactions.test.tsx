@@ -1,3 +1,4 @@
+import { act } from "../../../test/act";
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
@@ -11,7 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
-import { act, type ReactNode, type ReactElement } from "react";
+import { type ReactNode, type ReactElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -89,7 +90,6 @@ const pill = () =>
     .findAllByType("button")
     .find((button) => button.props["aria-label"]?.startsWith("thumbs up,"))!;
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registry = AtomRegistry.make();
   registry.set(sessions(environmentId), AsyncResult.success(session(false)));
   state.writes.mockReset().mockResolvedValue(undefined);

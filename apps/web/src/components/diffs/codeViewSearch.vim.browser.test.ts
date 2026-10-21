@@ -1,7 +1,9 @@
 import type { CodeViewItem } from "@pierre/diffs";
 import diffsUrl from "@pierre/diffs?url";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
+
+import { stubGlobal } from "../../../test/render";
 
 function fixture() {
   const root = document.createElement("div");
@@ -17,9 +19,15 @@ function fixture() {
   let items: CodeViewItem<undefined>[] = [{ id: "a", type: "diff", fileDiff, collapsed: true }];
   const revealed: Array<{ id: string; side: string; lineNumber: number }> = [];
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  const frameStub = stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    frames.push(callback),
+  );
   return {
     root,
+    [Symbol.dispose]() {
+      root.remove();
+      frameStub[Symbol.dispose]();
+    },
     revealed,
     frames,
     replaceItems: () => {
@@ -47,10 +55,6 @@ const { CodeViewSearch } = (await import(/* @vite-ignore */ searchUrl.href)) as 
     cleanUp(): void;
   };
 };
-afterEach(() => {
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
-});
 
 function searchFixture() {
   const result = fixture();
@@ -62,12 +66,20 @@ function searchFixture() {
     .shadowRoot!.querySelector<HTMLInputElement>('input[placeholder="Search"]')!;
   input.value = "oldName";
   input.dispatchEvent(new Event("input", { bubbles: true }));
-  return { ...result, search };
+  return {
+    ...result,
+    search,
+    [Symbol.dispose]() {
+      search.cleanUp();
+      result[Symbol.dispose]();
+    },
+  };
 }
 
 describe("Vim repeats through upstream diff search", () => {
   it("repeats and wraps the same query after closing the panel", () => {
-    const { search, revealed, root } = searchFixture();
+    using fixture = searchFixture();
+    const { search, revealed, root } = fixture;
     expect(revealed.at(-1)?.side).toBe("deletions");
     search.close();
     expect(root.querySelector("[data-diffs-search]")).toBeNull();
@@ -80,7 +92,8 @@ describe("Vim repeats through upstream diff search", () => {
     search.cleanUp();
   });
   it("rechecks changed files and discards the query when the viewer is disposed", () => {
-    const { search, revealed, replaceItems } = searchFixture();
+    using fixture = searchFixture();
+    const { search, revealed, replaceItems } = fixture;
     search.close();
     const count = revealed.length;
     replaceItems();

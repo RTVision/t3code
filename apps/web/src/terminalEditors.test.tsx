@@ -1,5 +1,6 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act } from "../test/act";
+import { useLayoutEffect } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, type TerminalEditorCapability } from "@t3tools/contracts";
 import { invalidateTerminalEditors, useTerminalEditor } from "./terminalEditors";
@@ -25,7 +26,7 @@ const unavailable: TerminalEditorCapability = {
   selectedTerminal: null,
   executableOverride: null,
 };
-let root: Root;
+let root: ReactTestRenderer;
 let current: ReturnType<typeof useTerminalEditor>;
 let commits: number;
 const bridge = vi.fn(async () => unavailable);
@@ -38,30 +39,31 @@ function Consumer() {
   return null;
 }
 async function renderConsumers(count: number) {
-  await act(() => root.render(Array.from({ length: count }, (_, key) => <Consumer key={key} />)));
+  await act(() =>
+    root.update(
+      <>
+        {Array.from({ length: count }, (_, key) => (
+          <Consumer key={key} />
+        ))}
+      </>,
+    ),
+  );
 }
-beforeEach(() => {
+beforeEach(async () => {
   const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
-  const container = {
-    nodeType: 1,
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener() {},
-    removeEventListener() {},
-  };
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", {
     document,
     HTMLIFrameElement: EventTarget,
     desktopBridge: { probeTerminalEditor: bridge },
   });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.generation = 1;
   commits = 0;
   bridge.mockReset().mockResolvedValue(unavailable);
   invalidateTerminalEditors();
-  root = createRoot(container as unknown as HTMLElement);
+  await act(() => {
+    root = create(<></>);
+  });
 });
 afterEach(async () => {
   await act(() => root.unmount());

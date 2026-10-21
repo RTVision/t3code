@@ -29,9 +29,25 @@ const fakeGit = Layer.mergeAll(
     process: {
       run: (input) =>
         Effect.sync(() => {
+          if (input.args[0] === "init") gitCalls = [];
           gitCalls.push(input.args);
           const stdout =
-            input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
+            input.args[0] === "ls-remote"
+              ? input.args
+                  .slice(3)
+                  .map((ref) => {
+                    const pushed = gitCalls.findLast(
+                      (args) => args[0] === "push" && args.at(-1)?.endsWith(`:${ref}`),
+                    );
+                    const sha =
+                      pushed?.at(-1)?.split(":")[0] ??
+                      (ref === "refs/heads/middle" ? "bbb" : "ccc");
+                    return `${sha}\t${ref}\n`;
+                  })
+                  .join("")
+              : input.args[0] === "rev-parse" || input.args[0] === "merge-base"
+                ? "new-sha\n"
+                : "";
           return {
             exitCode: ChildProcessSpawner.ExitCode(0),
             stdout,

@@ -41,12 +41,14 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
       const npx = "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs";
       // sudo's secure_path already has a system Node.
       expect(yield* rootCommand({ node: "/usr/bin/node", entry: npx })).toBe(
-        "sudo npx t3 browser setup",
+        "sudo npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 browser setup",
       );
       // nvm, fnm, and tarball installs are dropped by sudo's PATH reset.
       expect(
         yield* rootCommand({ node: "/home/theo/.nvm/versions/node/v24/bin/node", entry: npx }),
-      ).toBe('sudo env "PATH=$PATH" npx t3 browser setup');
+      ).toBe(
+        'sudo env "PATH=$PATH" npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 browser setup',
+      );
       expect(
         yield* rootCommand({
           node: "/home/theo/.local/node/bin/node",

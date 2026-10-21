@@ -1,3 +1,4 @@
+import { act } from "../../../test/act";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -7,7 +8,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { act, createElement, Profiler, useEffect, type ReactElement } from "react";
+import { createElement, Profiler, useEffect, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -507,7 +508,7 @@ function installTestDom() {
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", window);
   vi.stubGlobal("HTMLIFrameElement", window.HTMLIFrameElement);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
   return document;
 }
 

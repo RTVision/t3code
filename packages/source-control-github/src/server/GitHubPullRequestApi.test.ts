@@ -216,6 +216,8 @@ function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
 /** What every listing row answers with, which a fixture overrides only where it matters. */
 const rowDefaults = {
   author: null,
+  headRepository: { nameWithOwner: "acme/web" },
+  isCrossRepository: false,
   state: "OPEN",
   isDraft: false,
   mergeable: "UNKNOWN",
