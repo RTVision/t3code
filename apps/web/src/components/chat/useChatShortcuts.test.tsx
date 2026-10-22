@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { dispatchAppCommand } from "../../vim/commandBus";
 import { useChatShortcuts, type ChatShortcutsInput } from "./useChatShortcuts";
+import type { ChatComposerHandle } from "./ChatComposer";
 
 const state = vi.hoisted(() => ({ vim: true }));
 vi.mock("../../vim/runtime", () => ({ vimEnabled: () => state.vim }));
@@ -37,7 +38,12 @@ function input(run: () => void): ChatShortcutsInput {
       modelPickerOpen: false,
     }),
     threadFindActive: false,
-    typeIntoComposer: vi.fn(() => true),
+    composerRef: {
+      current: {
+        insertTextAtEnd: vi.fn(() => true),
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
     closeThreadFind: vi.fn(),
     commands: { "thread.stop": run },
     fallback: () => undefined,
@@ -84,8 +90,8 @@ it("keeps printable Vim navigation out of the composer while ordinary typing sti
     renderer = create(<Surface input={options} />);
   });
   window.dispatchEvent(key());
-  expect(options.typeIntoComposer).not.toHaveBeenCalled();
+  expect(options.composerRef.current?.insertTextAtEnd).not.toHaveBeenCalled();
   state.vim = false;
   window.dispatchEvent(key());
-  expect(options.typeIntoComposer).toHaveBeenCalledWith("x");
+  expect(options.composerRef.current?.insertTextAtEnd).toHaveBeenCalledWith("x");
 });

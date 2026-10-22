@@ -16,7 +16,7 @@ export function createServerPublishConfig(
   return {
     ...existingConfig,
     registry,
-    // pnpm normalizes non-bin files to 0644 unless explicitly listed here.
+    // Staged monitors must stay executable even when their source mode is 0644.
     executableFiles: [...new Set([...(existingConfig.executableFiles ?? []), ...monitors])],
   };
 }

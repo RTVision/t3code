@@ -743,6 +743,7 @@ export type PullRequestRefresh = typeof PullRequestRefresh.Type;
 export const PullRequestReportStateInput = Schema.Struct({
   reference: PullRequestRef,
   state: PullRequestState,
+  isDraft: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 

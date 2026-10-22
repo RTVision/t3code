@@ -95,7 +95,7 @@ import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { TraitsPicker } from "../chat/TraitsPicker";
+import { readPromptUltrathink, TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -1471,8 +1471,10 @@ function ScheduledTaskEditorForm({
                   model={activeModel}
                   // Prompt-injected effort (Claude's Ultrathink) edits the task prompt,
                   // as it does in the composer.
-                  prompt={draft.prompt}
-                  onPromptChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
+                  promptUltrathink={readPromptUltrathink(draft.prompt)}
+                  onPromptEdit={(edit) =>
+                    setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
+                  }
                   modelOptions={activeSelection?.options ?? []}
                   planModeEnabled={settings.planModeEnabled}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
