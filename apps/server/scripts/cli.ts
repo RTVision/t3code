@@ -23,6 +23,7 @@ import {
 import { createServerPublishConfig } from "../../../scripts/lib/server-publish-config.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
+import rootPackageJson from "../../../package.json" with { type: "json" };
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import serverPackageJson from "../package.json" with { type: "json" };
@@ -231,7 +232,7 @@ const buildExeCmd = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Build the server as a Node single-executable (needs a Node 25.7+ host for --build-sea). The binary still resolves native packages from a node_modules tree beside it.",
+    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; explicit cross-target builds need a Node 25.7+ host for --build-sea. The binary still resolves native packages from a node_modules tree beside it.`,
   ),
 );
 

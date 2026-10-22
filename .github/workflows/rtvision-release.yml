@@ -62,7 +62,7 @@ jobs:
       - run: vp run --filter t3 build
       - name: Build Linux CLI executable
         env:
-          VP_NODE_VERSION: "26.8.2"
+          VP_NODE_VERSION: "26.12.1"
         run: node apps/server/scripts/cli.ts build-exe --verbose
       - name: Build Linux resource monitor
         run: |
@@ -175,7 +175,7 @@ jobs:
         if: matrix.platform == 'win'
         shell: bash
         env:
-          VP_NODE_VERSION: "26.8.2"
+          VP_NODE_VERSION: "26.12.1"
         run: node apps/server/scripts/cli.ts build-exe --verbose
       - name: Build and verify Windows CLI archive
         if: matrix.platform == 'win'

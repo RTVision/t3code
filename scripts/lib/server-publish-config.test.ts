@@ -34,7 +34,7 @@ it("packs bundled POSIX resource monitors with executable archive modes", () => 
       const target = NodePath.join(source, file);
       NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
       NodeFS.writeFileSync(target, "#!/bin/sh\nprintf 'monitor-ok\\n'\n");
-      NodeFS.chmodSync(target, 0o755);
+      NodeFS.chmodSync(target, 0o644);
     }
     const existingConfig = {
       registry: "https://registry.npmjs.org/",
