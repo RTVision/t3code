@@ -3255,7 +3255,11 @@ export const make = Effect.gen(function* () {
                   host: project.host,
                   number: input.number,
                 })
-                .pipe(Effect.mapError(toPullRequestError("checks"))),
+                .pipe(
+                  Effect.mapError(toPullRequestError("checks")),
+                  observeRead,
+                  Effect.map(({ value, observedAt }) => ({ ...value, observedAt })),
+                ),
         ),
       );
     },

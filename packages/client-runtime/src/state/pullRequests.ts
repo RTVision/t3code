@@ -153,7 +153,26 @@ function refreshRevision(scope: PullRequestRefreshScope, revisions: RefreshRevis
   );
 }
 
-/** Keep confirmed edits on the same cached reference regardless of input property order. */
+function normalizePullRequestQuery<A>(
+  query: (target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef }) => A,
+) {
+  return ({
+    environmentId,
+    input: { projectId, host, repository, number, allowStale, expectedAccountId },
+  }: Parameters<typeof query>[0]) =>
+    query({
+      environmentId,
+      input: {
+        projectId,
+        ...(host === undefined ? {} : { host }),
+        repository,
+        number,
+        ...(allowStale === undefined ? {} : { allowStale }),
+        ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
+      },
+    });
+}
+
 function writableQueryFamily<A, E>(
   family: (target: {
     readonly environmentId: EnvironmentId;
@@ -176,22 +195,7 @@ function writableQueryFamily<A, E>(
       (refresh) => refresh(source),
     ).pipe(Atom.setIdleTTL(5 * 60_000)),
   );
-  return ({
-    environmentId,
-    input: { projectId, host, repository, number, allowStale },
-  }: Parameters<typeof family>[0]) =>
-    writable(
-      family({
-        environmentId,
-        input: {
-          projectId,
-          ...(host === undefined ? {} : { host }),
-          repository,
-          number,
-          ...(allowStale === undefined ? {} : { allowStale }),
-        },
-      }),
-    );
+  return normalizePullRequestQuery((target) => writable(family(target)));
 }
 
 /** Restart pre-mutation reads before patching so they cannot restore stale values. */
@@ -619,15 +623,17 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     detail,
     preview,
-    checks: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:checks",
-      persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-      tag: WS_METHODS.pullRequestsChecks,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-      staleTimeMs: 45_000,
-      refreshTrigger: ({ environmentId, input }) =>
-        refreshes({ environmentId, input: { kind: "reference", reference: input } }),
-    }),
+    checks: normalizePullRequestQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: "environment-data:pull-requests:checks",
+        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
+        tag: WS_METHODS.pullRequestsChecks,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+        staleTimeMs: 45_000,
+        refreshTrigger: ({ environmentId, input }) =>
+          refreshes({ environmentId, input: { kind: "reference", reference: input } }),
+      }),
+    ),
     activity,
     viewedFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:viewed-files",

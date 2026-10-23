@@ -89,7 +89,7 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending — sent when you submit the review</span>
+        <span>Pending. Sent when you submit the review</span>
         <span className="ml-auto flex items-center">
           {editing ? null : (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
