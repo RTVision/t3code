@@ -310,7 +310,7 @@ export class TerminalEditorRuntime {
           ...base,
           state: "check-on-open",
           reason,
-          message: "Check on open — SSH sign-in required. Authenticate in the new terminal window.",
+          message: "Check on open. SSH sign-in required. Authenticate in the new terminal window.",
         };
       return unavailable(
         reason,
