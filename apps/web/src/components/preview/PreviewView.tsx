@@ -915,7 +915,7 @@ export function PreviewView({
         // waiting for the next successful refresh.
         pickDisabled={!tabId || (isUnreachable && !pickActive)}
         pickDisabledReason={
-          isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
+          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (

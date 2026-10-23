@@ -383,7 +383,7 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
 
   readonly getChangeRequestChecks?: (
     input: ProviderRepositoryRef & { readonly number: number },
-  ) => Effect.Effect<PullRequestChecks, PullRequestProviderError>;
+  ) => Effect.Effect<Pick<PullRequestChecks, "state" | "checks">, PullRequestProviderError>;
 
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
