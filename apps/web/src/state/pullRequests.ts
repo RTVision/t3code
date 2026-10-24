@@ -9,6 +9,7 @@ import type {
   EnvironmentId,
   ProjectId,
   PullRequestListInput,
+  PullRequestFilterOptionsInput,
   PullRequestListStatsInput,
   PullRequestListEntry,
   PullRequestRef,
@@ -314,6 +315,18 @@ const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
 );
 
 type PullRequestListRefreshScope = Pick<PullRequestListInput, "projectId" | "projectIds" | "host">;
+
+export function usePullRequestFilterOptions(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestFilterOptionsInput>>,
+) {
+  const query = usePullRequestFilterOptionsQuery(targets);
+  return {
+    labels: query.values.flatMap(([, options]) => options.labels),
+    authors: query.values.flatMap(([, options]) => options.authors),
+    error: query.error,
+    isPending: query.isPending,
+  };
+}
 
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
