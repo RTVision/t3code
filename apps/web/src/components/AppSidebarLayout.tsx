@@ -167,7 +167,7 @@ function SidebarControl() {
       }
       if (
         !requestedCommand &&
-        isRichTextBoldShortcut(event) &&
+        isRichTextBoldShortcut(event, window.getSelection()) &&
         event.target instanceof HTMLElement &&
         event.target.closest('[data-composer-rich-text="true"]')
       ) {

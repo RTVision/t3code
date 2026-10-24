@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -156,6 +156,11 @@ export const make = Effect.gen(function* () {
           query: input.query,
           cursor: input.cursor,
           relationshipOnly: input.relationshipOnly,
+          author:
+            input.filters?.author === undefined
+              ? undefined
+              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
+          draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
