@@ -148,6 +148,9 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly limit: number;
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
+      /** Matched against the login a row shows, which is the nickname or else the display name. */
+      readonly author?: string | undefined;
+      readonly draft?: boolean | undefined;
     }) => Effect.Effect<BitbucketPullRequestBatch, BitbucketPullRequestApiError>;
 
     readonly getPullRequest: (input: {
@@ -328,6 +331,11 @@ function stateParams(state: PullRequestListState): ReadonlyArray<string> {
 function searchFilter(query: string): string {
   const literal = filterLiteral(query);
   return `(title ~ "${literal}" OR description ~ "${literal}")`;
+}
+
+function authorFilter(login: string): string {
+  const literal = filterLiteral(login);
+  return `(author.nickname = "${literal}" OR author.display_name = "${literal}")`;
 }
 
 /**
@@ -580,6 +588,8 @@ export const make = Effect.gen(function* () {
         // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
+          ...(input.author === undefined ? [] : [authorFilter(input.author)]),
+          ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
           ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];

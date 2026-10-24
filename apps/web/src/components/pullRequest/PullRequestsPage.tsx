@@ -355,6 +355,14 @@ export function PullRequestsPage() {
     }));
   })();
   const facetQuery = usePullRequestList(facetTargets);
+  const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
+    environmentId,
+    input: {
+      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+      ...(projectIds ? { projectIds } : {}),
+      ...(search.host ? { host: search.host } : {}),
+    },
+  }));
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
   const partitionTargets = (() => {
     // The main list goes first. Besides putting the visible rows on screen sooner, it proves
@@ -1288,6 +1296,7 @@ export function PullRequestsPage() {
       }}
       authorOptions={facets.authors}
       labelOptions={facets.labels}
+      optionScope={filterOptionScope}
       host={search.host}
       hostOptions={hostMenuOptions}
       onHost={(host) => updateListScope({ host })}

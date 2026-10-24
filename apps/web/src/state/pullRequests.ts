@@ -308,6 +308,11 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   pullRequestEnvironment.listStats,
 );
 
+const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:filter-options",
+  pullRequestEnvironment.filterOptions,
+);
+
 type PullRequestListRefreshScope = Pick<PullRequestListInput, "projectId" | "projectIds" | "host">;
 
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
