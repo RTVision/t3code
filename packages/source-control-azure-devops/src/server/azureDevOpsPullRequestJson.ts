@@ -15,7 +15,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import {
   azureDevOpsHeadRepositoryNameWithOwner,
   azureDevOpsPullRequestWebUrl,
-} from "@t3tools/source-control-azure-devops/server/azureDevOpsPullRequests";
+} from "./azureDevOpsPullRequests.ts";
 
 /**
  * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as

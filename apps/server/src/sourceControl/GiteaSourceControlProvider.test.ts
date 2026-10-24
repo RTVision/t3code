@@ -8,8 +8,8 @@ import * as Schema from "effect/Schema";
 
 import * as GiteaCli from "./GiteaCli.ts";
 import * as GiteaSourceControlProvider from "./GiteaSourceControlProvider.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 const encodeBody = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -56,21 +56,21 @@ function setup(
       truncated: false,
     });
   });
-  const fetchBranch = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"]>(
-    () => Effect.void,
+  const fetchBranch = vi.fn<
+    SourceControlHost.SourceControlHost["Service"]["git"]["fetchRemoteBranch"]
+  >(() => Effect.void);
+  const fetchTracking = vi.fn<
+    SourceControlHost.SourceControlHost["Service"]["git"]["fetchRemoteTrackingBranch"]
+  >(() => Effect.void);
+  const ensureRemote = vi.fn<SourceControlHost.SourceControlHost["Service"]["git"]["ensureRemote"]>(
+    () => Effect.succeed("fork"),
   );
-  const fetchTracking = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>(
-    () => Effect.void,
+  const switchRef = vi.fn<SourceControlHost.SourceControlHost["Service"]["git"]["switchRef"]>(
+    (input) => Effect.succeed({ refName: input.refName }),
   );
-  const ensureRemote = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["ensureRemote"]>(() =>
-    Effect.succeed("fork"),
-  );
-  const switchRef = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["switchRef"]>((input) =>
-    Effect.succeed({ refName: input.refName }),
-  );
-  const localBranches = vi.fn<GitVcsDriver.GitVcsDriver["Service"]["listLocalBranchNames"]>(() =>
-    Effect.succeed([]),
-  );
+  const localBranches = vi.fn<
+    SourceControlHost.SourceControlHost["Service"]["git"]["listLocalBranchNames"]
+  >(() => Effect.succeed([]));
   const provider = GiteaSourceControlProvider.make.pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -79,14 +79,15 @@ function setup(
           request,
         }),
         FileSystem.layerNoop({ readFileString: () => Effect.succeed("PR body") }),
-        Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
-        Layer.mock(GitVcsDriver.GitVcsDriver)({
-          fetchRemoteBranch: fetchBranch,
-          fetchRemoteTrackingBranch: fetchTracking,
-          ensureRemote,
-          switchRef,
-          listLocalBranchNames: localBranches,
-          setBranchUpstream: () => Effect.void,
+        TestSourceControlHost.layer({
+          git: {
+            fetchRemoteBranch: fetchBranch,
+            fetchRemoteTrackingBranch: fetchTracking,
+            ensureRemote,
+            switchRef,
+            listLocalBranchNames: localBranches,
+            setBranchUpstream: () => Effect.void,
+          },
         }),
       ),
     ),

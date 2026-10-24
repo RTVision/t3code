@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import {
   PullRequestOperationError,
+  pullRequestCanReact,
   PullRequestUnavailableError,
   resolvePullRequestAuthorFilter,
   type OrchestrationProjectShell,
@@ -3229,12 +3230,12 @@ export const make = Effect.gen(function* () {
     // repository; legacy references still need the epoch of each owning checkout.
     for (const project of projectShells) {
       const identity = project.repositoryIdentity;
-      const repository = sourceControlRepositorySelector(identity);
+      const repository = sourceControlDefinitions.repositorySelector(identity);
       if (
         identity == null ||
         repository === null ||
         route === undefined ||
-        pullRequestHostOf(identity, route.api.kind) !== host ||
+        sourceControlDefinitions.changeRequestHost(identity, route.api.kind) !== host ||
         repository.toLowerCase() !== route.repository.toLowerCase()
       )
         continue;

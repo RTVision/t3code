@@ -112,6 +112,8 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
+import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -1079,7 +1081,28 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerPlatformServices),
     );
   }),
-).pipe(Layer.provide(ProcessRunner.layer));
+).pipe(
+  Layer.provide(
+    GiteaCli.layer.pipe(
+      Layer.provideMerge(
+        ServerSourceControlHost.layer.pipe(
+          Layer.provide(layerServerSettings),
+          Layer.provide(VcsProcess.layer.pipe(Layer.provide(ProcessRunner.layer))),
+          Layer.provide(
+            GitVcsDriver.layer.pipe(
+              Layer.provide(VcsProcess.layer.pipe(Layer.provide(ProcessRunner.layer))),
+            ),
+          ),
+          Layer.provide(layerVcsDriverRegistry),
+        ),
+      ),
+      Layer.provideMerge(FetchHttpClient.layer),
+      Layer.orDie,
+    ),
+  ),
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(VcsProcess.layer.pipe(Layer.provide(ProcessRunner.layer))),
+);
 
 // Keep the native TypeScript compiler from widening the CLI import requirements to any.
 export const runServer: Effect.Effect<

@@ -318,6 +318,11 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
   >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
+  /** Host-discovered additions, read only when a caller needs to gate a capability. */
+  readonly getCapabilities?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<PullRequestCapabilities, PullRequestProviderError>;
   /**
    * What a reader is told when this host cannot be read on the server: `missing` for no tool or
    * credential, `unauthenticated` for one the host refused. Absent means a generic sentence.

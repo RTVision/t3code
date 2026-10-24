@@ -410,6 +410,8 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
+  /** Read-only dependency information contributed by a provider or the server. */
+  dependencies: Schema.optional(PullRequestDependencyCapabilities),
   /**
    * Every head gets at least one check, so a head that has gone a while without any means none
    * reported rather than that the repository runs none. Absent means an empty list says nothing.

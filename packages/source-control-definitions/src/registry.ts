@@ -2,6 +2,7 @@ import * as AzureDevOps from "@t3tools/source-control-azure-devops/shared/defini
 import * as Bitbucket from "@t3tools/source-control-bitbucket/shared/definition";
 import { makeSourceControlDefinitionRegistry } from "@t3tools/source-control-core/shared/definition";
 import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
+import * as Gitea from "./gitea.ts";
 import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
@@ -20,6 +21,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     GitHub.definition,
     GitLab.definition,
     GitCafe.definition,
+    Gitea.definition,
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
@@ -28,6 +30,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     claimChangeRequestUrlsFirst: [GitCafe.definition.kind],
     recognizeRemotesIn: [
       GitCafe.definition.kind,
+      Gitea.definition.kind,
       Forgejo.definition.kind,
       GitHub.definition.kind,
       GitLab.definition.kind,

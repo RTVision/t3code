@@ -7,10 +7,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as GiteaCli from "./GiteaCli.ts";
-import * as GiteaPullRequestApi from "../pullRequest/GiteaPullRequestApi.ts";
-import * as GiteaDriver from "./giteaDriver.ts";
-
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControlDefinitions.ts";
 
