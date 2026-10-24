@@ -46,6 +46,7 @@ import {
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
+import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
@@ -458,14 +459,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {vimEnabled ? (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 [&>main]:h-full">{children}</div>
-            <VimNavigation isOnSettings={isOnSettings} />
-          </div>
-        ) : (
-          children
-        )}
+        {children}
+        <BackgroundThreadAnnouncer />
         <SidebarControl />
         <NavigationHistoryShortcuts />
         {isOnSettings ? null : <ThreadUndoShortcut />}

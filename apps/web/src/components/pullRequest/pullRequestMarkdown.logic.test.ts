@@ -1,51 +1,46 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
-import { resolvePullRequestImageAsset } from "./pullRequestMarkdown.logic";
 
-describe("pull request image assets", () => {
-  const source = "attachments/82cde921-c3fc-4c01-85b8-edf737cdaa83";
+import { remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
 
-  it("routes a Gitea upload through the environment's signed image assets", () => {
-    expect(
-      resolvePullRequestImageAsset(
-        source,
-        SourceControlProviderKind.make("gitea"),
-        "https://forge.test/rtvision/monorepo",
-      ),
-    ).toEqual({
-      _tag: "source-control-image",
-      provider: SourceControlProviderKind.make("gitea"),
-      url: `https://forge.test/${source}`,
-    });
-  });
+type Node = {
+  type: string;
+  value?: string;
+  url?: string;
+  data?: { hProperties?: Record<string, unknown> };
+  children?: Node[];
+};
 
-  it("retains a Gitea installation's subpath", () => {
-    expect(
-      resolvePullRequestImageAsset(
-        source,
-        SourceControlProviderKind.make("gitea"),
-        "https://forge.test/gitea/acme/web/",
-      )?.url,
-    ).toBe(`https://forge.test/gitea/${source}`);
-  });
+function links(markdown: string) {
+  const autolinks = changeRequestReferenceAutolinker({
+    provider: "github",
+    url: "https://github.com/team/repo/pull/8",
+  })!;
+  const tree = unified().use(remarkParse).parse(markdown) as Node;
+  remarkPullRequestAutolinks({ autolinks })(tree as never);
+  const found: Array<[string | undefined, string | undefined, unknown]> = [];
+  const visit = (node: Node) => {
+    if (node.type === "link") {
+      found.push([
+        node.children?.[0]?.value,
+        node.url,
+        node.data?.hProperties?.["dataPullRequestAutolink"],
+      ]);
+    }
+    node.children?.forEach(visit);
+  };
+  visit(tree);
+  return found;
+}
 
-  it("keeps workspace and other providers' images on their existing paths", () => {
-    expect(
-      resolvePullRequestImageAsset(
-        "src/image.png",
-        SourceControlProviderKind.make("gitea"),
-        "https://forge.test/acme/web",
-      ),
-    ).toBeNull();
-    expect(
-      resolvePullRequestImageAsset(
-        source,
-        SourceControlProviderKind.make("github"),
-        "https://github.com/acme/web",
-      ),
-    ).toBeNull();
-    expect(
-      resolvePullRequestImageAsset(source, SourceControlProviderKind.make("gitea"), null),
-    ).toBeNull();
+describe("remarkPullRequestAutolinks", () => {
+  it("links the host's references in prose and leaves links and code alone", () => {
+    expect(links("Fixes #12 in **abcdef1**. [#13](https://example.com) `#14`")).toEqual([
+      ["#12", "https://github.com/team/repo/issues/12", "reference"],
+      ["abcdef1", "https://github.com/team/repo/commit/abcdef1", "commit"],
+      ["#13", "https://example.com", undefined],
+    ]);
   });
 });

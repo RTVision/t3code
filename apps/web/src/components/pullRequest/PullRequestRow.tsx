@@ -104,7 +104,7 @@ function PullRequestRowImpl({
   sweeping?: boolean;
   onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
-  const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
+  const { Icon, providerName, terminology } = getSourceControlPresentationForKind(entry.provider);
   return (
     <div
       ref={statsRef}
@@ -254,6 +254,7 @@ function PullRequestRowImpl({
         <PullRequestSpeedActions
           entry={entry}
           hostActions={hostActions}
+          terminology={terminology}
           onActed={onActed}
           closing={closing}
           sweeping={sweeping}

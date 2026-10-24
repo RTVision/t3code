@@ -54,6 +54,7 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
+import { announce } from "~/lib/announce";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
 import {
@@ -239,41 +240,43 @@ export const OpenInPicker = memo(function OpenInPicker({
   const [menuOpen, setMenuOpen] = useComposerMenuState(isEditorMenuDenied);
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
-  const preferredEditor = dispatch.choice;
-  const terminal = dispatch.terminal.capability;
-  const terminalVisible =
-    terminal.state === "available" ||
-    terminal.state === "check-on-open" ||
-    preferredEditor?.kind === "terminal";
-  const options = resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors);
-  const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
-  const canOpenEditor = preferredEditor?.kind === "terminal" ? canOperateTerminal : canOpenGui;
-  const density = presentation === "menu" ? "touch" : "default";
-  const openInEditor = async (editor: EditorChoice | null, explicit = false) => {
-    if (!openInCwd || !editor) return;
-    if (
-      editor.kind === "terminal"
-        ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-        : !canOpenGui
-    )
-      return;
-    const result = await dispatch.open(
-      { kind: (openInCwdIsFile ?? compact) ? "file" : "directory", path: openInCwd },
-      editor,
-      { reveal: revealFileManager },
-    );
-    if (isAtomCommandInterrupted(result)) return;
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Unable to open editor",
-        description: error instanceof Error ? error.message : "The editor could not be opened.",
+  // Remote mode ignores the server's PATH probe: what matters is what runs on
+  // the viewing machine, which only the desktop app can probe.
+  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
+
+  const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
+    if (!openInCwd) return false;
+    const editor = editorId ?? preferredEditor;
+    if (!editor) return false;
+    if (remote.mode === "remote-unavailable") return false;
+    if (remote.mode === "remote-links") {
+      const url = buildRemoteOpenUrl({
+        editor,
+        ...remote.host,
+        absolutePath: openInCwd,
+        isFile: openInCwdIsFile,
       });
-    } else {
-      if (explicit) dispatch.select(editor);
-      if (remote.mode === "remote-links") markRemoteHintSeen();
+      if (url === undefined) return false;
+      // Only record hint-seen/preferred when the shell actually accepted
+      // the URL (an older desktop build can refuse the editor scheme).
+      const opened = await openRemoteEditorUrl(url);
+      if (!opened) return false;
+      markRemoteHintSeen();
+      setPreferredEditor(editor);
+      return true;
     }
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+    const result = openInEditorMutation({
+      environmentId,
+      input: {
+        cwd: openInCwd,
+        editor,
+        ...(revealFileManager && editor === "file-manager" ? { reveal: true } : {}),
+      },
+    });
+    setPreferredEditor(editor);
+    return (await result)._tag === "Success";
   };
   const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
     keybindings,
@@ -293,7 +296,10 @@ export const OpenInPicker = memo(function OpenInPicker({
       )
         return;
       e.preventDefault();
-      void openInEditor(preferredEditor);
+      const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+      void openInEditor(preferredEditor).then((opened) => {
+        if (opened) announce(`Opened in ${label}`);
+      });
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);

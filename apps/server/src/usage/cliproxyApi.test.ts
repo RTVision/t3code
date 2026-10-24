@@ -245,7 +245,7 @@ describe("CLIProxyAPI built-in management API", () => {
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
       expect(result.map((account) => account.plan)).toEqual([
-        "ChatGPT Pro 20x Subscription",
+        "ChatGPT Pro 200 Subscription",
         "ChatGPT Business Subscription",
       ]);
     }),

@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
@@ -92,8 +93,8 @@ export function PullRequestCommentForm({
         value={body}
         rows={3}
         placeholder="Leave a comment"
-        aria-label="Comment on this pull request"
-        onValueChange={setBody}
+        aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
+        onChange={(event) => setBody(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (

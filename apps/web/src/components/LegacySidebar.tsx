@@ -1,7 +1,7 @@
 import { onAppCommand } from "../vim/commandBus";
 import type { KeybindingCommand as AppKeybindingCommand } from "@t3tools/contracts";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,

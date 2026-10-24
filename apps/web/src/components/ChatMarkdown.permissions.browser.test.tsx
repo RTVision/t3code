@@ -136,44 +136,10 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
-vi.mock("../terminalEditors", () => ({
-  useTerminalEditor: () => ({
-    capability: { preferenceKey: "", state: "unavailable" },
-    connected: false,
-    refresh: vi.fn(),
-  }),
-  invalidateTerminalEditors: vi.fn(),
-}));
-vi.mock("../editorPreferenceStorage", () => ({
-  useEditorPreference: (key: string, fallback: unknown) => [
-    key === "t3code:editor-choice:v1" ? state.choice : fallback,
-    vi.fn(),
-  ],
-}));
-vi.mock("../remoteOpen", () => ({
-  resolveRemoteOpenState: () => ({ mode: "local-exec" }),
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
-  useRemoteCapableEditors: () => [],
-  openRemoteEditorUrl: vi.fn(),
-}));
-vi.mock("../hooks/useCopyToClipboard", () => ({
-  writeTextToClipboard: state.copy,
-  useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
-}));
-vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: ((projects: readonly { id: ProjectId }[]) => projects[0]) as never,
-  matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>
-    candidate.url === href,
-  parseChangeRequestUrl: ((href: string) =>
-    href === linkedPullRequest.url
-      ? {
-          host: "github.com",
-          repository: linkedPullRequest.repository,
-          number: linkedPullRequest.number,
-        }
-      : null) as never,
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
