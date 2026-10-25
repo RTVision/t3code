@@ -21,16 +21,9 @@ import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
-// HTML previews and server tabs share this pinned Chrome for Testing headless
-// shell by default. An explicit executable overrides it; musl Linux defaults to native Chromium.
-// To bump the pin, pick a version from
-// https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json,
-// download each platform's chrome-headless-shell zip, and replace the version and every byte count
-// and SHA-256 below. Hosts drop the old build after the new one installs.
-//
-// The headless shell never loads Chrome's CRLSet, so a certificate block reaches it only through
-// Chromium's compiled-in SPKI blocklist. Do not pin below 156.0.8078.70: earlier builds trust the
-// compromised eMudhra intermediates (crrev.com/c/8627687).
+// Pin Chrome for Testing's headless shell; explicit paths override it and musl Linux uses native Chromium.
+// Update VERSION, archive sizes, and SHA-256 values together when changing the pin.
+// Keep the minimum at 156.0.8078.70 because older builds trust compromised eMudhra intermediates.
 const VERSION = "156.0.8078.70";
 const ARCHIVES = {
   linux64: {
@@ -148,7 +141,7 @@ export class PreviewBrowserExecutableError extends Schema.TaggedError<PreviewBro
 }
 
 /** Chrome for Testing targets glibc; musl Linux needs a native build. */
-export const nativeChromiumRequired = Effect.gen(function* () {
+const nativeChromiumRequired = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return false;
   return (yield* HostProcess.LinuxLibc) === "musl";
 });
