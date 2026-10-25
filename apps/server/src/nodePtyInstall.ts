@@ -8,6 +8,14 @@ export function shouldBuildNodePtyFromSource(
   return platform === "linux" && typeof glibcVersionRuntime !== "string";
 }
 
+export function npmRebuildPrefix(env: NodeJS.ProcessEnv, cwd: string): string {
+  const prefix =
+    env.npm_config_global === "true"
+      ? (env.npm_config_prefix ?? env.npm_config_global_prefix)
+      : env.npm_config_local_prefix;
+  return prefix?.trim() || cwd;
+}
+
 function glibcVersionRuntime(): unknown {
   try {
     const report = process.report?.getReport() as
@@ -21,9 +29,12 @@ function glibcVersionRuntime(): unknown {
 
 function rebuildNodePty(): void {
   const npmExecPath = process.env.npm_execpath?.trim();
+  const prefix = npmRebuildPrefix(process.env, process.cwd());
   const command = npmExecPath === undefined ? "npm" : process.execPath;
   const args =
-    npmExecPath === undefined ? ["rebuild", "node-pty"] : [npmExecPath, "rebuild", "node-pty"];
+    npmExecPath === undefined
+      ? ["rebuild", "--prefix", prefix, "node-pty"]
+      : [npmExecPath, "rebuild", "--prefix", prefix, "node-pty"];
   const result = NodeChildProcess.spawnSync(command, args, {
     env: { ...process.env, npm_config_build_from_source: "true" },
     stdio: "inherit",

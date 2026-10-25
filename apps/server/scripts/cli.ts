@@ -350,7 +350,7 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
-            scripts: { install: "node dist/nodePtyInstall.mjs" },
+            scripts: { postinstall: "node dist/nodePtyInstall.mjs" },
             dependencies: resolveServerPublishDependencies(
               serverPackageJson.dependencies,
               workspaceCatalog,
