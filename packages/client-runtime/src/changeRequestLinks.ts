@@ -28,6 +28,28 @@ export function findProjectForChangeRequest<Project extends ChangeRequestProject
   });
 }
 
+/** Returns null when a remote cannot authoritatively identify a Gitea web root. */
+function giteaHttpRemoteMatchesLink(
+  identity: RepositoryIdentity,
+  link: ChangeRequestLink,
+): boolean | null {
+  try {
+    const remote = new URL(identity.locator.remoteUrl.trim());
+    if (remote.protocol !== "http:" && remote.protocol !== "https:") return null;
+    if (remote.host.toLowerCase() !== (link.authority ?? link.host).toLowerCase()) return false;
+    const remotePath = remote.pathname.split("/").filter((segment) => segment.length > 0);
+    if (remotePath.length < 2) return false;
+    remotePath[remotePath.length - 1] = remotePath.at(-1)!.replace(/\.git$/iu, "");
+    if (remotePath.some((segment) => segment.length === 0)) return false;
+    return (
+      remotePath.slice(0, -2).join("/").toLowerCase() ===
+      link.repository.split("/").slice(0, -2).join("/").toLowerCase()
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Prefers the project checked out from the link's repository, else lends any project on its host. */
 export function findProjectOnChangeRequestHost<Project extends ChangeRequestProject>(
   projects: ReadonlyArray<Project>,
@@ -37,6 +59,11 @@ export function findProjectOnChangeRequestHost<Project extends ChangeRequestProj
     findProjectForChangeRequest(projects, link) ??
     projects.find((project) => {
       const identity = project.repositoryIdentity;
+      if (identity?.provider === "gitea" || identity?.provider === "unknown") {
+        const match = giteaHttpRemoteMatchesLink(identity, link);
+        if (match !== null) return match;
+        if (link.repository.split("/").length > 2) return false;
+      }
       return (
         identity?.provider !== undefined &&
         sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link)
