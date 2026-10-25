@@ -170,6 +170,7 @@ import {
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
+  buildNestedSearchItems,
   filterPinnedBrowseEntries,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
@@ -1701,6 +1702,14 @@ function OpenCommandPaletteDialog(props: {
     activeGroups,
     query: deferredQuery,
     isInSubmenu: currentView !== null,
+    ...(deferredQuery.trim().length > 0
+      ? {
+          allOptions: {
+            rootGroups,
+            nestedItems: buildNestedSearchItems(actionItems, deferredQuery),
+          },
+        }
+      : {}),
     projectSearchItems: projectSearchItems,
     settingsSearchItems,
     threadSearchItems:
