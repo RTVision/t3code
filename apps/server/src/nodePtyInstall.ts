@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - npm lifecycle script runs outside the Effect server.
-import { spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 
 export function shouldBuildNodePtyFromSource(
   platform: NodeJS.Platform,
@@ -24,7 +24,7 @@ function rebuildNodePty(): void {
   const command = npmExecPath === undefined ? "npm" : process.execPath;
   const args =
     npmExecPath === undefined ? ["rebuild", "node-pty"] : [npmExecPath, "rebuild", "node-pty"];
-  const result = spawnSync(command, args, {
+  const result = NodeChildProcess.spawnSync(command, args, {
     env: { ...process.env, npm_config_build_from_source: "true" },
     stdio: "inherit",
   });
@@ -37,6 +37,7 @@ function rebuildNodePty(): void {
   if (result.status !== 0) process.exitCode = result.status ?? 1;
 }
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- This standalone npm hook must inspect the actual host platform.
 if (import.meta.main && shouldBuildNodePtyFromSource(process.platform, glibcVersionRuntime())) {
   rebuildNodePty();
 }
