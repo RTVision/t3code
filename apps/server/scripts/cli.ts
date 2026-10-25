@@ -51,6 +51,7 @@ interface PackageJson {
   version: string;
   engines: Record<string, string>;
   files: string[];
+  scripts: Record<string, string>;
   dependencies: Record<string, string>;
   overrides: Record<string, string>;
 }
@@ -348,6 +349,7 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
+            scripts: { install: "node dist/nodePtyInstall.mjs" },
             dependencies: resolveServerPublishDependencies(
               serverPackageJson.dependencies,
               workspaceCatalog,
