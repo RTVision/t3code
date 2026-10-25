@@ -17,7 +17,6 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
-import { Route as SettingsEditorsRouteImport } from './routes/settings.editors'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
@@ -37,6 +36,7 @@ import { Route as ChatSettingsConnectionsRouteImport } from './routes/_chat.sett
 import { Route as ChatSettingsBetaRouteImport } from './routes/_chat.settings.beta'
 import { Route as ChatSettingsArchivedRouteImport } from './routes/_chat.settings.archived'
 import { Route as ChatSettingsAppearanceRouteImport } from './routes/_chat.settings.appearance'
+import { Route as ChatSettingsEditorsRouteImport } from './routes/_chat.settings.editors'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -77,11 +77,6 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsEditorsRoute = SettingsEditorsRouteImport.update({
-  id: '/settings/editors',
-  path: '/settings/editors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatUsageRoute = ChatUsageRouteImport.update({
@@ -183,6 +178,11 @@ const ChatSettingsAppearanceRoute = ChatSettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsEditorsRoute = ChatSettingsEditorsRouteImport.update({
+  id: '/editors',
+  path: '/editors',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -207,10 +207,10 @@ export interface FileRoutesByFullPath {
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/editors': typeof SettingsEditorsRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
+  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -237,11 +237,11 @@ export interface FileRoutesByTo {
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/editors': typeof SettingsEditorsRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
+  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -270,11 +270,11 @@ export interface FileRoutesById {
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/editors': typeof SettingsEditorsRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/_chat/settings/appearance': typeof ChatSettingsAppearanceRoute
+  '/_chat/settings/editors': typeof ChatSettingsEditorsRoute
   '/_chat/settings/archived': typeof ChatSettingsArchivedRoute
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
   '/_chat/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -307,6 +307,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/appearance'
+    | '/settings/editors'
     | '/settings/archived'
     | '/settings/beta'
     | '/settings/connections'
@@ -337,6 +338,7 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/appearance'
+    | '/settings/editors'
     | '/settings/archived'
     | '/settings/beta'
     | '/settings/connections'
@@ -364,11 +366,11 @@ export interface FileRouteTypes {
     | '/_chat/settings'
     | '/_chat/usage'
     | '/projects/$projectKey'
-    | '/settings/editors'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/_chat/settings/appearance'
+    | '/_chat/settings/editors'
     | '/_chat/settings/archived'
     | '/_chat/settings/beta'
     | '/_chat/settings/connections'
@@ -393,7 +395,6 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
-  SettingsEditorsRoute: typeof SettingsEditorsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -452,13 +453,6 @@ declare module '@tanstack/react-router' {
       path: '/projects/$projectKey'
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/editors': {
-      id: '/settings/editors'
-      path: '/settings/editors'
-      fullPath: '/settings/editors'
-      preLoaderRoute: typeof SettingsEditorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_chat/usage': {
@@ -594,6 +588,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsAppearanceRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/editors': {
+      id: '/_chat/settings/editors'
+      path: '/editors'
+      fullPath: '/settings/editors'
+      preLoaderRoute: typeof ChatSettingsEditorsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -613,6 +614,7 @@ declare module '@tanstack/react-router' {
 
 interface ChatSettingsRouteChildren {
   ChatSettingsAppearanceRoute: typeof ChatSettingsAppearanceRoute
+  ChatSettingsEditorsRoute: typeof ChatSettingsEditorsRoute
   ChatSettingsArchivedRoute: typeof ChatSettingsArchivedRoute
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
   ChatSettingsConnectionsRoute: typeof ChatSettingsConnectionsRoute
@@ -631,6 +633,7 @@ interface ChatSettingsRouteChildren {
 
 const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
+  ChatSettingsEditorsRoute: ChatSettingsEditorsRoute,
   ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
   ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
@@ -681,7 +684,6 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
-  SettingsEditorsRoute: SettingsEditorsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
