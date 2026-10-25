@@ -160,6 +160,26 @@ vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,
   useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
 }));
+vi.mock(import("@t3tools/client-runtime/source-control-clients"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    sourceControlClients: {
+      ...actual.sourceControlClients,
+      parseChangeRequestUrl: ((href: string) =>
+        href === linkedPullRequest.url
+          ? {
+              link: {
+                host: "github.com",
+                repository: linkedPullRequest.repository,
+                number: linkedPullRequest.number,
+              },
+            }
+          : null) as never,
+      isSameChangeRequest: ((left: string, right: string) => left === right) as never,
+    },
+  };
+});
 vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
