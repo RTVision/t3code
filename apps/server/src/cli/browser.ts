@@ -8,9 +8,7 @@ import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { FetchHttpClient } from "effect/http";
 
-import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
@@ -114,23 +112,6 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
-      const configured = (yield* HostProcess.Environment).T3CODE_PREVIEW_BROWSER_PATH;
-      if (configured !== undefined || (yield* PreviewBrowser.nativeChromiumRequired)) {
-        const browser = yield* PreviewBrowser.makePreviewBrowser({
-          baseDir: yield* setupBaseDir(baseDir),
-        }).pipe(Effect.provide(FetchHttpClient.layer));
-        return yield* browser.executable.pipe(
-          Effect.flatMap((executable) =>
-            Console.log(
-              `T3 uses ${executable} for browser tabs and HTML previews. Manage this browser's dependencies and sandbox support with its package manager.`,
-            ),
-          ),
-          Effect.catchTags({
-            PreviewBrowserNativeMissingError: (cause) => Console.log(cause.message),
-            PreviewBrowserExecutableError: (cause) => Console.log(cause.message),
-          }),
-        );
-      }
       if ((yield* HostProcess.Platform) !== "linux") {
         return yield* Console.log("Nothing to set up: T3's browser runs as is on this system.");
       }
@@ -248,7 +229,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
 
       yield* Console.log(rootWarning ?? "This host is ready for T3's browser.");
-    }).pipe(Effect.scoped),
+    }),
   ),
 );
 

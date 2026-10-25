@@ -1,13 +1,13 @@
 import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect } from "react";
 
-import { usePreferredEditor } from "../../editorPreferences";
-import { editorLabelForPlatform } from "../../editorLabels";
+import { useEditorDispatch } from "../../editorPreferences";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { toastManager } from "../ui/toast";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
-import { announce } from "../../lib/announce";
-import { useRemoteOpenState } from "../../remoteOpen";
-import { shellEnvironment } from "../../state/shell";
-import { useAtomCommand } from "../../state/use-atom-command";
 
 export function useOpenFavoriteEditorShortcut({
   enabled,
@@ -32,15 +32,14 @@ export function useOpenFavoriteEditorShortcut({
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
-      const label = editorLabelForPlatform(preferredEditor, navigator.platform);
-      void openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor: preferredEditor,
-        },
-      }).then((result) => {
-        if (result._tag === "Success") announce(`Opened in ${label}`);
+      void dispatch.open({ kind: "directory", path: openInCwd }).then((result) => {
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to open editor",
+          description: error instanceof Error ? error.message : "The editor could not be opened.",
+        });
       });
     };
     window.addEventListener("keydown", handler);

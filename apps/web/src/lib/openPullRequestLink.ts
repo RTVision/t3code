@@ -1,10 +1,11 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, RepositoryIdentity, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent } from "react";
 
 import {
   findProjectForChangeRequest,
+  projectChangeRequestUrl,
   resolvePullRequestPreviewTarget,
 } from "@t3tools/client-runtime/change-request-links";
 import {
@@ -22,6 +23,34 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProjects, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
+
+export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
+  return sourceControlClients.parseChangeRequestUrl(targetUrl)?.link ?? null;
+}
+
+export function changeRequestRepositoryUrl(targetUrl: string): string | null {
+  return sourceControlClients.parseChangeRequestUrl(targetUrl)?.link.repositoryUrl ?? null;
+}
+
+export function gitHubPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  return identity?.provider === "github"
+    ? projectChangeRequestUrl(identity, repository, number)
+    : null;
+}
+
+export function giteaPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  return identity?.provider === "gitea"
+    ? projectChangeRequestUrl(identity, repository, number)
+    : null;
+}
 
 export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
   const projects = useProjects();

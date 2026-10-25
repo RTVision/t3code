@@ -1,5 +1,6 @@
-import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import { PullRequestMentionProvider } from "./PullRequestMentionProvider";
+
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import {
@@ -54,6 +55,7 @@ import {
   changeRequestRepositoryUrl,
   gitHubPullRequestBrowserUrl,
   giteaPullRequestBrowserUrl,
+  parseChangeRequestUrl,
 } from "~/lib/openPullRequestLink";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
@@ -70,10 +72,7 @@ import { pullRequestEnvironment, usePullRequestTurnRefresh } from "~/state/pullR
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
@@ -160,21 +159,20 @@ import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 
-const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: `Could not merge this ${term}`,
+const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
+  merge: "Could not merge this pull request",
   ready: "Could not mark this ready for review",
   draft: "Could not convert this to a draft",
-  close: `Could not close this ${term}`,
-  reopen: `Could not reopen this ${term}`,
+  close: "Could not close this pull request",
+  reopen: "Could not reopen this pull request",
   "update-branch": "Could not update this branch",
   "enable-auto-merge": "Could not turn on auto-merge",
   "disable-auto-merge": "Could not turn off auto-merge",
-  revert: `Could not open a revert ${term}`,
+  revert: "Could not open a revert pull request",
   "delete-branch": "Could not delete this branch",
   "approve-workflows": "Could not approve workflows",
-});
-
-const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
+};
+const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   merge:
     "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
   ready: "The host refused it. Check that you have write access to this repository.",
@@ -188,13 +186,13 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
     "The host refused it. Check that this repository allows auto-merge, that you have write access, and that there is something left for it to wait on.",
   "disable-auto-merge":
     "The host refused it. Check that you have write access, and that the merge has not already happened.",
-  revert: `The host refused it. Check that you have write access and that this ${term} was merged on the host.`,
+  revert:
+    "The host refused it. Check that you have write access and that this pull request was merged on the host.",
   "delete-branch":
     "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
   "approve-workflows":
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
-});
-
+};
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
 
@@ -241,7 +239,6 @@ function resolvePullRequestReference(
 function pullRequestMarkdownContext(
   detail: Pick<PullRequestDetail, "provider" | "url"> | null,
   threadRef: ScopedThreadRef | null,
-  provider: PullRequestDetail["provider"] | null,
 ) {
   return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
 }
@@ -253,10 +250,7 @@ function pullRequestStackReference(
 ) {
   return detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
     ? null
-    : {
-        ...reference,
-        host: reference.host ?? sourceControlClients.parseChangeRequestUrl(detail.url)?.link.host,
-      };
+    : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host };
 }
 
 export function PullRequestDetailPanel({
@@ -307,12 +301,6 @@ export function PullRequestDetailPanel({
     requestedReference,
     repositoryIdentity,
     supportsThreadPullRequests,
-  );
-  const loadingCheckoutCommand = loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
-  const unavailableHostUrl = projectChangeRequestUrl(
-    repositoryIdentity,
-    reference.repository,
-    reference.number,
   );
   const pullRequestKey = pullRequestRefKey(reference);
   const matchingListEntry =
@@ -441,12 +429,9 @@ export function PullRequestDetailPanel({
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const turnRefresh = usePullRequestTurnRefresh(environmentId, reference);
   const handoffSummary = detail ?? sharedSummary;
-  const terminology = sourceControlClients.get(
-    handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
-  ).changeRequest;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
-    target: `${terminology.singular} reference`,
+    target: "pull request reference",
     onCopy: (label) => toastManager.add({ type: "success", title: `${label} copied` }),
     onError: (error, label) =>
       toastManager.add({
@@ -463,7 +448,7 @@ export function PullRequestDetailPanel({
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
+    if (!event.repeat) copyReference(`#${reference.number}`, "PR number");
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
@@ -476,11 +461,9 @@ export function PullRequestDetailPanel({
     setPreviousMergePreference(mergePreferenceKey);
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }
-  const repositoryUrl =
-    detail === null
-      ? null
-      : (sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repositoryUrl ?? null);
+  const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const hostClient = sourceControlClients.get(detail?.provider);
+  const terminology = hostClient.changeRequest;
   const openOnHostText = openOnHostLabel(hostClient);
   const markdownContext = pullRequestMarkdownContext(detail, threadRef);
   const authorProfileUrl =
@@ -493,7 +476,7 @@ export function PullRequestDetailPanel({
         handoffSummary.number,
         handoffSummary.headBranch,
         detail?.headRepositoryNameWithOwner,
-        sourceControlClients.parseChangeRequestUrl(handoffSummary.url)?.link.repositoryUrl ?? null,
+        changeRequestRepositoryUrl(handoffSummary.url),
       )
     : loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
   const stackReference = pullRequestStackReference(detail, reference, supportsThreadPullRequests);
@@ -664,17 +647,17 @@ export function PullRequestDetailPanel({
       const hint =
         updateMethod === "rebase"
           ? UPDATE_BRANCH_REBASE_FAILURE_HINT
-          : actionFailureHints(terminology.singular)[action];
+          : ACTION_FAILURE_HINTS[action];
       toastManager.add({
         type: "error",
-        title: actionFailureLabels(terminology.singular)[action],
+        title: ACTION_FAILURE_LABELS[action],
         description: readableFailure(failure, hint),
       });
       onActed?.(action, "failed");
       return false;
     }
     if (action === "revert") {
-      toastManager.add({ type: "success", title: `Revert ${terminology.singular} opened` });
+      toastManager.add({ type: "success", title: "Revert pull request opened" });
     }
     if (action === "delete-branch") {
       toastManager.add({ type: "success", title: "Branch deleted" });
@@ -804,7 +787,7 @@ export function PullRequestDetailPanel({
         description:
           task.prompt.length > 0
             ? "The question is in the composer. Read it over, then send."
-            : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+            : "The pull request is in the composer. Type your question, then send.",
       });
       return;
     }
@@ -842,7 +825,7 @@ export function PullRequestDetailPanel({
       description:
         task.prompt.length > 0
           ? "The question is in the composer. Read it over, then send."
-          : `The ${terminology.singular} is in the composer. Type your question, then send.`,
+          : "The pull request is in the composer. Type your question, then send.",
     });
   };
   const startHandoff = async (
@@ -879,7 +862,7 @@ export function PullRequestDetailPanel({
     setHandoff(kind);
     const toastId = toastManager.add({
       type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
+      title: "Preparing the pull request checkout...",
     });
     const projectRef = scopeProjectRef(
       actingEnvironmentId,
@@ -910,7 +893,7 @@ export function PullRequestDetailPanel({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
+        title: "Could not prepare the pull request checkout",
         description: checkoutFailureDescription(
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
@@ -947,8 +930,8 @@ export function PullRequestDetailPanel({
               title: mode === "local" ? "Checked out here" : "Checked out",
               description:
                 mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
+                  ? "This repository is on the pull request's branch, with a thread open on it."
+                  : "The pull request is in its own worktree, with a thread open on it.",
             }
           : offHeadPullRequestCheckoutToast(terminology),
       );
@@ -1218,7 +1201,6 @@ export function PullRequestDetailPanel({
   const checkoutControl =
     context === "page" ? (
       <PullRequestCheckoutMenu
-        term={terminology.singular}
         handoff={handoff}
         checkoutRoot={checkoutRoot}
         canPrepareWorktree={canPrepareWorktree}
@@ -1227,6 +1209,7 @@ export function PullRequestDetailPanel({
         pickableEnvironments={pickableEnvironments}
         actingEnvironmentId={actingEnvironmentId}
         onActingEnvironmentChange={selectActingEnvironment}
+        term={terminology.singular}
       />
     ) : null;
   const resolveConflictsControl = (
@@ -1357,11 +1340,11 @@ export function PullRequestDetailPanel({
               />
               {checkoutControl}
               <PullRequestActionsMenu
+                terminology={terminology}
                 environmentId={environmentId}
                 reference={reference}
                 pullRequestKey={pullRequestKey}
                 detail={detail}
-                terminology={terminology}
                 linkThreadRef={
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
@@ -1406,7 +1389,7 @@ export function PullRequestDetailPanel({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={`Collapse ${terminology.singular} panel`}
+              aria-label="Collapse pull request panel"
               onClick={onClose}
             >
               <PanelRightIcon className="size-3.5" />
@@ -1539,7 +1522,7 @@ export function PullRequestDetailPanel({
                     <PullRequestCopyableCode
                       key={checkoutCommand}
                       value={checkoutCommand}
-                      target={`${terminology.singular} checkout command`}
+                      target="pull request checkout command"
                       copyLabel="Copy checkout command"
                       copiedLabel="Checkout command copied"
                       className="ml-auto font-mono"
@@ -1562,7 +1545,7 @@ export function PullRequestDetailPanel({
                     key={detail.headBranch}
                     value={detail.headBranch}
                     target="branch name"
-                    copyLabel={`Copy ${terminology.singular} branch`}
+                    copyLabel="Copy pull request branch"
                     copiedLabel="Branch name copied"
                   />
                 }
@@ -1714,22 +1697,14 @@ export function PullRequestDetailPanel({
           <PullRequestsUnavailableState
             {...(isPullRequestNotFound(detailQuery.failure)
               ? {
-                  title: `${capitalizeTerm(terminology.singular)} #${reference.number} not found`,
-                  error: `It may be an issue rather than a ${terminology.singular}, or this account can't see it.`,
+                  title: `Pull request #${reference.number} not found`,
+                  error:
+                    "It may be an issue rather than a pull request, or this account can't see it.",
                 }
               : { error: detailQuery.error })}
             refreshing={detailQuery.isPending}
             onRetry={refreshDetail}
-            {...(unavailableHostUrl
-              ? {
-                  host: {
-                    url: unavailableHostUrl,
-                    openLabel: openOnHostLabel(
-                      sourceControlClients.get(repositoryIdentity?.provider),
-                    ),
-                  },
-                }
-              : {})}
+            {...(unavailableBrowserUrl ? { browserUrl: unavailableBrowserUrl } : {})}
           />
         ) : detail ? (
           <PullRequestMarkdownContext value={markdownContext}>
@@ -1807,11 +1782,7 @@ export function PullRequestDetailPanel({
             ) : null}
             {mountedTabs.has("code") ? (
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                <Suspense
-                  fallback={
-                    <DiffPanelLoadingState label={`Loading ${terminology.singular} diff...`} />
-                  }
-                >
+                <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab
                     scrollerRef={scrollerRefs.code}
                     onAddToAgentSelection={addSelectionToAgent}

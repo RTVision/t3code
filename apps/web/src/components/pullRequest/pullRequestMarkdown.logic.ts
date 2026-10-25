@@ -1,3 +1,5 @@
+import type { AssetResource, SourceControlProviderKind } from "@t3tools/contracts";
+import { resolveGiteaAttachmentUrl } from "@t3tools/shared/giteaAttachments";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 
 export function resolvePullRequestImageAsset(

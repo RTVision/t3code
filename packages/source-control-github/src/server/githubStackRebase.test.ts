@@ -105,7 +105,11 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
           remote: repo.remote,
         }),
       );
-      expect(error).toMatchObject({ _tag: "GitHubStackRebaseGitError", number: 2, completed: 1 });
+      expect(error).toMatchObject({
+        _tag: "GitHubStackRebaseChangedError",
+        number: 2,
+        completed: 1,
+      });
       expect(yield* repo.head("feat/answer-doc")).toBe(repo.layers[1]!.headSha);
     }).pipe(Effect.scoped),
   );

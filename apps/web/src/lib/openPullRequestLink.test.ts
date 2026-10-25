@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { findProjectOnChangeRequestHost } from "./openPullRequestLink";
+import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "./openPullRequestLink";
 
 describe("findProjectOnChangeRequestHost", () => {
   const project = (id: string, identity: Record<string, unknown>) =>

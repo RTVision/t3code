@@ -62,13 +62,15 @@ export function PullRequestGuideTab({
       : {
           canComment,
           rangeComments,
+          workspaceRoot,
+          environmentId,
+          onEdit: (commentId, body) => updatePendingComment(reviewKey, commentId, body),
           pending,
-          onComment: ({ path, oldPath, position, startPosition, body }) =>
+          onComment: ({ path, oldPath, position, body }) =>
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
               path,
               ...(oldPath === null ? {} : { oldPath }),
-              ...(startPosition === undefined ? {} : { startPosition }),
               position,
               body,
             }),
