@@ -32,14 +32,10 @@ export type DiffFoldOverride = "expanded" | "folded" | null;
  */
 export type DiffFoldChoices = ReadonlyMap<string, boolean>;
 
-/**
- * Whether a file is drawn folded.
+/** Whether a file is drawn folded.
  *
- * A diff arrives a slice at a time, so the reader's own choices are kept apart from what the
- * toolbar last said rather than as the set of folded files: a file that has not loaded yet has no
- * choice, and follows the toolbar when it lands. A choice records the fold itself, not a flip of
- * the default, so a viewed state that changes underneath it (a push leaving the file stale, a tick
- * on another device) cannot turn the reader's open file into a folded one.
+ * Keep reader choices separate from the toolbar default so late slices follow the toolbar until
+ * explicitly chosen, and a changed diff cannot invert an existing choice.
  */
 export function isFileDiffCollapsed(
   path: string,
@@ -117,15 +113,9 @@ function isSameSlice(existing: DiffSlice, next: DiffSlice): boolean {
   );
 }
 
-/**
- * Folds one answer for the slice at `slice.cursor` into what is on screen.
+/** Fold one page response into the visible diff state.
  *
- * A new slice is appended. One that came back different means the diff moved under the review,
- * so it replaces the old one and the slices after it go too: their cursors were positions in the
- * old diff. One that came back the same leaves the state alone — unless the loaded slices are
- * being read again, in which case a settled answer hands the cursor to the next one, and ends
- * the walk at the last. The cached answer a read shows while it is still out, or a failed read
- * still carries, confirms nothing, so it does not move the walk.
+ * Replace stale pages and discard later cursors; only settled, successful pages advance the walk.
  */
 export function applyDiffSlice(
   previous: DiffSliceState,

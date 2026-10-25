@@ -1,12 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-/**
- * This module must stay free of runtime `react` imports: it is loaded from
- * inside `vi.mock("react", ...)` factories, and a value import would recurse
- * into the in-progress mock.
- *
- * Call `beginRender()` before each component invocation and `reset()` in
- * `beforeEach` to drop persisted state between tests.
- */
+/** Hook test harness with no runtime React import to avoid recursion inside `vi.mock` factories. */
 function createReactHookHarness() {
   let cursor = 0;
   let slots: unknown[] = [];

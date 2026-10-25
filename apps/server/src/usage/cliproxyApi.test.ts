@@ -119,7 +119,6 @@ function fixture(
   };
 }
 
-/** A hub API whose every request fails the way `fail` says. */
 const unreachableHub = (
   fail: (
     request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],
@@ -245,7 +244,7 @@ describe("CLIProxyAPI built-in management API", () => {
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
       expect(result.map((account) => account.plan)).toEqual([
-        "ChatGPT Pro 20x Subscription",
+        "ChatGPT Pro 200 Subscription",
         "ChatGPT Business Subscription",
       ]);
     }),

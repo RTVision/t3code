@@ -54,6 +54,7 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
+import { announce } from "~/lib/announce";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { toastManager } from "../ui/toast";
 import {
@@ -249,20 +250,20 @@ export const OpenInPicker = memo(function OpenInPicker({
   const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
   const canOpenEditor = preferredEditor?.kind === "terminal" ? canOperateTerminal : canOpenGui;
   const density = presentation === "menu" ? "touch" : "default";
-  const openInEditor = async (editor: EditorChoice | null, explicit = false) => {
-    if (!openInCwd || !editor) return;
+  const openInEditor = async (editor: EditorChoice | null, explicit = false): Promise<boolean> => {
+    if (!openInCwd || !editor) return false;
     if (
       editor.kind === "terminal"
         ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
         : !canOpenGui
     )
-      return;
+      return false;
     const result = await dispatch.open(
       { kind: (openInCwdIsFile ?? compact) ? "file" : "directory", path: openInCwd },
       editor,
       { reveal: revealFileManager },
     );
-    if (isAtomCommandInterrupted(result)) return;
+    if (isAtomCommandInterrupted(result)) return false;
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -270,10 +271,11 @@ export const OpenInPicker = memo(function OpenInPicker({
         title: "Unable to open editor",
         description: error instanceof Error ? error.message : "The editor could not be opened.",
       });
-    } else {
-      if (explicit) dispatch.select(editor);
-      if (remote.mode === "remote-links") markRemoteHintSeen();
+      return false;
     }
+    if (explicit) dispatch.select(editor);
+    if (remote.mode === "remote-links") markRemoteHintSeen();
+    return true;
   };
   const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
     keybindings,
@@ -293,7 +295,10 @@ export const OpenInPicker = memo(function OpenInPicker({
       )
         return;
       e.preventDefault();
-      void openInEditor(preferredEditor);
+      const label = editorLabelForPlatform(preferredEditor.editor, navigator.platform);
+      void openInEditor(preferredEditor).then((opened) => {
+        if (opened) announce(`Opened in ${label}`);
+      });
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);

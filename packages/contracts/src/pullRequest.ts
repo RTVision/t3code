@@ -35,14 +35,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
-/**
- * Narrowings beyond state and involvement, each absent by default — an absent field filters
- * nothing, which is what every listing did before there were any. Optional as a whole so a page
- * and a server of different ages still speak to each other.
+/** Optional list narrowings; absent fields preserve the pre-filter behavior and wire compatibility.
  *
- * `checks` is host-side where supported, and is also judged from a row's own state when the
- * provider carries one. A host that cannot match it answers unnarrowed rather than the page
- * pretending to know.
+ * Providers may answer unsupported checks filters unnarrowed; rows are narrowed locally when possible.
  */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
@@ -291,6 +286,11 @@ export type PullRequestCommit = typeof PullRequestCommit.Type;
 
 export const PullRequestReviewCapabilities = Schema.Struct({
   inlineComment: Schema.Boolean,
+  /**
+   * An inline comment can cover a range of lines rather than its last one. Absent, as from a
+   * server that predates it, means one line.
+   */
+  rangeComment: Schema.optional(Schema.Boolean),
   reply: Schema.Boolean,
   resolve: Schema.Boolean,
   verdicts: ForwardCompatibleArray(PullRequestReviewVerdict),
@@ -405,11 +405,13 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
-  /**
-   * Dependency reads are optional so clients remain compatible with servers that predate them.
-   * An absent value means the client must leave dependency navigation unavailable.
-   */
+  /** Read-only dependency information contributed by a provider or the server. */
   dependencies: Schema.optional(PullRequestDependencyCapabilities),
+  /**
+   * Every head gets at least one check, so a head that has gone a while without any means none
+   * reported rather than that the repository runs none. Absent means an empty list says nothing.
+   */
+  checksAlwaysReport: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -612,7 +614,7 @@ export type PullRequestRoutingIdentityInput = typeof PullRequestRoutingIdentityI
 export const PullRequestRoutingIdentityResult = Schema.Struct({
   accountId: TrimmedNonEmptyString,
   host: TrimmedNonEmptyString,
-  provider: Schema.Literal("github"),
+  provider: SourceControlProviderKind,
   viewer: TrimmedNonEmptyString,
 });
 export type PullRequestRoutingIdentityResult = typeof PullRequestRoutingIdentityResult.Type;
@@ -715,6 +717,26 @@ export const PullRequestListStatsResult = Schema.Struct({
   stats: Schema.Array(PullRequestDiffStat),
 });
 export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
+
+export const PullRequestFilterOptionKind = Schema.Literals(["labels", "authors"]);
+export type PullRequestFilterOptionKind = typeof PullRequestFilterOptionKind.Type;
+
+/** Scoped like `PullRequestListInput`, so the options come from the repositories it lists. */
+export const PullRequestFilterOptionsInput = Schema.Struct({
+  kind: PullRequestFilterOptionKind,
+  projectId: Schema.optional(ProjectId),
+  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  host: Schema.optional(TrimmedNonEmptyString),
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestFilterOptionsInput = typeof PullRequestFilterOptionsInput.Type;
+
+export const PullRequestFilterOptions = Schema.Struct({
+  labels: Schema.Array(PullRequestLabel),
+  authors: Schema.Array(PullRequestActor),
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilterOptions = typeof PullRequestFilterOptions.Type;
 
 /**
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
@@ -1047,6 +1069,11 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    */
   oldPath: Schema.optional(TrimmedNonEmptyString),
   position: PullRequestReviewPosition,
+  /**
+   * The first line of a comment on a range, which ends at `position`. Sent only to a host whose
+   * capabilities include `review.rangeComment`.
+   */
+  startPosition: Schema.optional(PullRequestReviewPosition),
   body: CommentBody,
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
@@ -1110,86 +1137,16 @@ export const PullRequestLabelChangeInput = Schema.Struct({
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
 
+/**
+ * The names keep their `cli-` prefix for wire compatibility; for a host read with a credential
+ * rather than a tool they mean "no credential" and "a refused credential".
+ */
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
   "provider-unsupported",
 ]);
 export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.Type;
-
-/**
- * The reason names keep their `cli-` prefix for wire compatibility; for GitHub and
- * Bitbucket they mean "no credential" and "a refused credential", not a missing tool.
- */
-const PROVIDER_REQUIREMENT = new Map<
-  string,
-  { readonly missing: string; readonly unauthenticated: string }
->([
-  [
-    "github",
-    {
-      missing:
-        "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
-      unauthenticated:
-        "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
-    },
-  ],
-  [
-    "forgejo",
-    {
-      missing:
-        "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
-      unauthenticated:
-        "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
-    },
-  ],
-  [
-    "gitlab",
-    {
-      missing:
-        "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
-      unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
-    },
-  ],
-  [
-    "azure-devops",
-    {
-      missing:
-        "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
-      unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
-    },
-  ],
-  [
-    "bitbucket",
-    {
-      missing:
-        "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
-      unauthenticated:
-        "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
-    },
-  ],
-]);
-
-export function pullRequestHostOf(
-  identity:
-    | {
-        readonly canonicalKey?: string | undefined;
-        readonly locator?: { readonly remoteUrl: string } | undefined;
-      }
-    | null
-    | undefined,
-  kind: SourceControlProviderKind,
-): string {
-  if (kind === "forgejo" || kind === "gitea") {
-    try {
-      const remote = new URL(identity?.locator?.remoteUrl ?? "");
-      if (remote.protocol === "http:" || remote.protocol === "https:")
-        return remote.host.toLowerCase();
-    } catch {}
-  }
-  const host = identity?.canonicalKey?.split("/")[0]?.trim();
-  return host === undefined || host.length === 0 ? kind : host.toLowerCase();
-}
 
 /**
  * `author:me` names whoever is signed in to the host being read, GitHub's `@me` spelled either
@@ -1206,27 +1163,16 @@ export function resolvePullRequestAuthorFilter(
   return viewer === null || viewer === undefined || viewer.trim().length === 0 ? trimmed : viewer;
 }
 
-export function pullRequestProviderRequirement(
-  provider: SourceControlProviderKind,
-  reason: PullRequestUnavailableReason,
-): string | null {
-  const requirement = PROVIDER_REQUIREMENT.get(provider);
-  if (requirement === undefined) return null;
-  switch (reason) {
-    case "cli-missing":
-      return requirement.missing;
-    case "cli-unauthenticated":
-      return requirement.unauthenticated;
-    case "provider-unsupported":
-      return null;
-  }
-}
-
 export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestUnavailableError>()(
   "PullRequestUnavailableError",
   {
     reason: PullRequestUnavailableReason,
     provider: Schema.optional(SourceControlProviderKind),
+    /**
+     * What the host needs on the server, in its own words. Absent from older servers, which
+     * shipped no such field, and for a host that names nothing.
+     */
+    requirement: Schema.optional(TrimmedNonEmptyString),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 503 },
@@ -1236,15 +1182,11 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
   }
 
   override get message(): string {
-    const requirement =
-      this.provider === undefined ? undefined : PROVIDER_REQUIREMENT.get(this.provider);
     switch (this.reason) {
       case "cli-missing":
-        return (
-          requirement?.missing ?? "The tool this host is read through is not installed or set up."
-        );
+        return this.requirement ?? "The tool this host is read through is not installed or set up.";
       case "cli-unauthenticated":
-        return requirement?.unauthenticated ?? "This host has no working credentials.";
+        return this.requirement ?? "This host has no working credentials.";
       case "provider-unsupported":
         return "Change requests cannot be browsed for this project's host yet.";
     }

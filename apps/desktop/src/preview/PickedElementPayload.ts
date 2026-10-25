@@ -1,15 +1,4 @@
-/**
- * Strict structural validator for `PickedElementPayload` messages received
- * from the in-page picker preload (`apps/desktop/src/preview/PickPreload.ts`)
- * via `wc.ipc`. Lives in its own electron-free module so the validator is
- * trivially unit-testable.
- *
- * Validation must be tight: downstream `normalizeElementContextSelection`
- * calls `.trim()` on incoming strings, so a malformed payload (preload bug,
- * future schema mismatch, malicious page that intercepts the preload's IPC
- * channel via prototype pollution) would otherwise throw deep in the
- * renderer and the chip silently never appears.
- */
+/** Validates picker IPC payloads before downstream code calls string methods on them. */
 import type {
   PickedElementPayload,
   PreviewAnnotationPayload,
@@ -137,13 +126,7 @@ export function isPreviewAnnotationPayload(value: unknown): value is PreviewAnno
 
 export type PreviewAnnotationTool = "select" | "marquee" | "draw" | "erase";
 
-/**
- * An in-progress markup that outlives a reload of the inspected page. The
- * preload keeps main's copy current, and main hands it back to the fresh
- * document so a dev-server refresh does not throw the user's comment away.
- * Selected elements travel as a CSS path plus their last rect, because the
- * DOM nodes themselves do not survive the reload.
- */
+/** In-progress markup retained across inspected-page reloads; DOM nodes are represented by paths. */
 export interface PreviewAnnotationDraft {
   readonly comment: string;
   readonly tool: PreviewAnnotationTool;

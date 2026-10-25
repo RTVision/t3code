@@ -12,8 +12,6 @@ import {
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as GiteaCli from "./GiteaCli.ts";
 import {
   giteaPullRequestNumber,
@@ -22,6 +20,7 @@ import {
   parseGiteaRepository,
 } from "./giteaRepository.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import type { SourceControlApiDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
 
 const Repository = Schema.Struct({
@@ -113,8 +112,8 @@ export const makeDiscovery = Effect.map(
 
 export const make = Effect.gen(function* () {
   const api = yield* GiteaCli.GiteaCli;
-  const git = yield* GitVcsDriver.GitVcsDriver;
-  const vcs = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const host = yield* SourceControlHost.SourceControlHost;
+  const git = host.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
   const failure = (operation: string, cwd: string, detail: string) =>
@@ -188,20 +187,18 @@ export const make = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           };
       }
-      const handle = yield* vcs
-        .resolve({ cwd: input.cwd })
+      const remotesEffect = yield* git
+        .remotes(input.cwd)
         .pipe(
           Effect.mapError(() =>
             failure("resolveRepository", input.cwd, "Could not inspect the workspace repository."),
           ),
         );
-      const { remotes } = yield* handle.driver
-        .listRemotes(input.cwd)
-        .pipe(
-          Effect.mapError(() =>
-            failure("resolveRepository", input.cwd, "Could not read repository remotes."),
-          ),
-        );
+      const { remotes } = yield* remotesEffect.pipe(
+        Effect.mapError(() =>
+          failure("resolveRepository", input.cwd, "Could not read repository remotes."),
+        ),
+      );
       const candidates = remotes.flatMap((remote) => {
         const repository = giteaRepositoryFromRemote(remote.url, baseUrl, api.sshHosts);
         return repository === null

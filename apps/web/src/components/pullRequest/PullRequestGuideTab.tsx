@@ -23,6 +23,7 @@ export function PullRequestGuideTab({
   workspaceRoot,
   active,
   canComment,
+  rangeComments,
   onAskAboutLines,
   onAskAboutStop,
   onFinishReview,
@@ -35,6 +36,7 @@ export function PullRequestGuideTab({
   workspaceRoot: string;
   active: boolean;
   canComment: boolean;
+  rangeComments: boolean;
   onAskAboutLines: ((comment: ReviewCommentContext, request: string) => void) | null;
   onAskAboutStop:
     | ((stop: PullRequestReviewGuideStop, index: number, question: string) => void)
@@ -59,6 +61,7 @@ export function PullRequestGuideTab({
       ? null
       : {
           canComment,
+          rangeComments,
           workspaceRoot,
           environmentId,
           onEdit: (commentId, body) => updatePendingComment(reviewKey, commentId, body),

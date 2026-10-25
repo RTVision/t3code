@@ -160,6 +160,41 @@ vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,
   useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
 }));
+vi.mock("~/hooks/usePullRequestLinking", () => ({
+  usePullRequestLinking: () => ({
+    mode: "single",
+    canLink: (href: string) => href === linkedPullRequest.url,
+    isLinked: (_thread: unknown, href: string) => state.linkedPullRequest?.url === href,
+    changeLink: async (ref: typeof threadRef, href: string, linked: boolean) =>
+      state.updateMetadata({
+        environmentId: ref.environmentId,
+        input: {
+          threadId: ref.threadId,
+          linkedPullRequest: linked ? { ...linkedPullRequest, url: href } : null,
+        },
+      }),
+  }),
+}));
+vi.mock(import("@t3tools/client-runtime/source-control-clients"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    sourceControlClients: {
+      ...actual.sourceControlClients,
+      parseChangeRequestUrl: ((href: string) =>
+        href === linkedPullRequest.url
+          ? {
+              link: {
+                host: "github.com",
+                repository: linkedPullRequest.repository,
+                number: linkedPullRequest.number,
+              },
+            }
+          : null) as never,
+      isSameChangeRequest: ((left: string, right: string) => left === right) as never,
+    },
+  };
+});
 vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,

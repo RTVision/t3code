@@ -1,5 +1,6 @@
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import { PullRequestMentionProvider } from "./PullRequestMentionProvider";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import {
@@ -54,9 +55,10 @@ import {
   changeRequestRepositoryUrl,
   gitHubPullRequestBrowserUrl,
   giteaPullRequestBrowserUrl,
+  parseChangeRequestUrl,
 } from "~/lib/openPullRequestLink";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
-import { OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST } from "./pullRequestCheckoutToast";
+import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -235,17 +237,10 @@ function resolvePullRequestReference(
 }
 
 function pullRequestMarkdownContext(
-  hostClient: ReturnType<typeof sourceControlClients.get>,
-  repositoryUrl: string | null,
+  detail: Pick<PullRequestDetail, "provider" | "url"> | null,
   threadRef: ScopedThreadRef | null,
-  provider: PullRequestDetail["provider"] | null,
 ) {
-  return {
-    repositoryUrl:
-      repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
-    provider,
-    threadRef,
-  };
+  return { autolinks: changeRequestReferenceAutolinker(detail), threadRef };
 }
 
 function pullRequestStackReference(
@@ -468,13 +463,9 @@ export function PullRequestDetailPanel({
   }
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const hostClient = sourceControlClients.get(detail?.provider);
+  const terminology = hostClient.changeRequest;
   const openOnHostText = openOnHostLabel(hostClient);
-  const markdownContext = pullRequestMarkdownContext(
-    hostClient,
-    repositoryUrl,
-    threadRef,
-    detail?.provider ?? null,
-  );
+  const markdownContext = pullRequestMarkdownContext(detail, threadRef);
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
       ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
@@ -942,7 +933,7 @@ export function PullRequestDetailPanel({
                   ? "This repository is on the pull request's branch, with a thread open on it."
                   : "The pull request is in its own worktree, with a thread open on it.",
             }
-          : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
+          : offHeadPullRequestCheckoutToast(terminology),
       );
       return;
     }
@@ -955,7 +946,7 @@ export function PullRequestDetailPanel({
             title: "Checkout ready",
             description: "The task is in the composer. Read it over, then send.",
           }
-        : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
+        : offHeadPullRequestCheckoutToast(terminology),
     );
   };
   const askAboutPullRequest = () => {
@@ -1218,6 +1209,7 @@ export function PullRequestDetailPanel({
         pickableEnvironments={pickableEnvironments}
         actingEnvironmentId={actingEnvironmentId}
         onActingEnvironmentChange={selectActingEnvironment}
+        term={terminology.singular}
       />
     ) : null;
   const resolveConflictsControl = (
@@ -1291,6 +1283,7 @@ export function PullRequestDetailPanel({
               {nativeStack ? (
                 <PullRequestStackMenu
                   hostLabel={hostClient.label}
+                  terminology={terminology}
                   stack={nativeStack}
                   notice={nativeStackQuery.notice}
                   onRetry={nativeStackQuery.error ? nativeStackQuery.refresh : undefined}
@@ -1347,6 +1340,7 @@ export function PullRequestDetailPanel({
               />
               {checkoutControl}
               <PullRequestActionsMenu
+                terminology={terminology}
                 environmentId={environmentId}
                 reference={reference}
                 pullRequestKey={pullRequestKey}
@@ -1745,6 +1739,7 @@ export function PullRequestDetailPanel({
                   canComment={
                     detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
                   }
+                  rangeComments={detail.capabilities.review.rangeComment === true}
                   onAskAboutLines={(comment, request) =>
                     addSelectionToAgent({ comment, request }, { keepGuide: true })
                   }
@@ -1768,6 +1763,7 @@ export function PullRequestDetailPanel({
                 ) : activityError ? (
                   <PullRequestActivityUnavailableState
                     error={activityError}
+                    term={terminology.singular}
                     onRetry={activityQuery.refresh}
                   />
                 ) : (

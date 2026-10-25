@@ -214,10 +214,8 @@ function WorkspaceBrowserPreview(props: {
   readonly title: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const insideWorkspace =
-    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
   const resource = workspaceAssetResource({
-    kind: insideWorkspace ? "workspace-file" : "media-file",
+    kind: "workspace-file",
     threadRef: props.threadRef,
     draft: props.draft,
     workspaceRoot: props.workspaceRoot,
@@ -941,13 +939,8 @@ export default function FilePreviewPanel({
     attachment === undefined && relativePath !== null,
   );
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
-  // A chat link cannot tell a folder from a file, so a folder arrives here as
-  // a file surface and the read fails. Keep the breadcrumbs, drop the preview
-  // pane, and let the tree fill the surface with the folder revealed. Mutation
-  // refresh stays on so the surface notices if the path becomes a file. A host
-  // folder outside the workspace gets a tree of its own, rooted at that folder.
-  // `folderTrail` is set only when crumbs walked the browser up: the deeper path
-  // kept for the way back down. The explorer (`""`) shows crumbs only then.
+  // A folder opened through a file link keeps its breadcrumbs while the tree replaces the failed
+  // preview; refresh remains enabled so a later file conversion is visible.
   const breadcrumbPath =
     attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
   // A host trail that walked up to the workspace root (`/repo/project` is `""`) no

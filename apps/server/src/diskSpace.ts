@@ -1,13 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no free-space query.
-/**
- * DiskSpace - free space on the volume holding the T3 home.
+/** Reports low free space on the volume holding the T3 home.
  *
- * A full disk crashes the server at startup (routine state writes fail with
- * ENOSPC), and once it is down no client can say why. This service reports the
- * volume only while it is low, so clients can warn while there is still room
- * to act. Monitoring is advisory: a failed probe reports nothing rather than
- * propagating.
- *
+ * Monitoring is advisory: failed probes are ignored so the service cannot take down startup.
  * @module DiskSpace
  */
 import * as NodeFSP from "node:fs/promises";

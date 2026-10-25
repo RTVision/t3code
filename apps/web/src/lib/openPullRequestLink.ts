@@ -1,16 +1,17 @@
-import type {
-  EnvironmentId,
-  PullRequestRef,
-  RepositoryIdentity,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, RepositoryIdentity, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent } from "react";
 
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import {
+  findProjectForChangeRequest,
+  projectChangeRequestUrl,
+  resolvePullRequestPreviewTarget,
+} from "@t3tools/client-runtime/change-request-links";
+import {
+  sourceControlClients,
+  type ChangeRequestLink,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
@@ -23,61 +24,32 @@ import { readProjects, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
 
-export {
-  parseChangeRequestUrl,
-  type ChangeRequestLink,
-  gitHubPullRequestBrowserUrl,
-  giteaPullRequestBrowserUrl,
-  pullRequestCandidateUrlFromReferenceAutolink,
-  matchesLinkedPullRequestUrl,
-  changeRequestRepositoryUrl,
-} from "@t3tools/shared/changeRequestUrl";
-
-export function findProjectForChangeRequest(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: ChangeRequestLink,
-): EnvironmentProject | undefined {
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    if (identity?.provider === "gitea" || identity?.provider === "unknown") {
-      const match = giteaHttpRemoteMatchesLink(identity, link);
-      if (match !== null) return match;
-    }
-    return (
-      identity?.provider !== undefined &&
-      sourceControlClients.get(identity.provider).isChangeRequestInRepository(identity, link)
-    );
-  });
+export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
+  return sourceControlClients.parseChangeRequestUrl(targetUrl)?.link ?? null;
 }
 
-export function resolvePullRequestPreviewTarget({
-  environmentId,
-  projects,
-  pullRequestsEnabled,
-  url,
-}: {
-  environmentId: EnvironmentId | null;
-  projects: ReadonlyArray<EnvironmentProject>;
-  pullRequestsEnabled: boolean;
-  url: string;
-}): { environmentId: EnvironmentId; input: PullRequestRef } | null {
-  if (!pullRequestsEnabled || environmentId === null) return null;
-  const parsed = parseChangeRequestUrl(url);
-  if (parsed === null) return null;
-  const project = findProjectForChangeRequest(
-    projects.filter((candidate) => candidate.environmentId === environmentId),
-    parsed,
-  );
-  if (project === undefined) return null;
-  return {
-    environmentId,
-    input: {
-      projectId: project.id,
-      host: parsed.authority ?? parsed.host,
-      repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository,
-      number: parsed.number,
-    },
-  };
+export function changeRequestRepositoryUrl(targetUrl: string): string | null {
+  return sourceControlClients.parseChangeRequestUrl(targetUrl)?.link.repositoryUrl ?? null;
+}
+
+export function gitHubPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  return identity?.provider === "github"
+    ? projectChangeRequestUrl(identity, repository, number)
+    : null;
+}
+
+export function giteaPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  return identity?.provider === "gitea"
+    ? projectChangeRequestUrl(identity, repository, number)
+    : null;
 }
 
 export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
@@ -142,7 +114,7 @@ export function findProjectOnChangeRequestHost(
   });
 }
 
-export function shouldOpenPullRequestExternally(
+function shouldOpenPullRequestExternally(
   event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey"> &
     Partial<Pick<MouseEvent<HTMLElement>, "button">>,
 ): boolean {
@@ -173,14 +145,12 @@ export function useOpenChangeRequestLink(
     const allProjects = readProjects();
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
-    const parsed = parseChangeRequestUrl(targetUrl);
-    if (parsed === null) return false;
+    const parsed = sourceControlClients.parseChangeRequestUrl(targetUrl)?.link;
+    if (parsed === undefined) return false;
     const reads = (environmentId: string) =>
       serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
       true;
-    // Beside a thread the panel reads on that thread's environment, so a project from another
-    // one could not be read there whatever its remote says: two environments can hold the same
-    // repository, and handing the panel the wrong one's id opens a surface that never loads.
+    // Matching remotes do not make project ids usable outside the panel thread's environment.
     const projects = resolvedThreadRef
       ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
       : targetEnvironmentId
@@ -209,7 +179,8 @@ export function useOpenChangeRequestLink(
     const repository =
       serverConfigs.get(project.environmentId)?.environment.capabilities.threadPullRequests === true
         ? parsed.repository
-        : (sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository);
+        : (sourceControlClients.repositorySelector(project.repositoryIdentity) ??
+          parsed.repository);
     event.preventDefault();
     event.stopPropagation();
     if (resolvedPanelRef) {
@@ -270,9 +241,7 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
     const openInBrowser = shouldOpenPullRequestExternally(event);
     const isAnchor =
       event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-    // A real link already knows how to cmd/ctrl/middle-click. Leave its default
-    // action alone so the browser (or Electron's window-open handler) opens
-    // the host. Buttons have no href, so they still go through openExternal.
+    // Native links handle modified clicks; buttons still need openExternal.
     if (openInBrowser && isAnchor) return false;
 
     event.preventDefault();

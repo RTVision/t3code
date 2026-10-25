@@ -6,8 +6,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type SourceControlProviderAuth, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
-import { ServerConfig } from "../config.ts";
-
 import { providerAuth } from "@t3tools/source-control-core/server/discovery";
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -104,7 +102,7 @@ export function decodeGiteaResponse<S extends Schema.Top>(
 export const make = Effect.gen(function* () {
   const config = yield* GiteaConfig;
   const cli = yield* ForgejoCli.ForgejoCli;
-  const { cwd } = yield* ServerConfig;
+  const cwd = globalThis.process.cwd();
   const logins = cli.listLogins
     ? yield* cli.listLogins({ cwd, command: "tea" }).pipe(Effect.orElseSucceed(() => []))
     : [];

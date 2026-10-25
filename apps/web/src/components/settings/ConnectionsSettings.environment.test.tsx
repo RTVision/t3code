@@ -39,6 +39,9 @@ vi.mock("react/compiler-runtime", async () => ({
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) => (atom === state.updateAtom ? { status: "idle" } : []),
 }));
+vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({
+  useT3ConnectAuthPrompt: () => ({ openAuthPrompt: vi.fn() }),
+}));
 vi.mock("../../state/server", async (original) => ({
   ...(await original<typeof import("../../state/server")>()),
   primaryServerKeybindingsAtom: "keys",

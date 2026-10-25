@@ -94,7 +94,7 @@ function PullRequestRowImpl({
   /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string;
   matchedElsewhere?: boolean;
-  /** Used by the list's shared visibility observer to defer optional line-count reads. */
+  /** Visibility key for deferred line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
@@ -104,7 +104,7 @@ function PullRequestRowImpl({
   sweeping?: boolean;
   onCloseSweepStart?: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
-  const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
+  const { Icon, providerName, terminology } = getSourceControlPresentationForKind(entry.provider);
   return (
     <div
       ref={statsRef}
@@ -254,6 +254,7 @@ function PullRequestRowImpl({
         <PullRequestSpeedActions
           entry={entry}
           hostActions={hostActions}
+          terminology={terminology}
           onActed={onActed}
           closing={closing}
           sweeping={sweeping}

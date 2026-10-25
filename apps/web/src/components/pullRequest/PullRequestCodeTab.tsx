@@ -41,7 +41,10 @@ import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment, canResolvePullRequestThread } from "./pullRequestEditing.logic";
+import {
+  canEditPullRequestComment,
+  canResolvePullRequestThread,
+} from "@t3tools/client-runtime/pull-request-editing";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
@@ -795,17 +798,10 @@ function PullRequestCodeTab({
     setSelectedLines(null);
     if (comment !== null) onFinish(comment);
   };
-  // The viewer's SlotPortals memoizes each visible file's header/annotation portal on these
-  // render props and on `options` below; a fresh identity on any of them — as a plain inline
-  // function or object literal would be — invalidates that memo and recreates every portal on
-  // screen on any tab re-render (a drag-selection, a keystroke in the draft, a review-store
-  // update), which is the jank this file is otherwise clean of.
+  // Keep these render props stable: SlotPortals recreates every visible portal when an identity
+  // changes, which makes ordinary tab updates janky.
   const renderCodeViewFooter = () =>
-    // Only while something is still owed. A finished diff whose query fails on a later
-    // refresh — a reconnect re-runs every one of them — is whole on screen already, and
-    // saying otherwise sends the reader looking for files that are all there. A check for
-    // new changes that stopped on a failed page is owed, though: the pages after it are
-    // unchecked until it is retried.
+    // Show a footer only while pages remain or a failed revalidation leaves unchecked pages.
     nextCursor === null && !(revalidating && diffQuery.error !== null) ? null : (
       <div
         ref={setSentinel}
@@ -1034,12 +1030,8 @@ function PullRequestCodeTab({
       ) : null}
     </div>
   );
-  // A rebase or a force-push can take the scoped commit out of the change. Its diff may still
-  // be reachable on the host, but it is no longer part of what is being reviewed, so the scope
-  // goes back to the whole change rather than sitting under a name nothing matches.
-  // Including when the change reports no commits at all: the scope dropdown is the only way back
-  // to the whole diff and it is not drawn without commits to list, so a scope that outlived them
-  // would leave the tab reading one obsolete commit with nothing to press.
+  // If a rebase or force-push removes the selected commit, return to the whole change so the
+  // scope cannot point at an obsolete commit.
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   useEffect(() => {
     if (commit !== null && selectedCommit === undefined) {
