@@ -68,8 +68,7 @@ export const previewStateAtom = Atom.family((threadKey: string) =>
   ),
 );
 
-// Only the Electron browser host needs a cross-thread view. Keep that index
-// separate so thread-local readers never subscribe to unrelated previews.
+// Only Electron needs this cross-thread index; separate it to avoid unrelated preview subscriptions.
 interface ActivePreviewThreadIndex {
   readonly keys: ReadonlySet<string>;
 }
@@ -307,10 +306,7 @@ export function applyPreviewServerSnapshot(
   });
 }
 
-/**
- * Commands such as resize can target background tabs. Their response is
- * authoritative for that tab, but it is not a request to focus the tab.
- */
+/** Updates background tabs without focusing them. */
 export function updatePreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot,
@@ -372,8 +368,6 @@ export function reconcilePreviewServerSessions(
       ),
     );
     const desktopOverlay = activeTabId ? (desktopByTabId[activeTabId] ?? null) : null;
-    // The list is refetched whenever a thread is opened. Keeping the state
-    // object when nothing moved spares every subscriber a re-render.
     if (
       sameServer &&
       current.listLoaded &&
@@ -512,10 +506,7 @@ export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
   });
 }
 
-/**
- * Runs `action` once the thread's preview state has the tab, which a popup's
- * `opened` event may deliver after the stream that announced it.
- */
+/** Runs once the tab is known; popup opened events can arrive after their announcing stream. */
 export function whenPreviewTabKnown(
   ref: ScopedThreadRef,
   tabId: string,
@@ -553,10 +544,7 @@ export function isPreviewSupportedInRuntime(): boolean {
   return Boolean(window.desktopBridge?.preview);
 }
 
-/**
- * The server closes their sessions too, but the desktop host keeps a page for
- * every session held here.
- */
+/** Releases desktop-host pages as well as local session state. */
 export function clearThreadPreviewState(ref: ScopedThreadRef): void {
   updateThreadPreviewState(ref, (current) =>
     Object.keys(current.sessions).length === 0 &&
