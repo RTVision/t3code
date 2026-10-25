@@ -35,14 +35,9 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
-/**
- * Narrowings beyond state and involvement, each absent by default — an absent field filters
- * nothing, which is what every listing did before there were any. Optional as a whole so a page
- * and a server of different ages still speak to each other.
+/** Optional list narrowings; absent fields preserve the pre-filter behavior and wire compatibility.
  *
- * `checks` is host-side where supported, and is also judged from a row's own state when the
- * provider carries one. A host that cannot match it answers unnarrowed rather than the page
- * pretending to know.
+ * Providers may answer unsupported checks filters unnarrowed; rows are narrowed locally when possible.
  */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),

@@ -7,6 +7,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { toastManager } from "../ui/toast";
+import { editorLabelForPlatform } from "../../editorLabels";
+import { announce } from "../../lib/announce";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 
 export function useOpenFavoriteEditorShortcut({
@@ -32,14 +34,19 @@ export function useOpenFavoriteEditorShortcut({
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
+      const label = editorLabelForPlatform(preferredEditor.editor, navigator.platform);
       void dispatch.open({ kind: "directory", path: openInCwd }).then((result) => {
-        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          type: "error",
-          title: "Unable to open editor",
-          description: error instanceof Error ? error.message : "The editor could not be opened.",
-        });
+        if (isAtomCommandInterrupted(result)) return;
+        if (result._tag === "Failure") {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Unable to open editor",
+            description: error instanceof Error ? error.message : "The editor could not be opened.",
+          });
+          return;
+        }
+        announce(`Opened in ${label}`);
       });
     };
     window.addEventListener("keydown", handler);

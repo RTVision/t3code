@@ -406,14 +406,7 @@ const readVersionMarker = (filePath: string) =>
     },
   );
 
-/**
- * Deletes runtimes older than the active version. Newer versions may be a
- * staged update and are left alone. Among older ones it keeps rollback
- * targets (the newest, and the version the last committed update left) and
- * anything the boot unit may start: the version `launcherPaths` (the running
- * launcher's own executable or script) lives in, the ones the unit was last
- * written for, and the one a deferred `t3 update` restart names.
- */
+/** Prune old runtimes while retaining staged versions, rollback targets, and boot-unit versions. */
 export async function pruneRuntimeVersions(
   baseDir: string,
   state: ServiceState,

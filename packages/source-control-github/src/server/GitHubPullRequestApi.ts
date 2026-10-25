@@ -963,7 +963,7 @@ interface RestReadInput<A> {
   readonly decode: (raw: string) => Result.Result<A, unknown>;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
@@ -1939,25 +1939,9 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
-      // GitHub does not index every repository for search, and one it will not search answers
-      // with no rows rather than with an error — so an empty listing is read again from the
-      // repository's own list. Those rows come back newest-created first, an order no `updated:`
-      // qualifier can carry on from, so that page says it cannot be continued and the reader
-      // reaches the rest of it by asking for a larger page, as every listing used to.
-      //
-      // Only ever the first slice: a repository that answered the search once will answer it
-      // again, so an empty slice under a cursor is a repository that has run out.
-      // A text search that finds nothing has found nothing: falling back would answer it with the
-      // repository's whole list, which is every row the reader did not search for. The fallback
-      // is for a repository the index does not cover, and a listing with no text to match is the
-      // only place an empty answer can mean that.
-      // Every filter is a qualifier `matchesFilters` can judge over the fallback's own rows just
-      // as well as search judges them over its own, so carrying them into the fallback answers
-      // the same read rather than a wider one. Free text is the one thing the fallback cannot
-      // judge locally — it lists rows, it does not search their text — so a query still rules
-      // the fallback out: an empty answer under one is already the answer.
-      // Relationship discovery needs the repository collection, not its eventually indexed search.
-      // A bounded repository listing uses at most three GraphQL pages.
+      // Search can omit unindexed repositories, so an empty unfiltered first page falls back to
+      // the repository listing. Preserve local filters there; free-text queries cannot use that
+      // fallback, and relationship discovery always needs the repository collection.
       if (input.relationshipOnly === true) {
         return read(false, Math.min(input.limit + 1, RELATIONSHIP_ONLY_MAX_ROWS));
       }

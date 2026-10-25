@@ -73,11 +73,8 @@ const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const awaitHolder = (condition: string) =>
   `i=0; until ${condition}; do i=$((i + 1)); [ "$i" -lt 500 ] || exit 1; sleep 0.01; done`;
 
-// Holds a cache busy the way a running server does: the holder's argv[0] is the
-// runtime entry, which the prune and install scripts look for in /proc cmdline.
-// A shell read also works on multicall coreutils hosts where cat dispatches by argv[0].
-// It reads a pipe the script keeps open on fd 7, so it exits with the script
-// instead of outliving it on a timer.
+// Keep a runtime-looking process alive through a pipe so the script's /proc scan sees it and
+// the holder exits with the script instead of outliving it.
 const holdRuntimeBusy = (entry: string) =>
   [
     `exec 7> >(exec -a ${entry} bash -c 'IFS= read -r _' >/dev/null 2>&1)`,

@@ -790,11 +790,8 @@ export function PreviewView({
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // The structured annotation is still sendable when its optional crop
-      // stalls or fails, so tell the user what they lost and keep going
-      // instead of holding the composer for an attachment that never lands.
-      // The stored copy drops the screenshot on failure, otherwise the prompt
-      // would tell the agent a crop is attached when none was sent.
+      // Keep the annotation sendable when its optional crop fails, but remove the failed
+      // screenshot so the prompt does not claim an attachment was sent.
       const capture = capturePreviewAnnotationScreenshot(picked);
       const cropDropped = screenshotFailed || capture.status === "failed";
       const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
@@ -908,11 +905,8 @@ export function PreviewView({
         }
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
-        // Disable when there's no tab (nothing to pick on) OR the page
-        // failed to load (a React overlay covers the webview, so the
-        // user wouldn't be able to actually click anything underneath).
-        // An active pick stays cancellable: a failed reload keeps its markup
-        // waiting for the next successful refresh.
+        // Disable picking without a tab or after a failed load; an active pick remains
+        // cancellable so its markup survives until the next successful refresh.
         pickDisabled={!tabId || (isUnreachable && !pickActive)}
         pickDisabledReason={
           isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined

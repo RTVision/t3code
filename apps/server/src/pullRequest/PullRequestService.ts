@@ -1224,15 +1224,8 @@ export const make = Effect.gen(function* () {
       { concurrency: REPOSITORY_CONCURRENCY },
     );
 
-  /**
-   * The narrowings a row can be judged by from its own fields, applied here rather than trusted
-   * to the host. Only GitHub is asked to narrow a listing for itself; every other provider
-   * answers unnarrowed, and without this pass a draft filter or a label filter would be sent,
-   * accepted and quietly ignored. Idempotent for the hosts that did narrow.
-   *
-   * `checks` is judged when a row carries its check state. A host that leaves the field undefined
-   * cannot be judged, so that row stays rather than being guessed at; null means the host answered
-   * that no checks are present and therefore matches neither passing nor failing.
+  /** Apply locally judgeable list filters after provider results; unsupported filters stay
+   * unnarrowed rather than being silently accepted and ignored by a provider.
    */
   const matchesRowFilters = (
     item: ProviderChangeRequest,
