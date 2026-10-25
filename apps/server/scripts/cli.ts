@@ -51,6 +51,7 @@ interface PackageJson {
   version: string;
   engines: Record<string, string>;
   files: string[];
+  scripts: Record<string, string>;
   dependencies: Record<string, string>;
   overrides: Record<string, string>;
 }
@@ -312,6 +313,7 @@ const publishCmd = Command.make(
       for (const relPath of [
         "dist/bin.mjs",
         "dist/service-launcher.mjs",
+        "dist/nodePtyInstall.mjs",
         "dist/client/index.html",
       ]) {
         const abs = path.join(serverDir, relPath);
@@ -348,6 +350,7 @@ const publishCmd = Command.make(
             version,
             engines: serverPackageJson.engines,
             files: serverPackageJson.files,
+            scripts: { postinstall: "node dist/nodePtyInstall.mjs" },
             dependencies: resolveServerPublishDependencies(
               serverPackageJson.dependencies,
               workspaceCatalog,

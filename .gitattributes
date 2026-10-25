@@ -7,3 +7,5 @@
 packages/source-control-github/schema/** linguist-generated
 apps/server/schema/** linguist-generated
 **/*.graphql.ts linguist-generated
+
+patches/@pierre%2Fdiffs@1.5.2.patch whitespace=-space-before-tab
