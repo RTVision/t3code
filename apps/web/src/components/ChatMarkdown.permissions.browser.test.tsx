@@ -160,6 +160,21 @@ vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,
   useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
 }));
+vi.mock("~/hooks/usePullRequestLinking", () => ({
+  usePullRequestLinking: () => ({
+    mode: "single",
+    canLink: (href: string) => href === linkedPullRequest.url,
+    isLinked: (_thread: unknown, href: string) => state.linkedPullRequest?.url === href,
+    changeLink: async (ref: typeof threadRef, href: string, linked: boolean) =>
+      state.updateMetadata({
+        environmentId: ref.environmentId,
+        input: {
+          threadId: ref.threadId,
+          linkedPullRequest: linked ? { ...linkedPullRequest, url: href } : null,
+        },
+      }),
+  }),
+}));
 vi.mock(import("@t3tools/client-runtime/source-control-clients"), async (original) => {
   const actual = await original();
   return {
