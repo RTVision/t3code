@@ -343,7 +343,9 @@ jobs:
           fi
 
       - name: Test
-        run: vp run --filter @t3tools/web test
+        # Standard fork runners have fewer cores than upstream's Blacksmith runner.
+        # Keep heavy browser fixtures from competing for the fork runner's cores.
+        run: vp run --filter @t3tools/web test -- --no-file-parallelism
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
