@@ -178,8 +178,15 @@ export const make = Effect.gen(function* () {
     // Settings exposes the absolute launcher; Unix can check this process PATH.
     const first = windows ? Option.none<string>() : yield* firstOnPath;
     const onPath = Option.isSome(first) && (yield* isOurLink(first.value));
-    return { supported: true, installedPath: installed.value, onPath, ...shadow };
-  }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
+    return { supported: true, installedPath: installed.value, onPath, launcherPath, ...shadow };
+  }).pipe(
+    Effect.orElseSucceed(() => ({
+      supported: false,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+    })),
+  );
 
   const ensureLauncher = DesktopCliShim.install.pipe(
     Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),

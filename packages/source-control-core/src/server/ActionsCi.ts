@@ -105,7 +105,7 @@ export function makeActionsCi<E>(options: {
         Effect.flatMap((response) =>
           response.truncated
             ? fail("The CI response was too large.")
-            : Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(response.body).pipe(
+            : Schema.decodeEffect(Schema.fromJsonString(schema))(response.body).pipe(
                 Effect.mapError(() => options.fail("The host returned invalid CI data.")),
               ),
         ),
@@ -156,14 +156,14 @@ export function makeActionsCi<E>(options: {
       const shas = [
         ...new Set([pr.head.sha, pr.merge_commit_sha].filter((sha): sha is string => Boolean(sha))),
       ];
-      const pages = yield* Effect.all(
-        shas.map((sha) =>
+      const pages = yield* Effect.forEach(
+        shas,
+        (sha) =>
           read(
             input,
             `${repoPath(input)}/actions/runs?head_sha=${encodeURIComponent(sha)}&per_page=50&limit=50`,
             Runs,
           ),
-        ),
         { concurrency: 2 },
       );
       const runs = new Map<number, typeof Run.Type>();

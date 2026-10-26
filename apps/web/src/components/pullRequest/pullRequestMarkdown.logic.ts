@@ -1,21 +1,4 @@
-import type { AssetResource, SourceControlProviderKind } from "@t3tools/contracts";
-import { resolveGiteaAttachmentUrl } from "@t3tools/shared/giteaAttachments";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
-
-export function resolvePullRequestImageAsset(
-  source: string,
-  provider: SourceControlProviderKind | null | undefined,
-  repositoryUrl: string | null | undefined,
-): Extract<AssetResource, { _tag: "source-control-image" }> | null {
-  if (provider !== "gitea" || !repositoryUrl) return null;
-  try {
-    const baseUrl = new URL("../../", `${repositoryUrl.replace(/\/+$/u, "")}/`).href;
-    const url = resolveGiteaAttachmentUrl(source, baseUrl);
-    return url ? { _tag: "source-control-image", provider: "gitea", url } : null;
-  } catch {
-    return null;
-  }
-}
 
 export {
   splitPullRequestBody,

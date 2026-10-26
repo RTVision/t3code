@@ -112,33 +112,3 @@ function isSameSlice(existing: DiffSlice, next: DiffSlice): boolean {
     })
   );
 }
-
-/** Fold one page response into the visible diff state.
- *
- * Replace stale pages and discard later cursors; only settled, successful pages advance the walk.
- */
-export function applyDiffSlice(
-  previous: DiffSliceState,
-  answer: { readonly key: string; readonly slice: DiffSlice; readonly settled: boolean },
-): DiffSliceState {
-  const { key, slice, settled } = answer;
-  const slices = previous.key === key ? previous.slices : [];
-  const index = slices.findIndex((candidate) => candidate.cursor === slice.cursor);
-  const existing = slices[index];
-  if (existing === undefined) {
-    return { key, cursor: slice.cursor, slices: [...slices, slice], revalidating: false };
-  }
-  if (isSameSlice(existing, slice)) {
-    if (!settled || !previous.revalidating) return previous;
-    const following = slices[index + 1];
-    return following === undefined
-      ? { ...previous, revalidating: false }
-      : { ...previous, cursor: following.cursor };
-  }
-  return {
-    key,
-    cursor: slice.cursor,
-    slices: [...slices.slice(0, index), slice],
-    revalidating: false,
-  };
-}
