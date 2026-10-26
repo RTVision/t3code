@@ -91,7 +91,7 @@ export function decodeGiteaResponse<S extends Schema.Top>(
       }),
     );
   }
-  return Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(response.body).pipe(
+  return Schema.decodeEffect(Schema.fromJsonString(schema))(response.body).pipe(
     Effect.mapError(
       () =>
         new GiteaCliError({ operation, reason: "failed", detail: "Gitea returned invalid JSON." }),

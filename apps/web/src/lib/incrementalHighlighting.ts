@@ -2,6 +2,15 @@ import type { DiffsHighlighter } from "@pierre/diffs";
 
 import type { DiffThemeName } from "./diffRendering";
 
+export function highlightCodeToHast(
+  highlighter: DiffsHighlighter,
+  code: string,
+  language: string,
+  theme: DiffThemeName,
+): ReturnType<DiffsHighlighter["codeToHast"]> {
+  return highlighter.codeToHast(code, { lang: language, theme });
+}
+
 function codeChildren(root: ReturnType<DiffsHighlighter["codeToHast"]>) {
   const pre = root.children.find((node) => node.type === "element" && node.tagName === "pre");
   if (pre?.type !== "element") throw new Error("Missing highlighted pre element");

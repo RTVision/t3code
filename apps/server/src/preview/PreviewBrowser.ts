@@ -212,9 +212,9 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
       installed,
       executable: installed.pipe(
         Effect.flatMap((candidate) =>
-          Option.isSome(candidate)
-            ? Effect.succeed(candidate.value)
-            : Effect.fail(new PreviewBrowserExecutableError({ executable: configured })),
+          Effect.fromOption(candidate).pipe(
+            Effect.mapError(() => new PreviewBrowserExecutableError({ executable: configured })),
+          ),
         ),
       ),
     });
@@ -229,9 +229,9 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
       installed,
       executable: installed.pipe(
         Effect.flatMap((candidate) =>
-          Option.isSome(candidate)
-            ? Effect.succeed(candidate.value)
-            : Effect.fail(new PreviewBrowserNativeMissingError()),
+          Effect.fromOption(candidate).pipe(
+            Effect.mapError(() => new PreviewBrowserNativeMissingError()),
+          ),
         ),
       ),
     });

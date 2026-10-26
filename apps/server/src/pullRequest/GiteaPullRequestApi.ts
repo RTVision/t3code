@@ -1745,13 +1745,13 @@ export const make = Effect.gen(function* () {
         method: "GET",
         path: query(`${basePath(input.repository)}/contents/${path}`, { ref }),
       }).pipe(
-        Effect.catch((error) =>
-          input.objectId &&
-          refs.length > 1 &&
-          isGiteaCliError(error.cause) &&
-          error.cause.status === 404
-            ? Effect.succeed(null)
-            : Effect.fail(error),
+        Effect.catchIf(
+          (error) =>
+            input.objectId !== undefined &&
+            refs.length > 1 &&
+            isGiteaCliError(error.cause) &&
+            error.cause.status === 404,
+          () => Effect.succeed(null),
         ),
       );
       if (response === null) continue;
@@ -1924,8 +1924,9 @@ export const make = Effect.gen(function* () {
         if (target !== null && (target.kind !== "review" || supportsReviewReactions))
           targets.push({ subjectId, target });
       }
-      const reactions = yield* Effect.all(
-        targets.map((entry) =>
+      const reactions = yield* Effect.forEach(
+        targets,
+        (entry) =>
           (entry.target.kind === "comment"
             ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
               readUnknownPage({
@@ -1963,7 +1964,6 @@ export const make = Effect.gen(function* () {
                   ),
             })),
           ),
-        ),
         { concurrency: 4 },
       );
       return {
@@ -2378,16 +2378,24 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
-          readUnknownPage({
+          request({
             operation: "listTeamReviewerCandidates",
             ...input,
+            method: "GET",
             path: `${basePath(input.repository)}/teams`,
           }).pipe(
-            Effect.map((page) => page.rows),
-            Effect.catch((error) =>
-              isGiteaCliError(error.cause) && error.cause.status === 405
-                ? Effect.succeed([])
-                : Effect.fail(error),
+            Effect.flatMap((response) =>
+              decode(
+                "listTeamReviewerCandidates",
+                Schema.NullOr(Schema.Array(Schema.Unknown)),
+                response,
+              ),
+            ),
+            Effect.map((rows) => rows ?? []),
+            Effect.catchIf(
+              (error: GiteaPullRequestApiError) =>
+                isGiteaCliError(error.cause) && error.cause.status === 405,
+              () => Effect.succeed<ReadonlyArray<unknown>>([]),
             ),
           ),
         ],

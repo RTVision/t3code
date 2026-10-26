@@ -1,3 +1,5 @@
+import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
+import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import { PullRequestMentionProvider } from "./PullRequestMentionProvider";
 
@@ -302,6 +304,11 @@ export function PullRequestDetailPanel({
     repositoryIdentity,
     supportsThreadPullRequests,
   );
+  const unavailableHostUrl = projectChangeRequestUrl(
+    repositoryIdentity,
+    requestedReference.repository,
+    requestedReference.number,
+  );
   const pullRequestKey = pullRequestRefKey(reference);
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
@@ -311,6 +318,22 @@ export function PullRequestDetailPanel({
     listEntry.number === reference.number
       ? listEntry
       : null;
+  const linkedReference = sourceControlClients.parseChangeRequestUrl(
+    matchingListEntry?.url ?? unavailableHostUrl ?? "",
+  )?.link;
+  useEnvironmentQuery(
+    context === "page" &&
+      supportsThreadPullRequests &&
+      linkedReference &&
+      (reference.host === undefined ||
+        reference.host.toLowerCase() === linkedReference.host.toLowerCase())
+      ? pullRequestEnvironment.linkedThreads({
+          environmentId,
+          input: { ...reference, ...normalizeThreadPullRequestKey(linkedReference) },
+        })
+      : null,
+  );
+  useEnvironmentQuery(pullRequestEnvironment.changeBreakdown({ environmentId, input: reference }));
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
   const [tab, setTab] = useState<PullRequestDetailTab>(initialTab);

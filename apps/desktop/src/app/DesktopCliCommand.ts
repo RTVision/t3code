@@ -165,13 +165,14 @@ export const make = Effect.gen(function* () {
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
-      return { supported: false, installedPath: null, onPath: false } as const;
+      return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
+    const launcherPath = (yield* exists(launcher)) ? launcher : null;
     const installed = yield* installedAt;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
     if (Option.isNone(installed)) {
-      return { supported: true, installedPath: null, onPath: false, ...shadow };
+      return { supported: true, installedPath: null, onPath: false, launcherPath, ...shadow };
     }
     // A Windows registry entry does not prove fresh-terminal command precedence.
     // Settings exposes the absolute launcher; Unix can check this process PATH.

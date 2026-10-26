@@ -26,6 +26,7 @@ import {
   collectPullRequestListFacets,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
+  pullRequestDiffStatKey,
   mergePullRequestListErrors,
   pullRequestEntryKey,
   rankPullRequestMatches,
@@ -89,7 +90,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { toastManager } from "../ui/toast";
-import { useEscapeToGoBack } from "~/hooks/useNavigateBack";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -105,6 +105,7 @@ import {
   usePullRequestList,
   usePullRequestListStats,
   usePullRequestTurnRefreshes,
+  useSharedPullRequestSummary,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -139,7 +140,6 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 export function PullRequestsPage() {
-  useEscapeToGoBack();
   const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -196,6 +196,15 @@ export function PullRequestsPage() {
     (renderedPullRequestSurface?.environmentId as EnvironmentId | undefined) ??
     selectedProject?.environmentId ??
     null;
+  const panelSummary = useSharedPullRequestSummary(
+    panelEnvironmentId,
+    renderedPullRequestSurface === null
+      ? null
+      : {
+          ...renderedPullRequestSurface,
+          projectId: renderedPullRequestSurface.projectId as ProjectId,
+        },
+  );
   const updateSearch = (patch: {
     [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
   }) =>
@@ -249,6 +258,7 @@ export function PullRequestsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const {
     sentQuery,
+    submitQuery,
     querySettled,
     typedParsed,
     sentParsed,
@@ -727,6 +737,22 @@ export function PullRequestsPage() {
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
+  if (
+    panelEnvironmentId !== null &&
+    panelSummary?.additions !== undefined &&
+    panelSummary.deletions !== undefined
+  ) {
+    const stat = {
+      ...panelSummary,
+      environmentId: panelEnvironmentId,
+      additions: panelSummary.additions,
+      deletions: panelSummary.deletions,
+    };
+    const previous = statsByRow.get(pullRequestDiffStatKey(stat));
+    if (previous?.additions !== stat.additions || previous.deletions !== stat.deletions) {
+      setStatsByRow(mergePullRequestDiffStats(statsByRow, [stat]));
+    }
+  }
   const [statsTargetState, setStatsTargetState] = useState<{
     readonly key: string;
     readonly batches: ReadonlyArray<PullRequestStatsBatch>;
@@ -1095,6 +1121,7 @@ export function PullRequestsPage() {
       value={search.q ?? ""}
       busy={typedQuery.length > 0 && (!querySettled || showingCarried)}
       onChange={(query) => updateListScope({ q: query || undefined })}
+      onSubmit={submitQuery}
     />
   );
   const panelToggleControls = (
@@ -1147,14 +1174,14 @@ export function PullRequestsPage() {
         </div>
       ) : null}
       {!capabilityKnown ? (
-        <PullRequestListGhost rows={7} />
+        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
           title="Pull requests unavailable"
           error="Update your T3 Code servers to browse pull requests."
         />
       ) : firstLoad ? (
-        <PullRequestListGhost rows={7} />
+        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
       ) : listQuery.error && shownCount === 0 ? (
         <PullRequestsUnavailableState
           error={listQuery.error}

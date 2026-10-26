@@ -31,12 +31,12 @@ import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_ch
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
+import { Route as ChatSettingsEditorsRouteImport } from './routes/_chat.settings.editors'
 import { Route as ChatSettingsDiagnosticsRouteImport } from './routes/_chat.settings.diagnostics'
 import { Route as ChatSettingsConnectionsRouteImport } from './routes/_chat.settings.connections'
 import { Route as ChatSettingsBetaRouteImport } from './routes/_chat.settings.beta'
 import { Route as ChatSettingsArchivedRouteImport } from './routes/_chat.settings.archived'
 import { Route as ChatSettingsAppearanceRouteImport } from './routes/_chat.settings.appearance'
-import { Route as ChatSettingsEditorsRouteImport } from './routes/_chat.settings.editors'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -153,6 +153,11 @@ const ChatSettingsGeneralRoute = ChatSettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsEditorsRoute = ChatSettingsEditorsRouteImport.update({
+  id: '/editors',
+  path: '/editors',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsDiagnosticsRoute = ChatSettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -176,11 +181,6 @@ const ChatSettingsArchivedRoute = ChatSettingsArchivedRouteImport.update({
 const ChatSettingsAppearanceRoute = ChatSettingsAppearanceRouteImport.update({
   id: '/appearance',
   path: '/appearance',
-  getParentRoute: () => ChatSettingsRoute,
-} as any)
-const ChatSettingsEditorsRoute = ChatSettingsEditorsRouteImport.update({
-  id: '/editors',
-  path: '/editors',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
@@ -210,11 +210,11 @@ export interface FileRoutesByFullPath {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
-  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -241,11 +241,11 @@ export interface FileRoutesByTo {
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
-  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/settings/editors': typeof ChatSettingsEditorsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -274,11 +274,11 @@ export interface FileRoutesById {
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/_chat/settings/appearance': typeof ChatSettingsAppearanceRoute
-  '/_chat/settings/editors': typeof ChatSettingsEditorsRoute
   '/_chat/settings/archived': typeof ChatSettingsArchivedRoute
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
   '/_chat/settings/connections': typeof ChatSettingsConnectionsRoute
   '/_chat/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/_chat/settings/editors': typeof ChatSettingsEditorsRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -307,11 +307,11 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/appearance'
-    | '/settings/editors'
     | '/settings/archived'
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/editors'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -338,11 +338,11 @@ export interface FileRouteTypes {
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/appearance'
-    | '/settings/editors'
     | '/settings/archived'
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/editors'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -370,11 +370,11 @@ export interface FileRouteTypes {
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/_chat/settings/appearance'
-    | '/_chat/settings/editors'
     | '/_chat/settings/archived'
     | '/_chat/settings/beta'
     | '/_chat/settings/connections'
     | '/_chat/settings/diagnostics'
+    | '/_chat/settings/editors'
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
@@ -553,6 +553,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsGeneralRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/editors': {
+      id: '/_chat/settings/editors'
+      path: '/editors'
+      fullPath: '/settings/editors'
+      preLoaderRoute: typeof ChatSettingsEditorsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/diagnostics': {
       id: '/_chat/settings/diagnostics'
       path: '/diagnostics'
@@ -588,13 +595,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsAppearanceRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
-    '/_chat/settings/editors': {
-      id: '/_chat/settings/editors'
-      path: '/editors'
-      fullPath: '/settings/editors'
-      preLoaderRoute: typeof ChatSettingsEditorsRouteImport
-      parentRoute: typeof ChatSettingsRoute
-    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -614,11 +614,11 @@ declare module '@tanstack/react-router' {
 
 interface ChatSettingsRouteChildren {
   ChatSettingsAppearanceRoute: typeof ChatSettingsAppearanceRoute
-  ChatSettingsEditorsRoute: typeof ChatSettingsEditorsRoute
   ChatSettingsArchivedRoute: typeof ChatSettingsArchivedRoute
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
   ChatSettingsConnectionsRoute: typeof ChatSettingsConnectionsRoute
   ChatSettingsDiagnosticsRoute: typeof ChatSettingsDiagnosticsRoute
+  ChatSettingsEditorsRoute: typeof ChatSettingsEditorsRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
@@ -633,11 +633,11 @@ interface ChatSettingsRouteChildren {
 
 const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
-  ChatSettingsEditorsRoute: ChatSettingsEditorsRoute,
   ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
   ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
   ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
+  ChatSettingsEditorsRoute: ChatSettingsEditorsRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,

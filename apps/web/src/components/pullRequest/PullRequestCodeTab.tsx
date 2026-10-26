@@ -4,6 +4,8 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
+  PullRequestDiffResult,
+  PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
   PullRequestReviewThread,
@@ -69,6 +71,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
+import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
@@ -98,14 +101,11 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import {
-  applyDiffSlice,
   isFileDiffCollapsed,
   isLineInFileDiff,
   foldChoicesAfterViewed,
   type DiffFoldChoices,
   type DiffFoldOverride,
-  type DiffSlice,
-  type DiffSliceState,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
@@ -117,6 +117,63 @@ import {
   usePullRequestReviewStore,
   type PendingReviewComment,
 } from "./pullRequestReviewStore";
+
+interface ReviewAnnotationGroup {
+  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly pending: ReadonlyArray<PendingReviewComment>;
+  readonly draft: boolean;
+}
+
+type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
+
+const COMMIT_PAGE_SIZE = 10;
+
+const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+
+interface DiffSlice {
+  readonly source: PullRequestDiffResult;
+  readonly cursor: string | null;
+  readonly patch: string;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+interface DiffSliceState {
+  readonly key: string;
+  readonly cursor: string | null;
+  readonly slices: ReadonlyArray<DiffSlice>;
+  readonly revalidating: boolean;
+}
+
+// Show host counts outside the shadow root; hunk totals are zero when hosts withhold hunks.
+const REPLACE_FILE_COUNTS_CSS = `
+[data-diffs-header] [data-additions-count],
+[data-diffs-header] [data-deletions-count] {
+  display: none !important;
+}`;
+
+const NO_SLICES: ReadonlyArray<DiffSlice> = [];
+
+// Query results outlive the panel's slices, so their parses survive closing and reopening
+// without retaining anything beyond the query cache's lifetime.
+const sliceParses = new WeakMap<PullRequestDiffResult, Map<string, RenderablePatch | null>>();
+
+function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolean) {
+  let parses = sliceParses.get(slice.source);
+  if (parses === undefined) {
+    parses = new Map();
+    sliceParses.set(slice.source, parses);
+  }
+  if (parses.has(cacheKey)) return parses.get(cacheKey) ?? null;
+  const parsed = getRenderablePatch(slice.patch, cacheKey, {
+    compactPartialHunkOffsets: true,
+    ignoreWhitespace,
+  });
+  parses.set(cacheKey, parsed);
+  return parsed;
+}
+
 interface FileViewedToggleState {
   readonly enabled: boolean;
   readonly writable: boolean;
@@ -167,25 +224,6 @@ function FileViewedToggle({ path, stat }: { readonly path: string; readonly stat
   );
 }
 
-interface ReviewAnnotationGroup {
-  readonly threads: ReadonlyArray<PullRequestReviewThread>;
-  readonly pending: ReadonlyArray<PendingReviewComment>;
-  readonly draft: boolean;
-}
-type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
-const COMMIT_PAGE_SIZE = 10;
-const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
-/**
- * The viewer's own per-file counts are hidden and drawn from this side of its shadow root
- * instead: its counts are hunk sums, and a file whose hunks the host withheld would read as
- * an empty change rather than as the counts the host did report.
- */
-const REPLACE_FILE_COUNTS_CSS = `
-[data-diffs-header] [data-additions-count],
-[data-diffs-header] [data-deletions-count] {
-  display: none !important;
-}`;
-const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 interface MutableAnnotationGroup {
   readonly side: PullRequestDiffSide;
   readonly line: number;
@@ -265,6 +303,8 @@ function PullRequestCodeTab({
   } | null;
 }) {
   const resolvedTheme = useRenderedAppearance();
+  // Initialize the shared tokenizer and workers while the diff request is still pending.
+  useDiffWorkerPool();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
@@ -348,20 +388,47 @@ function PullRequestCodeTab({
       appliedPage.settled !== settled)
   ) {
     setAppliedPage({ data, cursor, scopeKey, settled });
-    setSliceState((previous) =>
-      applyDiffSlice(previous, {
+    setSliceState((previous) => {
+      const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
+      const next = {
+        source: data,
+        cursor,
+        patch: data.patch,
+        truncated: data.truncated,
+        nextCursor: data.nextCursor,
+        omittedFileStats: data.omittedFileStats ?? [],
+      };
+      const index = slices.findIndex((slice) => slice.cursor === cursor);
+      if (index === -1) {
+        return { key: scopeKey, cursor, slices: [...slices, next], revalidating: false };
+      }
+      const existing = slices[index];
+      if (
+        existing !== undefined &&
+        existing.patch === next.patch &&
+        existing.truncated === next.truncated &&
+        existing.nextCursor === next.nextCursor &&
+        existing.omittedFileStats.length === next.omittedFileStats.length &&
+        existing.omittedFileStats.every((file, index) => {
+          const refreshed = next.omittedFileStats[index];
+          return (
+            refreshed !== undefined &&
+            refreshed.path === file.path &&
+            refreshed.additions === file.additions &&
+            refreshed.deletions === file.deletions
+          );
+        })
+      ) {
+        return previous;
+      }
+      // Drop later slices when replacing a changed page; their cursors target the old diff.
+      return {
         key: scopeKey,
-        slice: {
-          cursor,
-          patch: data.patch,
-          truncated: data.truncated,
-          nextCursor: data.nextCursor,
-          omittedFileStats: data.omittedFileStats ?? [],
-        },
-        // A failed read still carries the last good answer, which confirms nothing either.
-        settled: !diffQuery.isPending && diffQuery.error === null,
-      }),
-    );
+        cursor,
+        slices: [...slices.slice(0, index), next],
+        revalidating: false,
+      };
+    });
   }
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
