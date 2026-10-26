@@ -150,6 +150,7 @@ export function ThreadMcpApp(props: {
 
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
+  const registry = useContext(RegistryContext);
   const theme = useMemo(
     () =>
       mobileHtmlRenderTheme({
@@ -217,7 +218,6 @@ export function ThreadMcpApp(props: {
   );
   const toolDefinition = toolInfo.data?.tool;
 
-  const registry = useContext(RegistryContext);
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfoCommand = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
   const readResource = useAtomCommand(mcpAppEnvironment.readResource, { reportFailure: false });

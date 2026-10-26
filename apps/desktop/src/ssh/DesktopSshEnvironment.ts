@@ -184,20 +184,22 @@ export const make = Effect.fn("DesktopSshEnvironment.make")(function* (
         ),
       ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost"));
     }),
-    ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(function* (target, ensureOptions) {
-      return yield* withRunner((runner) =>
-        prepareTargetForSshRunner(
-          target,
-          runner,
-          platform,
-          ensureOptions?.isNewTarget === true,
-        ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
-      ).pipe(
-        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.ensureEnvironment"),
-      );
-    }),
+    ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
+      function* (target, ensureOptions) {
+        return yield* withRunner((runner) =>
+          prepareTargetForSshRunner(
+            target,
+            runner,
+            platform,
+            ensureOptions?.isNewTarget === true,
+          ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
+        ).pipe(
+          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.ensureEnvironment"),
+        );
+      },
+    ),
     disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(function* (target) {
       return yield* withRunner((runner) =>
         prepareTargetForSshRunner(target, runner, platform, false).pipe(

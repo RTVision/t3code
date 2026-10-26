@@ -444,11 +444,13 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.remoteBranchExists(input)),
       );
     }),
-    resolveDefaultBranchName: Effect.fn("GitWorkflowService.resolveDefaultBranchName")(function (input) {
-      return ensureGitCommand("GitWorkflowService.resolveDefaultBranchName", input.cwd).pipe(
-        Effect.andThen(git.resolveDefaultBranchName(input.cwd, input.remoteName)),
-      );
-    }),
+    resolveDefaultBranchName: Effect.fn("GitWorkflowService.resolveDefaultBranchName")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.resolveDefaultBranchName", input.cwd).pipe(
+          Effect.andThen(git.resolveDefaultBranchName(input.cwd, input.remoteName)),
+        );
+      },
+    ),
     resolveRemoteTrackingCommit: Effect.fn("GitWorkflowService.resolveRemoteTrackingCommit")(
       function (input) {
         return ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
