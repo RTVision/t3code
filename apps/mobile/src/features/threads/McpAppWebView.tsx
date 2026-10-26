@@ -171,7 +171,7 @@ export function ThreadMcpApp(props: {
       disposition: "inline" as const,
       renderIntent: "mcp-app" as const,
     }),
-    [app, registry],
+    [app],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
   if (uri === null && asset._tag === "Success") setUri(asset.url);
