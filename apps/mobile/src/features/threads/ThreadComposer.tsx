@@ -386,12 +386,14 @@ export function ComposerSurface(props: {
   const animatedBorderRadius = useSharedValue(targetBorderRadius);
   const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
   useLayoutEffect(() => {
-    animatedBorderRadius.value = shouldAnimate
-      ? withTiming(targetBorderRadius, {
-          duration: COMPOSER_TRANSITION_DURATION_MS,
-          reduceMotion: ReduceMotion.System,
-        })
-      : targetBorderRadius;
+    animatedBorderRadius.set(
+      shouldAnimate
+        ? withTiming(targetBorderRadius, {
+            duration: COMPOSER_TRANSITION_DURATION_MS,
+            reduceMotion: ReduceMotion.System,
+          })
+        : targetBorderRadius,
+    );
   }, [animatedBorderRadius, shouldAnimate, targetBorderRadius]);
   const borderCurve = props.style.borderCurve;
   const animatedShapeStyle = useAnimatedStyle(() => ({
@@ -763,11 +765,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     settingsSheetPresentation.open();
   };
 
+  const { present: presentSettingsRoute } = settingsRoutePresentation;
   useEffect(() => {
     if (settingsSheetPresentation.isActive) {
-      settingsRoutePresentation.present(settingsRouteSession);
+      presentSettingsRoute(settingsRouteSession);
     }
-  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.isActive]);
+  }, [presentSettingsRoute, settingsRouteSession, settingsSheetPresentation.isActive]);
 
   useEffect(() => {
     if (!settingsSheetPresentation.isVisible || settingsRoutePresentedRef.current) {

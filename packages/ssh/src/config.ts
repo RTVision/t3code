@@ -366,9 +366,13 @@ export const discoverSshHosts = Effect.fn("ssh/config.discoverSshHosts")(functio
     `\\\\wsl.localhost\\${runner.distro}${path.replaceAll("/", "\\")}`;
   const distroFileSystem = FileSystem.FileSystem.of({
     ...fs,
-    exists: (path) => fs.exists(toWindows(path)),
-    readFileString: (path, encoding) => fs.readFileString(toWindows(path), encoding),
-    readDirectory: (path) => fs.readDirectory(toWindows(path)),
+    exists: Effect.fn("FileSystem.FileSystem.exists")((path) => fs.exists(toWindows(path))),
+    readFileString: Effect.fn("FileSystem.FileSystem.readFileString")((path, encoding) =>
+      fs.readFileString(toWindows(path), encoding),
+    ),
+    readDirectory: Effect.fn("FileSystem.FileSystem.readDirectory")((path) =>
+      fs.readDirectory(toWindows(path)),
+    ),
   });
   // Preserve POSIX semantics for absolute Includes, globs, and nested config files.
   return yield* discoverNativeSshHosts({ homeDir: runner.homeDir }).pipe(

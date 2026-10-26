@@ -9,7 +9,7 @@ export function PullRequestsUnavailableState({
   title = "Could not load pull requests",
   error,
   onRetry,
-  browserUrl,
+  browserUrl: _browserUrl,
   refreshing = false,
   host,
 }: {

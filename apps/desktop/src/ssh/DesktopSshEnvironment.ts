@@ -168,35 +168,40 @@ export const make = Effect.fn("DesktopSshEnvironment.make")(function* (
     return yield* operation(runner).pipe(Effect.provideService(SshRunner, runner));
   });
   return DesktopSshEnvironment.of({
-    discoverHosts: (input) =>
-      withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
+    discoverHosts: Effect.fn("desktop.ssh.discoverHosts")(function* (input) {
+      return yield* withRunner(() => discoverDesktopSshHostsEffect(input)).pipe(
         Effect.provide(runtimeContext),
         Effect.withSpan("desktop.ssh.discoverHosts"),
-      ),
-    resolveHost: (alias) =>
-      withRunner((runner) =>
+      );
+    }),
+    resolveHost: Effect.fn("desktop.ssh.resolveHost")(function* (alias) {
+      return yield* withRunner((runner) =>
         resolveSshTarget(alias.trim()).pipe(
           Effect.map((target) => {
             const identity = sshRunnerIdentity(runner, platform);
             return { ...target, ...(identity === undefined ? {} : { runner: identity }) };
           }),
         ),
-      ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost")),
-    ensureEnvironment: (target, ensureOptions) =>
-      withRunner((runner) =>
-        prepareTargetForSshRunner(
-          target,
-          runner,
-          platform,
-          ensureOptions?.isNewTarget === true,
-        ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
-      ).pipe(
-        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.ensureEnvironment"),
-      ),
-    disconnectEnvironment: (target) =>
-      withRunner((runner) =>
+      ).pipe(Effect.provide(runtimeContext), Effect.withSpan("desktop.ssh.resolveHost"));
+    }),
+    ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
+      function* (target, ensureOptions) {
+        return yield* withRunner((runner) =>
+          prepareTargetForSshRunner(
+            target,
+            runner,
+            platform,
+            ensureOptions?.isNewTarget === true,
+          ).pipe(Effect.flatMap((resolved) => manager.ensureEnvironment(resolved, ensureOptions))),
+        ).pipe(
+          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.ensureEnvironment"),
+        );
+      },
+    ),
+    disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(function* (target) {
+      return yield* withRunner((runner) =>
         prepareTargetForSshRunner(target, runner, platform, false).pipe(
           Effect.flatMap((resolved) => manager.disconnectEnvironment(resolved)),
         ),
@@ -204,7 +209,8 @@ export const make = Effect.fn("DesktopSshEnvironment.make")(function* (
         Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
         Effect.provide(runtimeContext),
         Effect.withSpan("desktop.ssh.disconnectEnvironment"),
-      ),
+      );
+    }),
   });
 });
 

@@ -31,6 +31,8 @@ export function useEditableAfterHighlight(file: FileContents) {
   const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
   const needsHighlight = needsWorkerHighlight(workerPool, file);
   const ready = !needsHighlight || highlightedFile === file;
+  // Prime the worker cache before allowing an edit session to render.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Highlight preparation is an external worker operation.
   useEffect(() => {
     if (ready || workerPool === undefined) return;
     workerPool.primeFileHighlightCache(file).catch(() => setHighlightedFile(file));

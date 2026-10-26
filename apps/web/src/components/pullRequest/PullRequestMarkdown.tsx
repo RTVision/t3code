@@ -17,11 +17,7 @@ import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import {
-  remarkPullRequestAutolinks,
-  resolvePullRequestImageAsset,
-  splitPullRequestBody,
-} from "./pullRequestMarkdown.logic";
+import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 export const PullRequestMarkdownContext = createContext<{
   autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   threadRef: ScopedThreadRef | null;

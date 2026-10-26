@@ -343,7 +343,12 @@ jobs:
           fi
 
       - name: Test
-        run: vp run --filter @t3tools/web test
+        # Standard fork runners have fewer cores than upstream's Blacksmith runner.
+        # Keep unit work from competing with the Chromium process and heavy browser fixtures.
+        working-directory: apps/web
+        run: |
+          vp test run --passWithNoTests --project unit --no-file-parallelism
+          vp test run --passWithNoTests --project browser --no-file-parallelism
 
   # apps/server sets `fileParallelism: false`, so its test files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
@@ -421,7 +426,18 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
-        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+        run: >-
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
+          --verify-hits 1 --report "${{ runner.temp }}/test-cache-${{ matrix.shard }}.json" apps/server
+
+      - name: Upload test cache measurements
+        if: always() && steps.changes.outputs.test_server != 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-cache-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-cache-${{ matrix.shard }}.json
+          if-no-files-found: error
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
@@ -494,7 +510,9 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: macos-26
+    # The standard macos-26 pool repeatedly abandoned this fork job while queued.
+    # These checks only require Homebrew's Swift/Kotlin linters, not a macOS 26 SDK.
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout

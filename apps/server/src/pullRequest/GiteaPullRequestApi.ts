@@ -759,7 +759,17 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const request = Effect.fn("GiteaPullRequestApi.request")(function* (input: {
+  const request: (input: {
+    operation: string;
+    host: string;
+    repository?: string;
+    method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+    path: string;
+    body?: string;
+    maxBytes?: number;
+  }) => Effect.Effect<GiteaCli.GiteaResponse, GiteaPullRequestApiError> = Effect.fn(
+    "GiteaPullRequestApi.request",
+  )(function* (input: {
     operation: string;
     host: string;
     repository?: string;
@@ -1745,13 +1755,13 @@ export const make = Effect.gen(function* () {
         method: "GET",
         path: query(`${basePath(input.repository)}/contents/${path}`, { ref }),
       }).pipe(
-        Effect.catch((error) =>
-          input.objectId &&
-          refs.length > 1 &&
-          isGiteaCliError(error.cause) &&
-          error.cause.status === 404
-            ? Effect.succeed(null)
-            : Effect.fail(error),
+        Effect.catchIf(
+          (error) =>
+            input.objectId !== undefined &&
+            refs.length > 1 &&
+            isGiteaCliError(error.cause) &&
+            error.cause.status === 404,
+          () => Effect.succeed(null),
         ),
       );
       if (response === null) continue;
@@ -1924,8 +1934,9 @@ export const make = Effect.gen(function* () {
         if (target !== null && (target.kind !== "review" || supportsReviewReactions))
           targets.push({ subjectId, target });
       }
-      const reactions = yield* Effect.all(
-        targets.map((entry) =>
+      const reactions = yield* Effect.forEach(
+        targets,
+        (entry) =>
           (entry.target.kind === "comment"
             ? // Gitea's comment-reaction handler returns the whole list and ignores pagination.
               readUnknownPage({
@@ -1963,7 +1974,6 @@ export const make = Effect.gen(function* () {
                   ),
             })),
           ),
-        ),
         { concurrency: 4 },
       );
       return {
@@ -2005,12 +2015,16 @@ export const make = Effect.gen(function* () {
   });
 
   return GiteaPullRequestApi.of({
-    getCiRuns: (input) =>
+    getCiRuns: Effect.fn("GiteaPullRequestApi.getCiRuns")((input) =>
       actionsCi.getCiRuns({ ...input, repository: unmounted(input.repository) }),
-    getCiJobs: (input) =>
+    ),
+    getCiJobs: Effect.fn("GiteaPullRequestApi.getCiJobs")((input) =>
       actionsCi.getCiJobs({ ...input, repository: unmounted(input.repository) }),
-    rerunCi: (input) => actionsCi.rerunCi({ ...input, repository: unmounted(input.repository) }),
-    getFeatures: () => getFeatures,
+    ),
+    rerunCi: Effect.fn("GiteaPullRequestApi.rerunCi")((input) =>
+      actionsCi.rerunCi({ ...input, repository: unmounted(input.repository) }),
+    ),
+    getFeatures: Effect.fn("GiteaPullRequestApi.getFeatures")(() => getFeatures),
     getWorkflowApprovals,
     getViewer: Effect.fn("GiteaPullRequestApi.getViewer")(function* () {
       const response = yield* gitea
@@ -2168,7 +2182,7 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       );
     }),
-    runAction: (input) => {
+    runAction: Effect.fn("GiteaPullRequestApi.runAction")((input) => {
       const path = `${basePath(input.repository)}/pulls/${input.number}`;
       switch (input.action) {
         case "merge":
@@ -2257,7 +2271,7 @@ export const make = Effect.gen(function* () {
             }),
           );
       }
-    },
+    }),
     getViewedFiles: Effect.fn("GiteaPullRequestApi.getViewedFiles")(function* (input) {
       const response = yield* request({
         ...input,
@@ -2275,7 +2289,7 @@ export const make = Effect.gen(function* () {
       );
       return { headSha: value.head_sha, files: value.files };
     }),
-    setFilesViewed: (input) =>
+    setFilesViewed: Effect.fn("GiteaPullRequestApi.setFilesViewed")((input) =>
       write({
         ...input,
         operation: "setFilesViewed",
@@ -2286,7 +2300,8 @@ export const make = Effect.gen(function* () {
           files: Object.fromEntries(input.files.map(({ path, viewed }) => [path, viewed])),
         },
       }),
-    setFileViewed: (input) =>
+    ),
+    setFileViewed: Effect.fn("GiteaPullRequestApi.setFileViewed")((input) =>
       write({
         ...input,
         operation: "setFileViewed",
@@ -2294,7 +2309,8 @@ export const make = Effect.gen(function* () {
         path: `${basePath(input.repository)}/pulls/${input.number}/viewed-files`,
         body: { head_sha: input.headSha, files: { [input.path]: input.viewed } },
       }),
-    updatePullRequest: (input) =>
+    ),
+    updatePullRequest: Effect.fn("GiteaPullRequestApi.updatePullRequest")((input) =>
       write({
         operation: "updatePullRequest",
         host: input.host,
@@ -2306,7 +2322,8 @@ export const make = Effect.gen(function* () {
           ...(input.body === undefined ? {} : { body: input.body }),
         },
       }),
-    comment: (input) =>
+    ),
+    comment: Effect.fn("GiteaPullRequestApi.comment")((input) =>
       write({
         operation: "comment",
         host: input.host,
@@ -2315,7 +2332,8 @@ export const make = Effect.gen(function* () {
         path: `${basePath(input.repository)}/issues/${input.number}/comments`,
         body: { body: input.body },
       }),
-    updateComment: (input) => {
+    ),
+    updateComment: Effect.fn("GiteaPullRequestApi.updateComment")((input) => {
       const id = editableCommentId(input.commentId);
       if (id === null) {
         return Effect.fail(
@@ -2334,8 +2352,8 @@ export const make = Effect.gen(function* () {
         path: `${basePath(input.repository)}/issues/comments/${id}`,
         body: { body: input.body },
       });
-    },
-    submitReview: (input) =>
+    }),
+    submitReview: Effect.fn("GiteaPullRequestApi.submitReview")((input) =>
       write({
         operation: "submitReview",
         host: input.host,
@@ -2365,11 +2383,12 @@ export const make = Effect.gen(function* () {
           })),
         },
       }),
-    listReviewerCandidates: (input) =>
+    ),
+    listReviewerCandidates: Effect.fn("GiteaPullRequestApi.listReviewerCandidates")((input) =>
       Effect.all(
-        [
-          getPullRequest(input),
-          readUnknownSlice({
+        {
+          pr: getPullRequest(input),
+          result: readUnknownSlice({
             operation: "listReviewerCandidates",
             ...input,
             path: query(`${basePath(input.repository)}/reviewers`, {
@@ -2378,22 +2397,40 @@ export const make = Effect.gen(function* () {
             }),
             limit: PAGE_SIZE,
           }),
-          readUnknownPage({
-            operation: "listTeamReviewerCandidates",
-            ...input,
-            path: `${basePath(input.repository)}/teams`,
+          teamRows: Effect.gen(function* () {
+            yield* validateHost(input.host);
+            if (repositoryPath(unmounted(input.repository)) === null) {
+              return yield* new GiteaPullRequestApiError({
+                operation: "listTeamReviewerCandidates",
+                reason: "failed",
+                detail: "Gitea repositories must be written as owner/name.",
+              });
+            }
+            const response = yield* gitea
+              .request({
+                operation: "listTeamReviewerCandidates",
+                ...input,
+                method: "GET",
+                path: `${basePath(input.repository)}/teams`,
+              })
+              .pipe(Effect.mapError((error) => failure("listTeamReviewerCandidates", error)));
+            const rows = yield* decode(
+              "listTeamReviewerCandidates",
+              Schema.NullOr(Schema.Array(Schema.Unknown)),
+              response,
+            );
+            return rows ?? [];
           }).pipe(
-            Effect.map((page) => page.rows),
-            Effect.catch((error) =>
-              isGiteaCliError(error.cause) && error.cause.status === 405
-                ? Effect.succeed([])
-                : Effect.fail(error),
+            Effect.catchIf(
+              (error: GiteaPullRequestApiError) =>
+                isGiteaCliError(error.cause) && error.cause.status === 405,
+              () => Effect.succeed<ReadonlyArray<unknown>>([]),
             ),
-          ),
-        ],
+          ) as Effect.Effect<ReadonlyArray<unknown>, GiteaPullRequestApiError, never>,
+        },
         { concurrency: 3 },
       ).pipe(
-        Effect.map(([pr, result, teamRows]) => {
+        Effect.map(({ pr, result, teamRows }) => {
           const requested = new Set(pr.reviewRequestLogins.map((login) => login.toLowerCase()));
           const requestedTeams = new Set(
             pr.reviewRequestTeamNames.map((name) => name.toLowerCase()),
@@ -2439,7 +2476,8 @@ export const make = Effect.gen(function* () {
           };
         }),
       ),
-    setReviewerRequest: (input) =>
+    ),
+    setReviewerRequest: Effect.fn("GiteaPullRequestApi.setReviewerRequest")((input) =>
       write({
         operation: "setReviewerRequest",
         host: input.host,
@@ -2455,7 +2493,8 @@ export const make = Effect.gen(function* () {
             .map((reviewer) => reviewer.id),
         },
       }),
-    listLabelCandidates: (input) =>
+    ),
+    listLabelCandidates: Effect.fn("GiteaPullRequestApi.listLabelCandidates")((input) =>
       Effect.all(
         [
           getPullRequest(input),
@@ -2492,7 +2531,8 @@ export const make = Effect.gen(function* () {
           };
         }),
       ),
-    setLabels: (input) =>
+    ),
+    setLabels: Effect.fn("GiteaPullRequestApi.setLabels")((input) =>
       getPullRequest(input).pipe(
         Effect.flatMap((pr) => {
           const labels = new Set(pr.labels.map((label) => label.name));
@@ -2510,7 +2550,8 @@ export const make = Effect.gen(function* () {
           });
         }),
       ),
-    replyToThread: (input) =>
+    ),
+    replyToThread: Effect.fn("GiteaPullRequestApi.replyToThread")((input) =>
       write({
         operation: "replyToThread",
         host: input.host,
@@ -2519,7 +2560,8 @@ export const make = Effect.gen(function* () {
         path: `${basePath(input.repository)}/pulls/${input.number}/comments/${encodeURIComponent(input.threadId)}/replies`,
         body: { body: input.body },
       }),
-    setThreadResolution: (input) =>
+    ),
+    setThreadResolution: Effect.fn("GiteaPullRequestApi.setThreadResolution")((input) =>
       write({
         operation: "setThreadResolution",
         host: input.host,
@@ -2527,7 +2569,8 @@ export const make = Effect.gen(function* () {
         method: "POST",
         path: `${basePath(input.repository)}/pulls/comments/${encodeURIComponent(input.threadId)}/${input.resolved ? "resolve" : "unresolve"}`,
       }),
-    setReaction: (input) => {
+    ),
+    setReaction: Effect.fn("GiteaPullRequestApi.setReaction")((input) => {
       const target = reactionTarget(input.subjectId);
       if (target === null) {
         return Effect.fail(
@@ -2566,7 +2609,7 @@ export const make = Effect.gen(function* () {
           body: { content: nativeReactionContent(input.content) },
         });
       });
-    },
+    }),
   });
 });
 

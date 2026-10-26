@@ -31,6 +31,7 @@ function output(stdout: string) {
 }
 
 const VCS_DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function outputWithin(maxOutputBytes: number | undefined, response: string) {
   const ceiling = maxOutputBytes ?? VCS_DEFAULT_MAX_OUTPUT_BYTES;
@@ -116,7 +117,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+            yield* encodeUnknownJson(
               Array.from({ length: 201 }, () => ({ pullRequestId: "invalid" })),
             ),
           ),

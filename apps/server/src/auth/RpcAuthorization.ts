@@ -240,7 +240,6 @@ const SettingsUpdate = Schema.Struct({
   patch: ServerSettingsPatch,
   providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
 });
-
 const decodeSettingsUpdate = Schema.decodeUnknownSync(SettingsUpdate);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 

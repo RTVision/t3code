@@ -69,6 +69,8 @@ export function usePullRequestFilesViewed(options: {
   // retires the press rather than the host happening to agree with it.
   const answeredFrom = useRef<Map<string, FileViewedStates | null>>(new Map());
   const statesRef = useRef(states);
+  // Keep the host snapshot current for the immutable acknowledgement baseline.
+  // oxlint-disable-next-line t3code/react-effect-budget -- This ref synchronization must run before paint.
   useLayoutEffect(() => {
     statesRef.current = states;
   }, [states]);
@@ -121,12 +123,16 @@ export function usePullRequestFilesViewed(options: {
   // Read through a ref rather than closed over: `setViewed` is handed to every file header the
   // viewer draws, and a new identity per render would rebuild all of them.
   const flushRef = useRef(flush);
+  // Keep delayed flushes pointed at the current scoped writer without changing callback identity.
+  // oxlint-disable-next-line t3code/react-effect-budget -- The timer needs the latest closure.
   useLayoutEffect(() => {
     flushRef.current = flush;
   }, [flush]);
   // Leaving a change request, the environment it lives on, or the page itself records what was
   // pressed and then drops the rest. The flush kept here is the one bound to the scope being
   // left, which is what sends those last presses where they were meant to go.
+  // Flush and clear pending marks when the pull-request scope changes.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Scope exit is an imperative boundary.
   useEffect(() => {
     const flushScope = flushRef.current;
     scope.current = scopeKey;
@@ -142,6 +148,8 @@ export function usePullRequestFilesViewed(options: {
     };
   }, [scopeKey]);
   const refreshRef = useRef(refresh);
+  // Keep refresh stable for file headers while the query changes.
+  // oxlint-disable-next-line t3code/react-effect-budget -- The callback must read the latest query.
   useLayoutEffect(() => {
     refreshRef.current = refresh;
   }, [refresh]);

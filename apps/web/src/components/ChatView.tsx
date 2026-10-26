@@ -20,7 +20,8 @@ import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useCh
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
 import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
-import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
+import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
@@ -178,7 +179,6 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
-import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -258,6 +258,7 @@ import {
   RevertConfirmHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
+import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -567,6 +568,7 @@ export default function ChatView(props: ChatViewProps) {
       ? { citation, key: citationLocation.key ?? citationLocation.href }
       : null;
   })() as AssistantCitationRequest | null;
+  const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -665,7 +667,7 @@ export default function ChatView(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
-  const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [, setTerminalFocusRequestId] = useState(0);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   // Overrides chosen before a server thread's first turn; they belong to that thread only.
@@ -1112,10 +1114,6 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
-  useEffect(() => {
-    if (!activeThreadRef || !activeProjectRef) return;
-    registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
-  }, [activeProjectRef, activeThreadRef]);
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =
@@ -1872,7 +1870,6 @@ export default function ChatView(props: ChatViewProps) {
     panelTerminalIds,
     canReuseTerminal,
     gitCwd,
-    setTerminalFocusRequestId,
     setTerminalUiLaunchContext,
     setThreadError,
   });
@@ -1905,9 +1902,6 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: activeThreadRef,
     deviceState,
     deviceStateLoaded,
-    previewState: activePreviewState,
-    serverBrowserAvailable: activeEnvironmentServerBrowser,
-    panelSurfaces: rightPanelState.surfaces,
     miniPlayerSource: activePreviewMiniPlayer?.source ?? null,
     sheetLayout: shouldUsePlanSidebarSheet,
   });
@@ -2429,7 +2423,6 @@ export default function ChatView(props: ChatViewProps) {
     gitCwd,
     activeProjectCwd,
     explicitDiffOpenRef,
-    setTerminalFocusRequestId,
     onDiffPanelOpen,
     closeRightPanelSurface,
   });
@@ -2593,6 +2586,7 @@ export default function ChatView(props: ChatViewProps) {
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
+          timestampFormat,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -2692,10 +2686,9 @@ export default function ChatView(props: ChatViewProps) {
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
-  const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
-  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
-  const openThreadFind = () => threadFindControlsRef.current?.open();
-  const closeThreadFind = () => threadFindControlsRef.current?.close();
+  const threadFindEnabled =
+    isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
+  const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
 
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
@@ -2717,8 +2710,9 @@ export default function ChatView(props: ChatViewProps) {
         if (!event.repeat) copyActiveThreadReference();
       },
       "chat.find": () => {
-        if (!isServerThread || serverConfig?.threadFind !== true) return false;
-        openThreadFind();
+        if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
+          return false;
+        openThreadFind(activeThreadKey);
       },
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
@@ -3103,7 +3097,6 @@ export default function ChatView(props: ChatViewProps) {
       onCloseSurface={closeRightPanelSurface}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
-        focusRequestId: terminalFocusRequestId,
         keybindings,
         onAddTerminalContext: addTerminalContextToDraftStable,
         onSplitTerminal: splitPanelTerminalStable,
@@ -3243,11 +3236,8 @@ export default function ChatView(props: ChatViewProps) {
               skills: timelineSkills,
               progressive: serverConfig?.threadFindProgressive === true,
               thread: activeThreadRef,
-              enabled:
-                isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline,
+              enabled: threadFindEnabled,
             }}
-            controlsRef={threadFindControlsRef}
-            onOpenChange={setIsThreadFindActive}
             detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
             composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
@@ -3288,7 +3278,7 @@ export default function ChatView(props: ChatViewProps) {
                 onVimBottom={() => scrollToEnd(false)}
                 vimHistoryError={serverThreadHistory.error}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
-                citationHistoryLoading={threadDetailLoading}
+                citationHistory={citationHistory}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantTextStable,
@@ -3877,7 +3867,6 @@ export default function ChatView(props: ChatViewProps) {
           activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}
           composerHeight={composerReservedHeight}
           launchContext={activeTerminalLaunchContext ?? null}
-          focusRequestId={terminalFocusRequestId}
           splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
           splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
           newShortcutLabel={newTerminalShortcutLabel ?? undefined}

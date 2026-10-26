@@ -61,8 +61,9 @@ export const issueServiceUpdateToken = Effect.fn("cli.service.issueUpdateToken")
   const rawState = yield* fs
     .readFileString(path.join(baseDir, "runtime", "service-state.json"))
     .pipe(
-      Effect.catch((error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(null),
       ),
     );
   if (rawState === null) return null;

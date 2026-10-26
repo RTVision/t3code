@@ -1,5 +1,3 @@
-import { VcsRepositoryDetectionError } from "@t3tools/contracts";
-import * as GiteaPullRequestApi from "../pullRequest/GiteaPullRequestApi.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";

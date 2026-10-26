@@ -54,6 +54,8 @@ export function ElectronBrowserHost() {
     left.runtimeTabId < right.runtimeTabId ? -1 : left.runtimeTabId > right.runtimeTabId ? 1 : 0,
   );
 
+  // Persist a desktop profile before Electron attaches the guest partition.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Partition selection must be latched imperatively.
   useEffect(() => {
     if (!isElectron || !hydrated) return;
     for (const session of sessions) {

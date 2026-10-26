@@ -34,7 +34,7 @@ Tip: Use `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest 
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/RTVision/t3code/releases), or from your favorite package registry:
 
 #### Windows (`winget`)
 
@@ -56,7 +56,7 @@ brew install --cask t3-code
 
 #### Debian, Ubuntu (`.deb`)
 
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+Download the `.deb` from [GitHub Releases](https://github.com/RTVision/t3code/releases), then:
 
 ```bash
 sudo apt install ./T3-Code-*.deb

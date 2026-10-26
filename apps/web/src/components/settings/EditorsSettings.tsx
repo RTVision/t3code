@@ -18,6 +18,8 @@ export function EditorsSettingsPanel() {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const state = useEditorChoice(environmentId, config?.availableEditors ?? []);
   const { capability, connection, refresh } = state.terminal;
+  // Refresh the selected environment when the settings surface opens or changes.
+  // oxlint-disable-next-line t3code/react-effect-budget -- The capability is discovered asynchronously.
   useEffect(() => {
     void refresh();
   }, [refresh]);

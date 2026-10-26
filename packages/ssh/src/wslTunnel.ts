@@ -34,7 +34,8 @@ export const forwardWslTunnel = Effect.fn("ssh/wslTunnel.forward")(function* (lo
         upstream.once("error", close);
         client.once("close", close);
         upstream.once("close", close);
-        client.pipe(upstream).pipe(client);
+        upstream.pipe(client);
+        client.pipe(upstream);
       });
       server.once("error", (cause) =>
         resume(

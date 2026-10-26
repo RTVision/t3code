@@ -25,6 +25,8 @@ export function DiffPanelShell(props: {
   children: ReactNode;
 }) {
   const paneRef = useRef<HTMLDivElement>(null);
+  // The pane must claim focus after it is mounted.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Focus is an imperative DOM operation.
   useLayoutEffect(() => {
     claimVimPaneFocus("diff", paneRef.current);
   });

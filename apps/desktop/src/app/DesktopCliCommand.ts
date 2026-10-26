@@ -165,20 +165,28 @@ export const make = Effect.gen(function* () {
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
-      return { supported: false, installedPath: null, onPath: false } as const;
+      return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
     }
+    const launcherPath = (yield* exists(launcher)) ? launcher : null;
     const installed = yield* installedAt;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
     if (Option.isNone(installed)) {
-      return { supported: true, installedPath: null, onPath: false, ...shadow };
+      return { supported: true, installedPath: null, onPath: false, launcherPath, ...shadow };
     }
     // A Windows registry entry does not prove fresh-terminal command precedence.
     // Settings exposes the absolute launcher; Unix can check this process PATH.
     const first = windows ? Option.none<string>() : yield* firstOnPath;
     const onPath = Option.isSome(first) && (yield* isOurLink(first.value));
-    return { supported: true, installedPath: installed.value, onPath, ...shadow };
-  }).pipe(Effect.orElseSucceed(() => ({ supported: false, installedPath: null, onPath: false })));
+    return { supported: true, installedPath: installed.value, onPath, launcherPath, ...shadow };
+  }).pipe(
+    Effect.orElseSucceed(() => ({
+      supported: false,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+    })),
+  );
 
   const ensureLauncher = DesktopCliShim.install.pipe(
     Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
