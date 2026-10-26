@@ -507,7 +507,9 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: macos-26
+    # The standard macos-26 pool repeatedly abandoned this fork job while queued.
+    # These checks only require Homebrew's Swift/Kotlin linters, not a macOS 26 SDK.
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout
