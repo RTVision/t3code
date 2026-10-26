@@ -56,7 +56,7 @@ function instance(id: string, value = config, ready = true): DesktopBackendInsta
     label: Effect.succeed(id),
     start: Effect.void,
     stop: () => Effect.void,
-    currentConfig: Effect.succeed(Option.some(value)),
+    currentConfig: Effect.succeedSome(value),
     snapshot: Effect.succeed({
       desiredRunning: true,
       ready,

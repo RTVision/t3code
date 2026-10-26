@@ -16,8 +16,9 @@ it.effect("preserves concurrent same-name downloads and a preexisting file", () 
     yield* fs.writeFileString(sources[1]!, "second download");
     const existing = path.join(directory, "report.pdf");
     yield* fs.writeFileString(existing, "existing file");
-    const targets = yield* Effect.all(
-      sources.map((source) => copyDownload(source, directory, "report.pdf")),
+    const targets = yield* Effect.forEach(
+      sources,
+      (source) => copyDownload(source, directory, "report.pdf"),
       { concurrency: "unbounded" },
     );
     assert.notStrictEqual(targets[0], targets[1]);
