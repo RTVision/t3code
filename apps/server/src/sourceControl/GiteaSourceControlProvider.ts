@@ -328,8 +328,9 @@ export const make = Effect.gen(function* () {
         return items;
       },
     ),
-    getChangeRequest: (input) =>
+    getChangeRequest: Effect.fn("GiteaSourceControlProvider.getChangeRequest")((input) =>
       getPullRequest(input).pipe(Effect.map(({ pull }) => toChangeRequest(pull))),
+    ),
     createChangeRequest: Effect.fn("GiteaSourceControlProvider.createChangeRequest")(
       function* (input) {
         const { repository } = yield* resolveRepository(input);

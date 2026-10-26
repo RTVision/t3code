@@ -667,7 +667,7 @@ export default function ChatView(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
-  const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [, setTerminalFocusRequestId] = useState(0);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   // Overrides chosen before a server thread's first turn; they belong to that thread only.

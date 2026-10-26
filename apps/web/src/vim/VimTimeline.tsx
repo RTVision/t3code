@@ -47,6 +47,8 @@ export function VimTimeline({
     (match) => match.messageId === selected?.messageId && match.offset === selected.offset,
   );
   const match = matches[selectedIndex];
+  // Drive bounded history loading from the Vim search state.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Loading older timeline pages is an external side effect.
   useEffect(() => {
     if ((!searchingHistory && !goToTop) || historyError || !vimEnabled()) return;
     if (!loadEarlier) {
@@ -69,6 +71,8 @@ export function VimTimeline({
     setTarget(first.messageId);
   }
 
+  // Resolve a selected message into a list position and acknowledge the request.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Scrolling and clearing the target are imperative.
   useEffect(() => {
     if (!target) return;
     const message = messages.find((item) => item.id === target);

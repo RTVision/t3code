@@ -31,7 +31,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
-import { useEnvironmentQuery } from "~/state/query";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";

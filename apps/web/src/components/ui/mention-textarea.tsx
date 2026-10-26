@@ -48,6 +48,8 @@ export function MentionTextarea({
   const selected = Math.min(active, Math.max(0, matches.length - 1));
   const activeLogin = open ? matches[selected]?.login : undefined;
   const activeOption = useRef<HTMLDivElement>(null);
+  // Keep the active suggestion visible while navigating the popup.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Scrolling the suggestion list is imperative.
   useEffect(() => {
     if (activeLogin) activeOption.current?.scrollIntoView({ block: "nearest" });
   }, [activeLogin]);

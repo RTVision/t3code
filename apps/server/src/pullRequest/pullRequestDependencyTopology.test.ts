@@ -10,6 +10,7 @@ import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/
 import { buildPullRequestDependencyContext } from "./pullRequestDependencyTopology.ts";
 
 const projectId = "project-1" as ProjectId;
+const isPullRequestDependencyContext = Schema.is(PullRequestDependencyContext);
 
 function row(
   number: number,
@@ -226,7 +227,7 @@ describe("pull request dependency topology", () => {
     expect(result.edges.every((edge) => edge.certainty === "candidate")).toBe(true);
     expect(result.coverage).toBe("partial");
     expect(result.issues).toContainEqual({ reason: "budget" });
-    expect(Schema.is(PullRequestDependencyContext)(result)).toBe(true);
+    expect(isPullRequestDependencyContext(result)).toBe(true);
   });
 
   it("retains the nearest relationships when listing order puts a direct parent last", () => {
@@ -334,6 +335,6 @@ describe("pull request dependency topology", () => {
     expect(result.issues).toHaveLength(398);
     expect(result.issues).toContainEqual({ reason: "budget" });
     expect(result.coverage).toBe("partial");
-    expect(Schema.is(PullRequestDependencyContext)(result)).toBe(true);
+    expect(isPullRequestDependencyContext(result)).toBe(true);
   });
 });
