@@ -667,6 +667,9 @@ export const make = Effect.gen(function* () {
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
   const resolveRepository = (input: ForgejoRepositoryInput) => resolveTarget(input);
+  const resolveServer = Effect.fn("ForgejoCli.resolveServer")((input: ForgejoRepositoryInput) =>
+    resolveTarget(input, true),
+  );
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
     const repository =
       input.resolvedTarget ??
@@ -767,7 +770,7 @@ export const make = Effect.gen(function* () {
     listLogins,
     getAccount,
     resolveRepository,
-    resolveServer: (input) => resolveTarget(input, true),
+    resolveServer,
     api,
   });
 });
