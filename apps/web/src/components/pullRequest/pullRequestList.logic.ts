@@ -1,14 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import * as Schema from "effect/Schema";
 
-import {
+import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
+import type {
   EnvironmentId,
   PullRequestListEntry,
   PullRequestListProjectError,
   PullRequestListResult,
-  resolvePullRequestAuthorFilter,
-} from "@t3tools/contracts";
-import type {
   ProjectId,
   RepositoryIdentity,
   PullRequestAction,
@@ -575,114 +572,12 @@ export function mergePullRequestLists(
   };
 }
 
-/** A continuation omits exhausted repositories; their retained rows still carry coverage errors. */
-export function mergePullRequestListErrors(
-  ...pages: ReadonlyArray<ReadonlyArray<EnvironmentPullRequestError> | undefined>
-): ReadonlyArray<EnvironmentPullRequestError> {
-  const errors = new Map<string, EnvironmentPullRequestError>();
-  for (const page of pages) {
-    for (const error of page ?? []) {
-      errors.set(JSON.stringify([error.environmentId, error.projectId, error.message]), error);
-    }
-  }
-  return [...errors.values()];
-}
-
-/** One page is what the list itself starts with, and all a cold start needs to look warm. */
-const SNAPSHOT_MAX_ENTRIES = 99;
-
-type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
-
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>
   [...environmentIds].sort((left, right) => left.localeCompare(right)).join(",");
-
-const snapshotStorageKey = (environmentSetKey: string) =>
-  `t3.pullRequests.list:${environmentSetKey}`;
 
 export interface PullRequestPartitionsSnapshot {
   readonly authored: ReadonlyArray<EnvironmentPullRequestEntry>;
   readonly reviewing: ReadonlyArray<EnvironmentPullRequestEntry>;
-}
-
-export interface PullRequestListSnapshot {
-  readonly scope: string;
-  readonly data: MergedPullRequestList;
-  readonly partitions?: PullRequestPartitionsSnapshot | undefined;
-}
-
-const EnvironmentPullRequestEntrySchema = Schema.Struct({
-  ...PullRequestListEntry.fields,
-  environmentId: EnvironmentId,
-});
-
-const EnvironmentPullRequestErrorSchema = Schema.Struct({
-  ...PullRequestListProjectError.fields,
-  environmentId: EnvironmentId,
-});
-
-const decodeSnapshot = Schema.decodeUnknownOption(
-  Schema.Struct({
-    scope: Schema.String,
-    data: Schema.Struct({
-      ...PullRequestListResult.fields,
-      entries: Schema.Array(EnvironmentPullRequestEntrySchema),
-      errors: Schema.Array(EnvironmentPullRequestErrorSchema),
-      nextCursors: Schema.Record(Schema.String, PullRequestListResult.fields.nextCursors),
-      truncatedEnvironments: Schema.Array(Schema.String),
-    }),
-    partitions: Schema.optional(
-      Schema.Struct({
-        authored: Schema.Array(EnvironmentPullRequestEntrySchema),
-        reviewing: Schema.Array(EnvironmentPullRequestEntrySchema),
-      }),
-    ),
-  }),
-);
-
-export function readPullRequestListSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentSetKey: string,
-): PullRequestListSnapshot | null {
-  try {
-    const raw = storage?.getItem(snapshotStorageKey(environmentSetKey));
-    if (!raw) return null;
-    const decoded = decodeSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writePullRequestListSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentSetKey: string,
-  snapshot: PullRequestListSnapshot,
-): void {
-  try {
-    storage?.setItem(
-      snapshotStorageKey(environmentSetKey),
-      JSON.stringify({
-        scope: snapshot.scope,
-        data: {
-          ...snapshot.data,
-          entries: snapshot.data.entries.slice(0, SNAPSHOT_MAX_ENTRIES),
-          // Coverage warnings belong to the retained rows. Drop transient failures and cursors
-          // whose positions may no longer exist on the host.
-          errors: snapshot.data.errors.filter((error) => error.partial),
-          nextCursors: {},
-          truncatedEnvironments: [],
-        },
-        ...(snapshot.partitions === undefined
-          ? {}
-          : {
-              partitions: {
-                authored: snapshot.partitions.authored.slice(0, SNAPSHOT_MAX_ENTRIES),
-                reviewing: snapshot.partitions.reviewing.slice(0, SNAPSHOT_MAX_ENTRIES),
-              },
-            }),
-      }),
-    );
-  } catch {}
 }
 
 /** Retain project scope during reconnect until projects arrive. */

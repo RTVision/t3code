@@ -2,8 +2,9 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationV2ThreadHistoryPage,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -44,7 +45,8 @@ import {
   decodeOrDiscardOrchestrationCache,
 } from "../platform/orchestrationCache.ts";
 import * as RpcSession from "../rpc/session.ts";
-import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { onThreadRequestsResolved, type ThreadRequestsResolved } from "./threadRequests.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
@@ -63,7 +65,6 @@ const TARGET = new PrimaryConnectionTarget({
 });
 const THREAD_ID = v2ThreadId;
 const CACHED_SNAPSHOT_SEQUENCE = 7;
-const encodeHistoryPage = Schema.encodeSync(OrchestrationV2ThreadHistoryPage);
 const PREPARED: PreparedConnection = {
   environmentId: TARGET.environmentId,
   label: TARGET.label,
@@ -305,6 +306,30 @@ const snapshot = (
 
 const synchronized = (): OrchestrationV2ThreadStreamItem => ({ kind: "synchronized" });
 
+const PENDING_QUESTION = {
+  id: RuntimeRequestId.make("question"),
+  nodeId: NodeId.make("question-node"),
+  providerTurnId: null,
+  nativeRequestRef: null,
+  kind: "user_input" as const,
+  status: "pending" as const,
+  responseCapability: { type: "message" as const },
+  createdAt: v2Now,
+  resolvedAt: null,
+};
+
+const questionResolved = (sequence: number): OrchestrationV2ThreadStreamItem => ({
+  kind: "event",
+  sequence,
+  event: {
+    id: EventId.make("event-request"),
+    type: "runtime-request.updated",
+    threadId: THREAD_ID,
+    occurredAt: v2Now,
+    payload: { ...PENDING_QUESTION, status: "resolved", resolvedAt: v2Now },
+  },
+});
+
 const titleUpdated = (title: string, sequence = 2): OrchestrationV2ThreadStreamItem => {
   const occurredAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
   return {
@@ -522,6 +547,11 @@ describe("EnvironmentThreads", () => {
 
   it.effect("prevents an old scope from replacing its successor's cached data", () =>
     Effect.gen(function* () {
+      const announced: ThreadRequestsResolved[] = [];
+      yield* Effect.acquireRelease(
+        Effect.sync(() => onThreadRequestsResolved((event) => announced.push(event))),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      );
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
         snapshot: undefined,
         owner: undefined,
@@ -529,24 +559,28 @@ describe("EnvironmentThreads", () => {
       const oldScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
         Scope.close(scope, Exit.void),
       );
-      const old = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache }).pipe(
-        Effect.provideService(Scope.Scope, oldScope),
-      );
+      const old = yield* makeHarness({
+        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        resumeCache,
+      }).pipe(Effect.provideService(Scope.Scope, oldScope));
       yield* awaitThreadState(old.observed, (value) => value.status === "live");
       const successor = yield* makeHarness({ resumeCache });
-      yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 9));
+      yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 10));
       yield* awaitThreadState(
         successor.observed,
         (value) => Option.getOrNull(value.data)?.thread.title === "Successor title",
       );
-      yield* Queue.offer(old.inputs, titleUpdated("Old scope title", 8));
+      announced.length = 0;
+      yield* Queue.offerAll(old.inputs, [questionResolved(8), titleUpdated("Old scope title", 9)]);
       yield* awaitThreadState(
         old.observed,
         (value) => Option.getOrNull(value.data)?.thread.title === "Old scope title",
       );
       yield* Scope.close(oldScope, Exit.void);
 
-      expect(resumeCache.snapshot?.sequence).toBe(9);
+      // Draft pruners would delete the answer the successor still waits on.
+      expect(announced).toEqual([]);
+      expect(resumeCache.snapshot?.sequence).toBe(10);
       expect(Option.getOrThrow(resumeCache.snapshot!.state.data).thread.title).toBe(
         "Successor title",
       );
@@ -1191,146 +1225,6 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect.each(["retry", "replacement snapshot"] as const)(
-    "keeps expanded Find history chronological after %s",
-    (mode) =>
-      Effect.gen(function* () {
-        const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-        const messages = Array.from(
-          { length: 41 },
-          (_, index) =>
-            ({
-              id: TurnItemId.make(`item:history-${index + 1}`),
-              threadId: THREAD_ID,
-              ordinal: index * 2 + 1,
-              runId: null,
-              nodeId: null,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              type: "user_message",
-              createdBy: "user",
-              creationSource: "web",
-              inputIntent: "turn_start",
-              attachments: [],
-              status: "completed",
-              title: null,
-              messageId: MessageId.make(`message:history-${index + 1}`),
-              text: `Turn ${index + 1}`,
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-            }) satisfies Extract<OrchestrationV2TurnItem, { type: "user_message" }>,
-        );
-        const activities = messages.slice(0, 40).map(
-          (message) =>
-            ({
-              ...message,
-              id: TurnItemId.make(`item:activity-${message.ordinal}`),
-              ordinal: message.ordinal + 1,
-              type: "command_execution",
-              input: "pwd",
-              output: "",
-              exitCode: 0,
-            }) satisfies OrchestrationV2TurnItem,
-        );
-        const projected = (item: OrchestrationV2TurnItem, position: number) => ({
-          position,
-          visibility: "local" as const,
-          sourceThreadId: THREAD_ID,
-          sourceItemId: item.id,
-          item,
-        });
-        const recent = {
-          ...BASE_PROJECTION,
-          turnItems: [messages[40]!],
-          visibleTurnItems: [projected(messages[40]!, 0)],
-        };
-        const requestedTargets: Array<string | null> = [];
-        let completeRequests = 0;
-        const harness = yield* makeHarness({
-          historyHttpClient: HttpClient.make((request, url) => {
-            const target = url.searchParams.get("throughEntryId");
-            requestedTargets.push(target);
-            const conversationOnly = url.searchParams.get("view") === "conversation";
-            if (!conversationOnly && completeRequests++ === 0)
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response("Unavailable", { status: 503 })),
-              );
-            // Server paging expands a targeted range to 40 turns; ordinary loads use 20.
-            const first = target === messages[0]!.messageId ? 0 : 20;
-            const page = messages
-              .slice(first, 40)
-              .flatMap((message, index) =>
-                conversationOnly ? [message] : [message, activities[first + index]!],
-              );
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                Response.json(
-                  encodeHistoryPage({
-                    snapshotSequence: 14,
-                    items: page.map(projected),
-                    nextCursor: first === 0 ? null : "before-turn-21",
-                    hasMoreHistory: first !== 0,
-                  }),
-                ),
-              ),
-            );
-          }),
-        });
-        const bounded = {
-          ...snapshot(recent, 14),
-          historyCursor: "before-turn-41",
-          hasMoreHistory: true,
-          latestLocalTurnOrdinal: 81,
-          payloadBudgetExceeded: false,
-        };
-        yield* Queue.offer(harness.inputs, bounded);
-        yield* awaitThreadState(
-          harness.observed,
-          (state) => state.history.historyCursor === "before-turn-41",
-        );
-        expect(yield* harness.loadEarlier(messages[0]!.messageId!)).toMatchObject({
-          _tag: "error",
-          message: expect.stringContaining("503"),
-        });
-        const partial = yield* SubscriptionRef.get(harness.threadState);
-        expect(
-          Option.getOrThrow(partial.data).visibleTurnItems.map((row) => row.sourceItemId),
-        ).toEqual(messages.map((message) => message.id));
-        expect(partial.history.historyCursor).toBe("before-turn-41");
-        if (mode === "replacement snapshot") {
-          yield* Queue.offer(harness.inputs, {
-            ...bounded,
-            snapshotSequence: 15,
-            projection: { ...recent, thread: { ...recent.thread, title: "Replacement" } },
-          });
-          yield* awaitThreadState(
-            harness.observed,
-            (state) => Option.getOrThrow(state.data).thread.title === "Replacement",
-          );
-        }
-        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
-        const final = yield* SubscriptionRef.get(harness.threadState);
-        const first = mode === "retry" ? 0 : 20;
-        const expected = messages
-          .slice(first, 40)
-          .flatMap((message, index) => [message.id, activities[first + index]!.id]);
-        expect(
-          Option.getOrThrow(final.data).visibleTurnItems.map((row) => row.sourceItemId),
-        ).toEqual([...expected, messages[40]!.id]);
-        expect(final.history).toMatchObject({
-          loading: false,
-          error: null,
-          historyCursor: first === 0 ? null : "before-turn-21",
-          hasMoreHistory: first !== 0,
-        });
-        expect(requestedTargets.at(-1)).toBe(mode === "retry" ? messages[0]!.messageId : null);
-      }),
-  );
-
   it.effect.each(["complete", "replacement snapshot", "retry"] as const)(
     "progressively reveals conversation history before activity, then handles %s",
     (mode) =>
@@ -1936,6 +1830,37 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "live" && Option.isSome(value.data),
       );
       expect(Option.getOrThrow(live.data).thread.title).toBe("Caught-up title");
+    }),
+  );
+
+  it.effect("announces request resolution only from a synchronized projection", () =>
+    Effect.gen(function* () {
+      const announced = yield* Queue.unbounded<ThreadRequestsResolved>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => onThreadRequestsResolved((event) => Queue.offerUnsafe(announced, event))),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      );
+      const harness = yield* makeHarness({
+        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        completionMarker: true,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+
+      // Answered on another device while this client was away.
+      yield* Queue.offerAll(harness.inputs, [
+        questionResolved(CACHED_SNAPSHOT_SEQUENCE + 1),
+        synchronized(),
+      ]);
+
+      expect(yield* Queue.take(announced)).toEqual({
+        environmentId: TARGET.environmentId,
+        threadId: THREAD_ID,
+        pendingRequestIds: [],
+      });
+      expect(yield* Queue.size(announced)).toBe(0);
     }),
   );
 
