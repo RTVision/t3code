@@ -23,8 +23,6 @@ import {
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
   pullRequestLabelChoices,
@@ -351,69 +349,6 @@ describe("partitioning with the hosts' own priority reads", () => {
   });
 });
 
-describe("the list snapshot across a reload", () => {
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-  const data = {
-    entries: [entry({ number: 1 })],
-    viewers: { "github.com": "Bilal" },
-    providers: [],
-    errors: [{ projectId: "project-1", message: "boom" }],
-    truncated: true,
-    nextCursors: { "pingdotgg/t3code": "cursor-1" },
-  } as never;
-
-  it("carries neither stale failures nor stale cursors", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.errors).toEqual([]);
-    expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("caps the accumulated rows but keeps the whole host set", () => {
-    const storage = makeStorage();
-    const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
-    const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
-    const providers = [
-      {
-        host: "github.com",
-        kind: "github",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-      {
-        host: "gitlab.com",
-        kind: "gitlab",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-    ];
-    const accumulated = {
-      entries: manyEntries,
-      viewers,
-      providers,
-      errors: [],
-      truncated: true,
-      nextCursors: {},
-    } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.entries).toHaveLength(99);
-    expect(snapshot?.data.viewers).toEqual(viewers);
-    expect(snapshot?.data.providers).toEqual(providers);
-  });
-});
-
 describe("remembered pull request list controls", () => {
   const makeStorage = () => {
     const held = new Map<string, string>();
@@ -498,7 +433,7 @@ describe("merging the environments' own listings", () => {
     expect(merged?.errors).toEqual([{ ...error, environmentId: ENV_1 }]);
   });
 
-  it("keeps exhausted repositories' coverage while another environment continues and after reload", () => {
+  it("keeps exhausted repositories' coverage while another environment continues", () => {
     const warning = {
       projectId: "project-1" as ProjectId,
       projectTitle: "Web",
@@ -533,21 +468,6 @@ describe("merging the environments' own listings", () => {
       { ...warning, environmentId: ENV_1 },
       { ...failure, environmentId: ENV_1 },
     ]);
-
-    let stored: string | null = null;
-    const storage = {
-      getItem: () => stored,
-      setItem: (_key: string, value: string) => {
-        stored = value;
-      },
-    };
-    writePullRequestListSnapshot(storage, "both", {
-      scope: "reviewing",
-      data: { ...baseline, entries: [...baseline.entries, ...continuation.entries], errors },
-    });
-    const snapshot = readPullRequestListSnapshot(storage, "both");
-    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1, 2, 3]);
-    expect(snapshot?.data.errors).toEqual([{ ...warning, environmentId: ENV_1 }]);
   });
 
   it("folds a host reached from two environments into one switcher row", () => {

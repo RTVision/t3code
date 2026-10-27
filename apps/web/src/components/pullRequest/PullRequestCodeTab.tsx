@@ -1,5 +1,5 @@
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -38,6 +38,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -64,7 +65,7 @@ import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildDiffReviewComment,
-  resolveDiffReviewPosition,
+  resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -217,6 +218,7 @@ interface DraftAnchor {
   readonly path: string;
   readonly oldPath: string | null;
   readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
   readonly range: SelectedLineRange;
 }
 export interface PullRequestAgentSelectionInput {
@@ -321,11 +323,13 @@ function PullRequestCodeTab({
     revalidating: false,
   });
   const [parseCache] = useState(() => new Map<string, RenderablePatch>());
-  const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
-    null,
-  );
   const referenceKey = pullRequestReviewKey(reference);
-  const commit = selectedCommitOid;
+  // A commit opened from the timeline or left selected across a force-push may no longer be
+  // part of the pull request; read it as "All commits" instead of requesting its diff.
+  const commit =
+    selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
+      ? selectedCommitOid
+      : null;
   const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
@@ -457,6 +461,7 @@ function PullRequestCodeTab({
       resolve: hostReview.resolve && viewer.resolve,
     };
   })();
+  const rangeComments = detail.capabilities.review.rangeComment === true;
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -724,20 +729,16 @@ function PullRequestCodeTab({
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
-  // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
-  // an effect reading a ref could run before that node exists and would never arm the observer.
-  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (sentinel === null || !canLoadNextSlice) return;
-    const observer = new IntersectionObserver(
-      (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
+  const sentinelRef = (node: HTMLDivElement | null) => {
+    if (node === null || !canLoadNextSlice) return;
+    return observeIntersection(
+      node,
+      (entry) => {
+        if (entry.isIntersecting) loadNextSlice();
       },
       { rootMargin: "240px" },
     );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadNextSlice, loadNextSlice, sentinel]);
+  };
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
@@ -746,12 +747,12 @@ function PullRequestCodeTab({
       if (current.get(path) === folded) return current;
       return new Map(current).set(path, folded);
     });
-  const requestFileReveal = useCodeViewFileReveal(viewer, scopeKey);
+  const codeViewReveal = useCodeViewFileReveal();
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     if (item.collapsed === true) setFileFolded(path, false);
-    requestFileReveal(item.id);
+    codeViewReveal.request(item.id);
   };
   // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
   // back. Folding is still held apart from what has been ticked, so folding everything ticks
@@ -766,7 +767,7 @@ function PullRequestCodeTab({
     // code already read; putting the folded header at the top brings the next file up instead.
     if (!viewed || !headerPinned) return;
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
-    if (item !== undefined) requestFileReveal(item.id);
+    if (item !== undefined) codeViewReveal.request(item.id);
   };
   const answeredReveal = useRef<number | null>(null);
   const answerReveal = useEffectEvent(() => {
@@ -804,23 +805,22 @@ function PullRequestCodeTab({
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
     if (!file) return;
-    // A range collapses to its last line: only GitHub carries a multi-line comment, and one
-    // that silently lost its first line on the other hosts would be worse than one line.
+    // On a host without ranged comments a range collapses to its last line: one that silently
+    // lost its first line there would be worse than one line.
     const path = resolveFileDiffPath(file);
     const previousPath = resolveFileDiffPreviousPath(file);
     const sourceFile = parsedSlices
       .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
       .find((candidate) => resolveFileDiffPath(candidate) === path);
-    const side = range.endSide ?? range.side;
-    const position =
-      (sourceFile && resolveDiffReviewPosition(sourceFile, range.end, side)) ??
-      resolveDiffReviewPosition(file, range.end, side);
-    if (position === null) return;
+    const anchor =
+      (sourceFile && resolveDiffReviewAnchor(sourceFile, range, rangeComments)) ??
+      resolveDiffReviewAnchor(file, range, rangeComments);
+    if (anchor === null) return;
     setDraft({
       fileKey: item.id,
       path,
       oldPath: previousPath === path ? null : previousPath,
-      position,
+      ...anchor,
       range,
     });
   };
@@ -852,7 +852,7 @@ function PullRequestCodeTab({
     // Show a footer only while pages remain or a failed revalidation leaves unchecked pages.
     nextCursor === null && !(revalidating && diffQuery.error !== null) ? null : (
       <div
-        ref={setSentinel}
+        ref={sentinelRef}
         className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
       >
         {diffQuery.error !== null ? (
@@ -937,6 +937,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
+    onPostRender: codeViewReveal.flush,
   };
   const runThreadCommand = async (
     label: string,
@@ -1030,7 +1031,7 @@ function PullRequestCodeTab({
       onRemove={() => removeComment(reviewKey, comment.id)}
     />
   );
-  const renderAnnotation = (annotation: ReviewAnnotation) => (
+  const renderAnnotation = (...[annotation]: CodeViewAnnotationArgs<ReviewAnnotationGroup>) => (
     <div className="py-1 font-sans text-foreground">
       {annotation.metadata.threads.map(renderThreadCard)}
       {annotation.metadata.pending.map(renderPendingCard)}
@@ -1068,6 +1069,7 @@ function PullRequestCodeTab({
               id: nextPendingReviewCommentId(),
               path: draft.path,
               ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
+              ...(draft.startPosition === undefined ? {} : { startPosition: draft.startPosition }),
               position: draft.position,
               body,
             });
@@ -1078,14 +1080,7 @@ function PullRequestCodeTab({
       ) : null}
     </div>
   );
-  // If a rebase or force-push removes the selected commit, return to the whole change so the
-  // scope cannot point at an obsolete commit.
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
-  useEffect(() => {
-    if (commit !== null && selectedCommit === undefined) {
-      onSelectedCommitChange(null);
-    }
-  }, [commit, onSelectedCommitChange, selectedCommit]);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
@@ -1577,7 +1572,7 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={setViewer}
+              viewerRef={codeViewReveal.attach}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}

@@ -180,6 +180,12 @@ vi.mock("~/state/preview", () => ({
   previewEnvironment: { open: {}, close: {}, resize: {} },
 }));
 
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  runAtomCommand: (_registry: unknown, _command: unknown, input: unknown) =>
+    mocks.useRealPreviewState ? mocks.openPreview(input) : undefined,
+}));
+
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => (mocks.useRealPreviewState ? mocks.openPreview : vi.fn()),
 }));
@@ -338,7 +344,8 @@ it.each(["clear", "link", "move"] as const)(
   async (operation) => {
     const previewState =
       await vi.importActual<typeof import("~/previewStateStore")>("~/previewStateStore");
-    const { ElectronBrowserHost } = await import("~/browser/ElectronBrowserHost");
+    const { ElectronBrowserHost, startElectronBrowserHost } =
+      await import("~/browser/ElectronBrowserHost");
     const { AppAtomRegistryProvider } = await import("~/rpc/atomRegistry");
     const document = installTestDom();
     Object.assign(window, {
@@ -382,6 +389,7 @@ it.each(["clear", "link", "move"] as const)(
       },
     });
     previewState.resetPreviewStateForTests();
+    const stopHost = startElectronBrowserHost();
     previewState.applyPreviewServerSnapshot(TEST_THREAD_REF, {
       threadId: "thread-1",
       tabId: "tab-1",
@@ -442,6 +450,7 @@ it.each(["clear", "link", "move"] as const)(
       }
     } finally {
       await act(async () => root.unmount());
+      stopHost();
       mocks.useRealPreviewState = false;
       Object.assign(STUB_BROWSER_DEFAULTS, previousDefaults);
       previewState.resetPreviewStateForTests();

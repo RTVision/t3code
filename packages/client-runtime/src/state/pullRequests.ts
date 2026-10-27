@@ -13,6 +13,8 @@ import {
   type PullRequestActor,
   type PullRequestActionInput,
   type PullRequestListInput,
+  type PullRequestListStatsInput,
+  type PullRequestListStatsResult,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestMergeMethod,
@@ -269,8 +271,10 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
 /** Lets a client record what each answer says where it lands, rather than watching the data. */
 export interface PullRequestAnswerHandlers {
   readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
+  readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
+  readonly reviewGuide?: QueryAnswerHandler<PullRequestRef, PullRequestReviewGuideResult>;
 }
 
 export function createPullRequestStackAtomFamily<R, E>(
@@ -522,6 +526,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewGuide, input),
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      ...(onAnswer.reviewGuide === undefined ? {} : { onAnswer: onAnswer.reviewGuide }),
     }),
   );
   const reviewerCandidates = writableQueryFamily(
@@ -644,6 +649,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           environmentId,
           input: { kind: "list", projectIds: input.refs.map((ref) => ref.projectId) },
         }),
+      ...(onAnswer.listStats === undefined ? {} : { onAnswer: onAnswer.listStats }),
     }),
     ...createPullRequestCiEnvironmentAtoms(runtime, refreshes, commandScheduler),
     /** One bounded repository relationship read for the open PR panel, never for list rows. */

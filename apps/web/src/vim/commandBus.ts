@@ -1,5 +1,7 @@
 import type { KeybindingCommand } from "@t3tools/contracts";
 
+import { dispatchCommand } from "../shortcuts/dispatcher";
+
 type CommandListener = (event: KeyboardEvent, command: KeybindingCommand) => void;
 const listeners = new Set<CommandListener>();
 
@@ -11,5 +13,6 @@ export function onAppCommand(listener: CommandListener): () => void {
   };
 }
 export function dispatchAppCommand(command: KeybindingCommand, event: KeyboardEvent): void {
+  if (dispatchCommand(command, event)) return;
   for (const listener of listeners) listener(event, command);
 }

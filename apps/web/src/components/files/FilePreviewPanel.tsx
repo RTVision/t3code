@@ -18,7 +18,8 @@ import {
   officePreviewKind,
   binaryPreviewKind,
 } from "@t3tools/shared/filePreview";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   VirtualizedFile,
   type File as FileInstance,
@@ -54,7 +55,6 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -113,13 +113,18 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
+import { revisionedQuery } from "~/state/revisionedQuery";
 import {
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
+  getProjectFileQueryAtom,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+
+const NO_FILE_REVISION_ATOM = Atom.make(null);
+
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -274,15 +279,13 @@ function WorkspaceVideoPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId ?? undefined,
+  );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
   // Servers that report the file's revision let an unchanged file stay loaded; older ones
   // only offer the workspace mutation, which changes after every command. The revision also
   // goes in the URL, since two mints in the same millisecond sign identical URLs.
@@ -330,16 +333,13 @@ function WorkspaceAudioPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId ?? undefined,
+  );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
@@ -607,14 +607,9 @@ function EditableFileSurface({
   };
   const surfaceRef = useRef<HTMLDivElement>(null);
   const selectionFrameRef = useRef<number | null>(null);
-  const saveCoordinator = useFileSaveCoordinator({
-    environmentId,
-    cwd,
-    relativePath,
-    onPendingChange,
-  });
-  // The editor owns the draft, so its own edits echoing back through the file
-  // query keep the file identity. Only a change from elsewhere replaces it.
+  const saveTarget = { environmentId, cwd, relativePath };
+  useFileSaveSession(saveTarget, onPendingChange);
+  // Retain file identity for echoed editor changes; only external changes replace the editor's draft.
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
@@ -641,7 +636,7 @@ function EditableFileSurface({
     if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
     setEditedContents(file.contents);
     setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-    saveCoordinator.change(file.contents);
+    changeFileSaveSession(saveTarget, file.contents);
     if (!nextLineAnnotations) return;
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
@@ -851,12 +846,9 @@ function RenderedMarkdownSurface({
   readOnly: boolean;
   workspaceMutationId: string | null;
 }) {
-  const saveCoordinator = useFileSaveCoordinator({
-    environmentId,
-    cwd,
-    relativePath,
-    onPendingChange,
-  });
+  const saveTarget = { environmentId, cwd, relativePath };
+  useFileSaveSession(saveTarget, onPendingChange);
+
   return (
     <ScrollArea className="min-h-0 flex-1">
       <FileMarkdownPreview
@@ -875,7 +867,7 @@ function RenderedMarkdownSurface({
                 const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
                 if (nextContents === currentContents) return;
                 setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
+                changeFileSaveSession(saveTarget, nextContents);
               }
         }
       />
@@ -1082,17 +1074,21 @@ export default function FilePreviewPanel({
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
-  useWorkspaceMutationRefresh({
-    enabled:
+  // Mounting the file read under the workspace mutation id refetches it after each mutation.
+  useAtomMount(
+    canReadFiles &&
       attachment === undefined &&
       relativePath !== null &&
       // Skip mutation reads for media and documents; folders still detect conversion to files.
       (isFolder || (!isMedia && !isPdf && !isDocument)) &&
-      !selectedFilePending,
-    mutationId: workspaceMutationId,
-    refresh: file.refresh,
-    resourceKey: `file:${environmentId}:${cwd}:${relativePath ?? ""}`,
-  });
+      !selectedFilePending
+      ? revisionedQuery(
+          getProjectFileQueryAtom(environmentId, cwd, relativePath),
+          workspaceMutationId,
+        )
+      : NO_FILE_REVISION_ATOM,
+  );
+
   useEffect(() => {
     const crumbs = breadcrumbRef.current?.querySelectorAll<HTMLElement>("[data-file-crumb]");
     // Show the deepest crumb when it fits, but never at the cost of the current one.
@@ -1498,15 +1494,13 @@ export function WorkspaceLargeTextPreview(props: {
       description: cause instanceof Error ? cause.message : "Try again.",
     });
   };
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId ?? undefined,
+  );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
   const contentRevision = JSON.stringify([
     props.environmentId,
     resource,

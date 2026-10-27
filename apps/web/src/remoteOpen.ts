@@ -140,10 +140,10 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
   );
 }
 
-/**
- * Editors offered in remote-link mode. The desktop app probes the machine the
- * renderer runs on; a browser cannot, so it offers VS Code only.
- */
+export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
+  return useRemoteOpenResolution(environmentId).state;
+}
+
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 // Probed once per page: installed editors rarely change, and the probe spawns processes.

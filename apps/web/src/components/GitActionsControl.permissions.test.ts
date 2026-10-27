@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => undefined,
   useAtomValue: (atom: unknown) =>
     atom === "editor-permission"
       ? state.scopes.has(AuthOrchestrationOperateScope)
@@ -56,6 +57,7 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
   vcsActionManager: { stateAtom: () => "vcs-state" },
+  vcsStatusRevalidation: () => "vcs-revalidation",
 }));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: {
