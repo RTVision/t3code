@@ -1,14 +1,16 @@
 import type { DesktopPreviewBridge, DesktopPreviewPointerEvent } from "@t3tools/contracts";
-import { render, stubGlobal } from "../../test/render";
+import { stubGlobal } from "../../test/render";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => null } }));
 vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("~/hooks/useSettings", () => ({ useClientSettingsHydrated: () => true }));
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 vi.mock("~/previewStateStore", () => ({
   useActivePreviewSessions: () => ({}),
+  readActivePreviewSessions: () => ({}),
   pinPreviewDesktopProfile: vi.fn(),
 }));
 vi.mock("~/components/preview/usePreviewSession", () => ({
@@ -22,10 +24,10 @@ vi.mock("./HostedBrowserWebview", () => ({ HostedBrowserWebview: () => null }));
 vi.mock("./openFileInPreview", () => ({ openUrlInPreview: vi.fn() }));
 vi.mock("./previewRuntime", () => ({ rendersServerTabNatively: () => false }));
 
-import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { startElectronBrowserHost } from "./ElectronBrowserHost";
 import { useBrowserPointerStore } from "./browserPointerStore";
 
-it("mounts in an older desktop shell and preserves pointer events without new-tab support", async () => {
+it("starts in an older desktop shell and preserves pointer events without new-tab support", () => {
   using _frames = stubGlobal("requestAnimationFrame", () => 0);
   using _cancelFrames = stubGlobal("cancelAnimationFrame", () => undefined);
   let pointerListener: ((event: DesktopPreviewPointerEvent) => void) | undefined;
@@ -45,8 +47,7 @@ it("mounts in an older desktop shell and preserves pointer events without new-ta
       useBrowserPointerStore.setState({ byTabId: {} });
     },
   };
-  // The desktop bridge host does not use router state.
-  await using screen = await render(<ElectronBrowserHost />, { router: false });
+  const stopHost = startElectronBrowserHost();
   const pointer: DesktopPreviewPointerEvent = {
     tabId: "legacy-tab",
     phase: "move",
@@ -58,6 +59,6 @@ it("mounts in an older desktop shell and preserves pointer events without new-ta
   expect(pointerListener).toBeDefined();
   pointerListener?.(pointer);
   expect(useBrowserPointerStore.getState().byTabId["legacy-tab"]).toEqual(pointer);
-  await screen.unmount();
+  stopHost();
   expect(pointerListener).toBeUndefined();
 });

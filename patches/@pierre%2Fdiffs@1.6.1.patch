@@ -335,10 +335,10 @@ index ee5c91c5ab44742994d900a81dbd8e9c508efb49..f43b3a264249734220dc6ea0cbb074c1
  	if (item.type === "diff") return item.instance.updateCodeViewLayout(item.item.fileDiff, item.top, void 0, item.item.annotations ?? []);
 diff --git a/dist/components/CodeViewSearch.js b/dist/components/CodeViewSearch.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..8d060b8b6fd305e8a423d8d54bdc47bcef72b241
+index 0000000000000000000000000000000000000000..ec93761b905c8606e6e24ac33ce4f0dc94da49f5
 --- /dev/null
 +++ b/dist/components/CodeViewSearch.js
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,377 @@
 +import { isPrimaryModifier } from "../editor/platform.js";
 +import { resolveFindAgainShortcut } from "../editor/command.js";
 +import { SearchPanelWidget } from "../editor/searchPanel.js";
@@ -389,6 +389,7 @@ index 0000000000000000000000000000000000000000..8d060b8b6fd305e8a423d8d54bdc47bc
 +	#ranges = [];
 +	#searchedDiffs = [];
 +	#lastParams;
++	#lastMatch;
 +	constructor(view) {
 +		this.#view = view;
 +	}
@@ -518,6 +519,7 @@ index 0000000000000000000000000000000000000000..8d060b8b6fd305e8a423d8d54bdc47bc
 +	cleanUp() {
 +		this.#teardown(false);
 +		this.#lastParams = void 0;
++		this.#lastMatch = void 0;
 +	}
 +	#teardown(restoreFocus) {
 +		if (this.#host == null) return;
@@ -530,7 +532,7 @@ index 0000000000000000000000000000000000000000..8d060b8b6fd305e8a423d8d54bdc47bc
 +		if (restoreFocus) this.#view.getContainerElement()?.focus({ preventScroll: true });
 +	}
 +	#search(params) {
-+		const previous = this.#current != null ? this.#entries[this.#current] : void 0;
++		const previous = this.#current != null ? this.#entries[this.#current] : this.#lastMatch;
 +		this.#lastParams = params;
 +		const items = this.#view.getSearchItems();
 +		this.#searchedDiffs = items.map((item) => [item.id, item.fileDiff]);
@@ -550,6 +552,7 @@ index 0000000000000000000000000000000000000000..8d060b8b6fd305e8a423d8d54bdc47bc
 +		const index = this.#entries.findIndex((entry) => entry.range[0] === offset);
 +		if (index === -1) return;
 +		this.#current = index;
++		this.#lastMatch = this.#entries[index];
 +		this.#revealHorizontally = this.#entries[index];
 +		this.#view.revealSearchMatch(this.#entries[index]);
 +		this.#paint();
