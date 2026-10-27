@@ -281,7 +281,7 @@ function sweepLegacySnapshots(storage: ListAnswerStorage): void {
 
 /**
  * Keeps what a cold start can show before the host answers again. Searches, continuation pages
- * and grown pages are never shown that way, so only first-page reads are kept. Failures and
+ * and grown pages are never shown that way, so only first-page reads are kept. Transient failures and
  * cursors are dropped: they describe the moment of the read, and a restored list must not
  * continue from it.
  */
@@ -313,7 +313,8 @@ export function rememberPullRequestListAnswer(
         ...answer,
         // The fresh rows come first, so retained rows only fill what is left of the page.
         entries: [...answer.entries, ...retained].slice(0, LIST_ANSWER_MAX_ENTRIES),
-        errors: [],
+        // Coverage warnings belong to the kept rows; transient failures do not.
+        errors: answer.errors.filter((error) => error.partial),
         nextCursors: {},
       },
     });

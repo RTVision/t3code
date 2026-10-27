@@ -101,6 +101,8 @@ export function useReviewFilePatches({
           hunks: [],
           additionLines: [],
           deletionLines: [],
+          additionCharacterCount: 0,
+          deletionCharacterCount: 0,
           splitLineCount: 0,
           unifiedLineCount: 0,
           isPartial: true,
@@ -149,7 +151,6 @@ export function useReviewFilePatches({
   };
 }
 
-// The refresh effect keys on the identity of these queries.
 function reviewFileQueries({
   environmentId,
   cwd,

@@ -180,6 +180,12 @@ vi.mock("~/state/preview", () => ({
   previewEnvironment: { open: {}, close: {}, resize: {} },
 }));
 
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  runAtomCommand: (_registry: unknown, _command: unknown, input: unknown) =>
+    mocks.useRealPreviewState ? mocks.openPreview(input) : undefined,
+}));
+
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => (mocks.useRealPreviewState ? mocks.openPreview : vi.fn()),
 }));
@@ -338,7 +344,8 @@ it.each(["clear", "link", "move"] as const)(
   async (operation) => {
     const previewState =
       await vi.importActual<typeof import("~/previewStateStore")>("~/previewStateStore");
-    const { ElectronBrowserHost } = await import("~/browser/ElectronBrowserHost");
+    const { ElectronBrowserHost, startElectronBrowserHost } =
+      await import("~/browser/ElectronBrowserHost");
     const { AppAtomRegistryProvider } = await import("~/rpc/atomRegistry");
     const document = installTestDom();
     Object.assign(window, {
@@ -382,6 +389,7 @@ it.each(["clear", "link", "move"] as const)(
       },
     });
     previewState.resetPreviewStateForTests();
+    const stopHost = startElectronBrowserHost();
     previewState.applyPreviewServerSnapshot(TEST_THREAD_REF, {
       threadId: "thread-1",
       tabId: "tab-1",
@@ -414,15 +422,15 @@ it.each(["clear", "link", "move"] as const)(
     try {
       await act(async () => render());
       expect(mocks.getPreviewConfig.mock.results[0]?.type).toBe("return");
-      expect(await mocks.getPreviewConfig.mock.results[0]?.value).toEqual({ partition: "personal" });
+      expect(await mocks.getPreviewConfig.mock.results[0]?.value).toEqual({ partition: "work" });
       STUB_BROWSER_DEFAULTS.profileId = "personal";
       await act(async () => render());
       expect(await mocks.getPreviewConfig.mock.results.at(-1)?.value).toEqual({
-        partition: "personal",
+        partition: "work",
       });
       if (operation === "clear") {
         await act(async () => mocks.clearDataAction?.());
-        expect(cookies).toEqual({ default: true, work: true, personal: false });
+        expect(cookies).toEqual({ default: true, work: false, personal: true });
       } else {
         await act(async () => {
           if (operation === "link")
@@ -436,12 +444,13 @@ it.each(["clear", "link", "move"] as const)(
         expect(mocks.openPreview).toHaveBeenCalledWith(
           expect.objectContaining({
             environmentId: TEST_THREAD_REF.environmentId,
-            input: expect.objectContaining({ profileId: "personal" }),
+            input: expect.objectContaining({ profileId: "work" }),
           }),
         );
       }
     } finally {
       await act(async () => root.unmount());
+      stopHost();
       mocks.useRealPreviewState = false;
       Object.assign(STUB_BROWSER_DEFAULTS, previousDefaults);
       previewState.resetPreviewStateForTests();

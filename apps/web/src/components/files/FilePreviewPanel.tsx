@@ -21,9 +21,7 @@ import {
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
-  DEFAULT_TOKENIZE_MAX_LENGTH,
   VirtualizedFile,
-  getFiletypeFromFileName,
   type File as FileInstance,
   type FileContents,
   type PostRenderPhase,
@@ -35,8 +33,7 @@ import {
   type EditorFactory,
   type EditorOptions,
 } from "@pierre/diffs/edit";
-import type { WorkerPoolManager } from "@pierre/diffs/worker";
-import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
+import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
@@ -55,7 +52,6 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
-import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
@@ -71,13 +67,13 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-
+import { useEditableAfterHighlight } from "./useEditableAfterHighlight";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
@@ -117,7 +113,7 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
   getOptimisticProjectFileQueryData,
@@ -143,8 +139,9 @@ interface FilePreviewPanelProps {
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
+  /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
-  /** Retained descendant breadcrumb path after navigating up; see navigateFolder. */
+  /** The deeper path breadcrumbs keep after the browser moved up; see `navigateFolder`. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
@@ -164,7 +161,6 @@ type FilePostRender = <LAnnotation>(
   instance: FileInstance<LAnnotation, undefined>,
   phase: PostRenderPhase,
 ) => void;
-
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -207,7 +203,6 @@ function WorkspaceImagePreview(props: {
       </MediaActions>
     );
   }
-
   return assetUrl._tag === "Success" && imageUrl !== null ? (
     <MediaActions source={actionsSource}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -220,7 +215,10 @@ function WorkspaceImagePreview(props: {
     </div>
   );
 }
-
+/**
+ * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
+ * the app's session or storage.
+ */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -242,7 +240,6 @@ function WorkspaceBrowserPreview(props: {
     props.workspaceMutationId === null
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
-
   if (assetUrl._tag === "Failure") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
@@ -266,7 +263,6 @@ function WorkspaceBrowserPreview(props: {
     />
   );
 }
-
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -300,7 +296,6 @@ function WorkspaceVideoPreview(props: {
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
-
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
       <MediaVideoPlayer
@@ -322,7 +317,6 @@ function WorkspaceVideoPreview(props: {
     </div>
   );
 }
-
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -374,7 +368,6 @@ function WorkspaceAudioPreview(props: {
     />
   );
 }
-
 function clampFileLine(contents: string, requestedLine: number): number {
   let lineCount = 1;
   for (let index = 0; index < contents.length; index += 1) {
@@ -388,14 +381,12 @@ function clampFileLine(contents: string, requestedLine: number): number {
   }
   return Math.min(Math.max(1, requestedLine), lineCount);
 }
-
 function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): void {
   const root = fileContainer.shadowRoot ?? fileContainer;
   for (const element of root.querySelectorAll<HTMLElement>(`[${FILE_LINK_REVEAL_ATTRIBUTE}]`)) {
     element.removeAttribute(FILE_LINK_REVEAL_ATTRIBUTE);
   }
   if (line === null) return;
-
   root
     .querySelector<HTMLElement>(`[data-line="${line}"]`)
     ?.setAttribute(FILE_LINK_REVEAL_ATTRIBUTE, "");
@@ -403,29 +394,28 @@ function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): 
     .querySelector<HTMLElement>(`[data-column-number="${line}"]`)
     ?.setAttribute(FILE_LINK_REVEAL_ATTRIBUTE, "");
 }
-
 const REVEAL_MAX_ATTEMPTS = 30;
-/** Hold the reveal target against late focus/restoration scroll resets. */
+/**
+ * After scrolling to the target, hold it for a short window so late
+ * programmatic scroll resets (editable-editor focus and state restoration)
+ * cannot silently snap the file back to the top.
+ */
 const REVEAL_GUARD_FRAMES = 20;
 const REVEAL_GUARD_TOLERANCE_PX = 2;
-
 interface FileRevealState {
   frameId: number | null;
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
 }
-
 function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
-
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
-
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
       frameId: null,
@@ -434,7 +424,6 @@ function useFileLineReveal(
       latestRequestId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
-
     const cancelPendingReveal = () => {
       if (state.frameId !== null) {
         cancelAnimationFrame(state.frameId);
@@ -442,44 +431,33 @@ function useFileLineReveal(
       }
       state.cancelGuard?.();
     };
-
     if (phase === "unmount") {
       cancelPendingReveal();
       return;
     }
-
     const contents = instance.file?.contents;
     const targetLine =
       revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
     updateFileLinkReveal(fileContainer, targetLine);
-
     if (!(instance instanceof VirtualizedFile)) return;
-
     if (state.latestRequestId !== revealRequestId) {
       cancelPendingReveal();
       state.latestRequestId = revealRequestId;
       state.handledRequestId = null;
     }
-
     if (revealLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
-
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
-    fileContainer.style.minHeight = `${Math.ceil(
-      Math.max(instance.height, scrollContainer.clientHeight),
-    )}px`;
-
+    fileContainer.style.minHeight = `${Math.ceil(Math.max(instance.height, scrollContainer.clientHeight))}px`;
     if (state.handledRequestId === revealRequestId || state.frameId !== null) {
       return;
     }
-
     const resolveScrollTarget = (line: number): number | null => {
       const linePosition = instance.getLinePosition(line);
       if (!linePosition) return null;
-
       const scrollContainerRect = scrollContainer.getBoundingClientRect();
       const fileTop =
         scrollContainer.scrollTop +
@@ -488,7 +466,6 @@ function useFileLineReveal(
       const root = fileContainer.shadowRoot ?? fileContainer;
       const renderedLineElement = root.querySelector<HTMLElement>(`[data-line="${line}"]`);
       const renderedLineRect = renderedLineElement?.getBoundingClientRect();
-
       return resolveCenteredFileLineScrollTop({
         scrollTop: scrollContainer.scrollTop,
         scrollHeight: scrollContainer.scrollHeight,
@@ -506,7 +483,6 @@ function useFileLineReveal(
           : {}),
       });
     };
-
     const guardScrollTarget = (line: number) => {
       let framesLeft = REVEAL_GUARD_FRAMES;
       let guardFrameId: number | null = null;
@@ -523,8 +499,8 @@ function useFileLineReveal(
       };
       scrollContainer.addEventListener("wheel", cancelGuard, { passive: true });
       scrollContainer.addEventListener("touchstart", cancelGuard, { passive: true });
-      // Capture gutter pointer events before Pierre stops propagation so comments can cancel the reveal
-      // guard.
+      // Pierre stops gutter pointer events from bubbling. Listen in capture
+      // so starting a comment cancels the reveal guard before the row expands.
       scrollContainer.addEventListener("pointerdown", cancelGuard, {
         passive: true,
         capture: true,
@@ -549,16 +525,15 @@ function useFileLineReveal(
       guardFrameId = requestAnimationFrame(holdTarget);
       state.cancelGuard = cancelGuard;
     };
-
     const scheduleReveal = (attempt: number) => {
       state.frameId = requestAnimationFrame(() => {
         state.frameId = null;
         if (state.latestRequestId !== revealRequestId || !fileContainer.isConnected) {
           return;
         }
-
-        // Wait for contents and metrics; missing data would clamp fresh-mount reveals to line 1 and mark them
-        // handled.
+        // Contents and line metrics can lag the first post-render on fresh
+        // mounts; clamping against missing contents would scroll to line 1
+        // and wrongly mark the request handled.
         const currentContents = instance.file?.contents;
         const line =
           currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
@@ -568,23 +543,19 @@ function useFileLineReveal(
           return;
         }
         updateFileLinkReveal(fileContainer, line);
-
         scrollContainer.scrollTop = targetTop;
         state.handledRequestId = revealRequestId;
         guardScrollTarget(line);
       });
     };
-
     scheduleReveal(0);
   };
 }
-
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   editorType,
   options,
   editStateKey,
 ) => new Editor(editorType, options, editStateKey);
-
 function editableFileContents(
   environmentId: EnvironmentId,
   cwd: string,
@@ -597,43 +568,6 @@ function editableFileContents(
     cacheKey: `editor:${environmentId}:${projectFileCacheKey(cwd, relativePath, contents)}`,
   };
 }
-
-function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: FileContents) {
-  if (workerPool?.isWorkingPool() !== true) return false;
-  if ((file.lang ?? getFiletypeFromFileName(file.name)) === "text") return false;
-  let lines = 1;
-  for (
-    let index = file.contents.indexOf("\n");
-    index !== -1;
-    index = file.contents.indexOf("\n", index + 1)
-  ) {
-    lines += 1;
-  }
-  return lines <= DEFAULT_TOKENIZE_MAX_LENGTH;
-}
-
-/** Enable editing only after worker highlighting renders; active edit sessions highlight on the main
- * thread. */
-function useEditableAfterHighlight(file: FileContents) {
-  const workerPool = useWorkerPool();
-  const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
-  const needsHighlight = needsWorkerHighlight(workerPool, file);
-  const ready = !needsHighlight || highlightedFile === file;
-
-  useEffect(() => {
-    if (ready || workerPool === undefined) return;
-    workerPool.primeFileHighlightCache(file).catch(() => setHighlightedFile(file));
-  }, [file, ready, workerPool]);
-
-  const onPostRender = (renderedFile: FileContents | undefined, phase: PostRenderPhase) => {
-    if (ready || phase === "unmount" || renderedFile?.cacheKey !== file.cacheKey) return;
-    // Cache results arrive just before instance rendering; seeing the cache during render means rows are
-    // highlighted.
-    if (workerPool?.getFileResultCache(file) !== undefined) setHighlightedFile(file);
-  };
-  return { ready, onPostRender };
-}
-
 interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -646,12 +580,10 @@ interface EditableFileSurfaceProps {
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
-
 interface FileSelectionOverride {
   revealRequestId: number;
   range: SelectedLineRange | null;
 }
-
 function EditableFileSurface({
   environmentId,
   cwd,
@@ -675,12 +607,8 @@ function EditableFileSurface({
   };
   const surfaceRef = useRef<HTMLDivElement>(null);
   const selectionFrameRef = useRef<number | null>(null);
-  const saveCoordinator = useFileSaveCoordinator({
-    environmentId,
-    cwd,
-    relativePath,
-    onPendingChange,
-  });
+  const saveTarget = { environmentId, cwd, relativePath };
+  useFileSaveSession(saveTarget, onPendingChange);
   // Retain file identity for echoed editor changes; only external changes replace the editor's draft.
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
@@ -701,7 +629,6 @@ function EditableFileSurface({
       editorRef.current = null;
     },
   };
-
   const handleEditChange = ({
     file,
     lineAnnotations: nextLineAnnotations,
@@ -709,7 +636,7 @@ function EditableFileSurface({
     if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
     setEditedContents(file.contents);
     setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-    saveCoordinator.change(file.contents);
+    changeFileSaveSession(saveTarget, file.contents);
     if (!nextLineAnnotations) return;
     const remapped = remapFileCommentAnnotations(nextLineAnnotations);
     // The editor hands back the array it was given until an edit moves an annotation.
@@ -731,7 +658,6 @@ function EditableFileSurface({
       }
     }
   };
-
   const removeAnnotationEntry = (entryId: string) => {
     setSelectedRange(null);
     removeReviewComment(composerDraftTarget, entryId);
@@ -742,7 +668,6 @@ function EditableFileSurface({
       });
     });
   };
-
   const submitAnnotationEntry = (entryId: string, text: string) => {
     setSelectedRange(null);
     const entry = lineAnnotations
@@ -774,7 +699,6 @@ function EditableFileSurface({
       })),
     );
   };
-
   const beginComment = (range: SelectedLineRange) => {
     editorRef.current?.setSelections([]);
     editorRef.current?.blur();
@@ -832,24 +756,20 @@ function EditableFileSurface({
       beginComment(range);
     }
   };
-
   const handlePostRender: FilePostRender = (fileContainer, instance, phase) => {
     onPostRender(fileContainer, instance, phase);
     onEditablePostRender(instance.file, phase);
-
     if (selectionFrameRef.current !== null) {
       cancelAnimationFrame(selectionFrameRef.current);
       selectionFrameRef.current = null;
     }
     if (phase === "unmount") return;
-
     selectionFrameRef.current = requestAnimationFrame(() => {
       selectionFrameRef.current = null;
       if (!fileContainer.isConnected) return;
       instance.setSelectedLines(selectedRange, { notify: false });
     });
   };
-
   return (
     <EditProvider createEditor={createFileEditor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
@@ -892,6 +812,7 @@ function EditableFileSurface({
                     onCancel={() => removeAnnotationEntry(entry.id)}
                     onComment={(text) => submitAnnotationEntry(entry.id, text)}
                     onDelete={() => removeAnnotationEntry(entry.id)}
+                    onEdit={(text) => submitAnnotationEntry(entry.id, text)}
                   />
                 ))}
               </div>
@@ -903,7 +824,6 @@ function EditableFileSurface({
     </EditProvider>
   );
 }
-
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -926,12 +846,8 @@ function RenderedMarkdownSurface({
   readOnly: boolean;
   workspaceMutationId: string | null;
 }) {
-  const saveCoordinator = useFileSaveCoordinator({
-    environmentId,
-    cwd,
-    relativePath,
-    onPendingChange,
-  });
+  const saveTarget = { environmentId, cwd, relativePath };
+  useFileSaveSession(saveTarget, onPendingChange);
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -951,7 +867,7 @@ function RenderedMarkdownSurface({
                 const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
                 if (nextContents === currentContents) return;
                 setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
+                changeFileSaveSession(saveTarget, nextContents);
               }
         }
       />
@@ -968,7 +884,6 @@ function renderedToggleLabel(
   if (mode === "table") return rendered ? "Show source" : "Show table";
   return rendered ? "Show HTML source" : "Show rendered page";
 }
-
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -977,7 +892,6 @@ function initialExplorerOpen(): boolean {
     return true;
   }
 }
-
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -1004,8 +918,6 @@ export default function FilePreviewPanel({
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const remoteOpenState = useRemoteOpenState(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
@@ -1039,14 +951,16 @@ export default function FilePreviewPanel({
   );
   const [fileRefreshRevision, setFileRefreshRevision] = useState(0);
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
-  // Folder links fail file reads; retain mutation refresh to detect conversion to files. Host folders own
-  // roots; folderTrail keeps descendants.
+  // A folder opened through a file link keeps its breadcrumbs while the tree replaces the failed
+  // preview; refresh remains enabled so a later file conversion is visible.
   const breadcrumbPath =
     attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
-  // Reset crumbs when a host trail reaches the workspace root and no longer passes through the current path.
+  // A host trail that walked up to the workspace root (`/repo/project` is `""`) no
+  // longer passes through the current path, so the crumbs start over there.
   const breadcrumbTrail =
     breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
-  // A trail implies a folder before reads settle, preventing file-preview flashes while navigating up.
+  // The trail only continues below folders, so a surface with one is a folder
+  // before its read settles, and walking up never flashes a file preview.
   const isFolder =
     attachment === undefined &&
     (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
@@ -1080,10 +994,13 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // Reveal ids restart at one per file; pair with the path so dismissal cannot swallow another file's reveal.
-  const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
-    null,
-  );
+  // Paired with the path on purpose: each file surface counts its reveals from
+  // one, so a bare id would let a dismissed reveal on one file swallow the first
+  // reveal on the next.
+  const [handledReveal, setHandledReveal] = useState<{
+    path: string;
+    requestId: number;
+  } | null>(null);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   const isMermaid = previewPath !== null && /\.(mmd|mermaid)$/i.test(previewPath);
@@ -1141,7 +1058,8 @@ export default function FilePreviewPanel({
     !isVideo &&
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
-  // Navigating up preserves the file tab; retain the trail's path spelling to find its folder tab.
+  // A file keeps its tab; walking up from it opens a folder browser beside it.
+  // The trail's end keeps its own spelling (`C:/a` or `C:\a`), so it finds its tab.
   const navigateToFolder = (crumbPath: string) => {
     const path =
       breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath
@@ -1180,7 +1098,6 @@ export default function FilePreviewPanel({
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new path or trail re-renders the crumbs, so the current one scrolls back into view.
   }, [breadcrumbPath, breadcrumbTrail]);
-
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
       const next = !current;
@@ -1192,7 +1109,6 @@ export default function FilePreviewPanel({
       return next;
     });
   };
-
   const handleOpenInBrowser = () => {
     if (!canReadFiles || !canOperatePreview || !absolutePath || !environmentHttpBaseUrl) return;
     void (async () => {
@@ -1217,7 +1133,6 @@ export default function FilePreviewPanel({
       );
     })();
   };
-
   if (attachment === undefined && !canReadFiles) {
     if (fileAccess.isPending) {
       return (
@@ -1233,7 +1148,6 @@ export default function FilePreviewPanel({
       </div>
     );
   }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
@@ -1259,14 +1173,14 @@ export default function FilePreviewPanel({
               />
             </div>
           </ScrollArea>
-          {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          {absolutePath ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
               enableShortcut={openInShortcutEnabled}
               openInCwd={absolutePath}
+              workspacePath={cwd}
               openInCwdIsFile={file.isFile}
               compact
               revealFileManager={revealsInFileManager}

@@ -22,7 +22,6 @@ import {
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
   recordVisitForThread,
@@ -55,7 +54,6 @@ import {
 } from "~/previewMiniPlayerStore";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useRightPanelStore } from "~/rightPanelStore";
-
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { closePreviewSession } from "./closePreviewSession";
@@ -93,7 +91,6 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
-
 interface Props {
   threadRef: ScopedThreadRef;
   tabId?: string | null;
@@ -104,21 +101,24 @@ interface Props {
     image: ComposerImageAttachment | null,
   ) => void;
 }
-
 function previewProfileName(
-  profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  profiles: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+  }>,
   profileId: string,
 ): string {
   return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
 }
-
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
-
 function ServerTabFileNotShown(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
   readonly url: string;
-  readonly download: { readonly id: string; readonly fileName: string };
+  readonly download: {
+    readonly id: string;
+    readonly fileName: string;
+  };
 }) {
   const access = usePreviewStreamAccess(props.threadRef.environmentId);
   return (
@@ -137,7 +137,6 @@ function ServerTabFileNotShown(props: {
     />
   );
 }
-
 export function PreviewView({
   threadRef,
   tabId: requestedTabId,
@@ -152,7 +151,6 @@ export function PreviewView({
     Boolean(onSendAnnotation);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
-  const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -170,15 +168,7 @@ export function PreviewView({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
-
   usePreviewSession(threadRef);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
@@ -225,9 +215,15 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // IPC interprets undefined profile ids as all profiles.
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
+  // Native guests pin their partition once settings hydrate. Never pass an
+  // unresolved profile to clear-data IPC: undefined means every profile there.
+  const activeProfileId = isServerTab
+    ? (snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID)
+    : ((tabId ? previewState.desktopProfileByTabId?.[tabId] : undefined) ?? snapshot?.profileId);
+  const activeProfileName =
+    activeProfileId === undefined
+      ? undefined
+      : previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -257,7 +253,6 @@ export function PreviewView({
     }
     return result._tag === "Success";
   };
-
   const handleSubmitUrl = async (next: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
@@ -266,7 +261,6 @@ export function PreviewView({
       }
     } catch {}
   };
-
   const handleOpenServerUrl = async (next: string) => {
     try {
       const resolved =
@@ -278,12 +272,10 @@ export function PreviewView({
       }
     } catch {}
   };
-
   const handleRefresh = () => {
     if (isServerTab) serverSurfaceRef.current?.reload();
     else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   };
-
   const adjustServerTab = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     if (!tabId) return;
     const result = await adjust({
@@ -301,7 +293,6 @@ export function PreviewView({
     }
     updatePreviewServerSnapshot(threadRef, result.value);
   };
-
   const serverZoomFactor = snapshot?.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
   const stepServerZoom = (direction: -1 | 0 | 1) => {
     const index = PREVIEW_ZOOM_LEVELS.indexOf(serverZoomFactor);
@@ -316,17 +307,14 @@ export function PreviewView({
           ]!;
     if (next !== serverZoomFactor) void adjustServerTab({ zoomFactor: next });
   };
-
   const handleZoomIn = () => {
     if (serverOwnsRendering) stepServerZoom(1);
     else if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
   };
-
   const handleZoomOut = () => {
     if (serverOwnsRendering) stepServerZoom(-1);
     else if (previewBridge && runtimeTabId) void previewBridge.zoomOut(runtimeTabId);
   };
-
   const handleResetZoom = () => {
     if (serverOwnsRendering) stepServerZoom(0);
     else if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
@@ -339,7 +327,6 @@ export function PreviewView({
       void commitBrowserViewportChange(target, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
       return;
     }
-
     void commitBrowserViewportChange(
       target,
       browserResponsiveViewportForToggle({
@@ -354,17 +341,14 @@ export function PreviewView({
     if (isServerTab) serverSurfaceRef.current?.history(-1);
     else if (previewBridge && runtimeTabId) void previewBridge.goBack(runtimeTabId);
   };
-
   const handleForward = () => {
     if (isServerTab) serverSurfaceRef.current?.history(1);
     else if (previewBridge && runtimeTabId) void previewBridge.goForward(runtimeTabId);
   };
-
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
     void localApi.shell.openExternal(url).catch(() => undefined);
   };
-
   const moveTarget = alternatePreviewRuntime(
     threadRef.environmentId,
     primaryEnvironmentId,
@@ -374,7 +358,7 @@ export function PreviewView({
   const moveLabel =
     moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
   const handleMoveTab = async () => {
-    if (!moveTarget || !tabId || !snapshot) return;
+    if (!moveTarget || !tabId || !snapshot || activeProfileId === undefined) return;
     const result = await openPreviewSession({
       openPreview: open,
       threadRef,
@@ -387,7 +371,7 @@ export function PreviewView({
           }
         : {}),
       viewport,
-      ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
+      profileId: activeProfileId,
       runtime: moveTarget,
     });
     if (result._tag === "Failure") {
@@ -403,7 +387,6 @@ export function PreviewView({
     useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
     await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
   };
-
   const handlePictureInPicture = () => {
     if (!tabId) return;
     if (miniPlayerTabId === tabId) {
@@ -413,7 +396,6 @@ export function PreviewView({
     usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
     useRightPanelStore.getState().close(threadRef);
   };
-
   const desktopCall = (op: ((tabId: string) => Promise<void>) | undefined) => () => {
     if (op && runtimeTabId) void op(runtimeTabId).catch(() => undefined);
   };
@@ -443,19 +425,22 @@ export function PreviewView({
           zoomIn: handleZoomIn,
           zoomOut: handleZoomOut,
           resetZoom: handleResetZoom,
-          clearCookies: () =>
-            void previewBridge
-              ?.clearCookies(threadRef.environmentId, activeProfileId)
-              .catch(() => undefined),
-          clearCache: () =>
-            void previewBridge
-              ?.clearCache(threadRef.environmentId, activeProfileId)
-              .catch(() => undefined),
+          clearCookies: () => {
+            if (activeProfileId !== undefined)
+              void previewBridge
+                ?.clearCookies(threadRef.environmentId, activeProfileId)
+                .catch(() => undefined);
+          },
+          clearCache: () => {
+            if (activeProfileId !== undefined)
+              void previewBridge
+                ?.clearCache(threadRef.environmentId, activeProfileId)
+                .catch(() => undefined);
+          },
           openDevTools: desktopCall(previewBridge.openDevTools),
           toggleNativePictureInPicture: () => handleNativePictureInPicture(),
         }
       : null;
-
   const handleNativePictureInPicture = () => {
     if (!previewBridge || !runtimeTabId) return;
     const operation = desktopOverlay?.pictureInPicture
@@ -469,7 +454,6 @@ export function PreviewView({
       });
     });
   };
-
   const handleCapture = (record: boolean) => {
     if (!previewBridge || !runtimeTabId || !tabId) return;
     const bridge = previewBridge;
@@ -479,7 +463,6 @@ export function PreviewView({
           if (!artifact) return;
           let pathCopied = false;
           let toastId: ReturnType<typeof toastManager.add>;
-
           const copyPath = () => {
             if (!navigator.clipboard?.writeText) {
               toastManager.update(
@@ -493,7 +476,6 @@ export function PreviewView({
               );
               return;
             }
-
             void navigator.clipboard.writeText(artifact.path).then(
               () => {
                 pathCopied = true;
@@ -501,7 +483,7 @@ export function PreviewView({
                 window.setTimeout(() => {
                   pathCopied = false;
                   updateRecordingToast();
-                }, 2_000);
+                }, 2000);
               },
               (error) => {
                 toastManager.update(
@@ -516,7 +498,6 @@ export function PreviewView({
               },
             );
           };
-
           const revealAction = {
             children: revealInFileExplorerLabel(navigator.platform),
             onClick: () => void bridge.revealArtifact(artifact.path),
@@ -539,7 +520,6 @@ export function PreviewView({
               }),
             );
           };
-
           toastId = toastManager.add(
             stackedThreadToast({
               type: "success",
@@ -586,7 +566,6 @@ export function PreviewView({
         let pathCopied = false;
         let imageCopied = false;
         let toastId: ReturnType<typeof toastManager.add>;
-
         const updateScreenshotToast = (
           type: "success" | "error" = "success",
           title = "Screenshot saved",
@@ -622,7 +601,6 @@ export function PreviewView({
             }),
           );
         };
-
         const copyPath = () => {
           if (!navigator.clipboard?.writeText) {
             updateScreenshotToast(
@@ -632,7 +610,6 @@ export function PreviewView({
             );
             return;
           }
-
           void navigator.clipboard.writeText(artifact.path).then(
             () => {
               pathCopied = true;
@@ -640,7 +617,7 @@ export function PreviewView({
               window.setTimeout(() => {
                 pathCopied = false;
                 updateScreenshotToast();
-              }, 2_000);
+              }, 2000);
             },
             (error) => {
               updateScreenshotToast(
@@ -651,7 +628,6 @@ export function PreviewView({
             },
           );
         };
-
         const copyImage = () => {
           void bridge.copyArtifactToClipboard(artifact.path).then(
             () => {
@@ -660,7 +636,7 @@ export function PreviewView({
               window.setTimeout(() => {
                 imageCopied = false;
                 updateScreenshotToast();
-              }, 2_000);
+              }, 2000);
             },
             (error) => {
               updateScreenshotToast(
@@ -671,7 +647,6 @@ export function PreviewView({
             },
           );
         };
-
         toastId = toastManager.add(
           stackedThreadToast({
             type: "success",
@@ -707,7 +682,6 @@ export function PreviewView({
       },
     );
   };
-
   const handlePickElement = () => {
     if (!previewBridge || !runtimeTabId) return;
     if (pickActiveRef.current) {
@@ -715,7 +689,9 @@ export function PreviewView({
       void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
-    // Capture app focus before main moves it into guest webContents.
+    // Snapshot whatever the user was focused on (typically the chat composer
+    // textarea or the chrome-row pick button) BEFORE main steals focus into the
+    // guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     const pickRequest = { cancelled: false };
@@ -726,7 +702,7 @@ export function PreviewView({
       const isCurrentPick = pickActiveRef.current === pickRequest;
       if (isCurrentPick) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
       }
       if (
         (isCurrentPick || submitted) &&
@@ -739,6 +715,7 @@ export function PreviewView({
         } catch {}
       }
     };
+    // A failed pick is dropped silently; finishPick still releases the picker.
     const bridge = previewBridge;
     void settlePromise(async () => {
       await bridge.setAnnotationSendEnabled?.(
@@ -749,15 +726,17 @@ export function PreviewView({
       if (pickRequest.cancelled) return;
       const result = await bridge.pickElement(runtimeTabId);
       if (!result || pickRequest.cancelled) return;
-      // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
+      // Nothing that happens after this point (a second picker click, a tab
+      // change, unmount) may discard it, so the pick stops being cancellable
+      // here rather than in finishPick.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        setPickActive(false);
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
-      // Send annotations even if the optional crop fails or stalls; drop failed screenshots so prompts cannot
-      // claim an attachment.
+      // Keep the annotation sendable when its optional crop fails, but remove the failed
+      // screenshot so the prompt does not claim an attachment was sent.
       const capture = capturePreviewAnnotationScreenshot(picked);
       const cropDropped = screenshotFailed || capture.status === "failed";
       const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
@@ -795,14 +774,12 @@ export function PreviewView({
       }
     }).then(finishPick);
   };
-
   useEffect(() => {
     if (!pickActive || !previewBridge || !runtimeTabId) return;
     void previewBridge
       .setAnnotationSendEnabled?.(runtimeTabId, canSendAnnotation)
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
-
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -811,11 +788,11 @@ export function PreviewView({
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) setPickActive(false);
+      setPickActive(false);
     };
   }, [runtimeTabId]);
-
-  // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
+  // Subscribe only while visible; `toggle-panel` is owned by ChatView's
+  // URL-aware handler regardless of whether the panel is currently mounted.
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
       switch (action) {
@@ -843,7 +820,6 @@ export function PreviewView({
     if (!visible) return;
     return subscribePreviewAction((action) => onPreviewAction(action));
   }, [visible]);
-
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
@@ -874,7 +850,9 @@ export function PreviewView({
         }
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
-        pickDisabled={!tabId || isUnreachable}
+        // Disable picking without a tab or after a failed load; an active pick remains
+        // cancellable so its markup survives until the next successful refresh.
+        pickDisabled={!tabId || (isUnreachable && !pickActive)}
         pickDisabledReason={
           isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
         }
@@ -893,6 +871,7 @@ export function PreviewView({
             <PreviewMoreMenu
               enabled={
                 runtimeTabId !== null &&
+                activeProfileId !== undefined &&
                 (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
               }
               actions={moreMenuActions}

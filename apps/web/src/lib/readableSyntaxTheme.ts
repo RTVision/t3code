@@ -1,8 +1,4 @@
-import {
-  getResolvedOrResolveTheme,
-  registerCustomTheme,
-  type ThemeRegistrationResolved,
-} from "@pierre/diffs";
+import { getResolvedOrResolveTheme, registerCustomTheme, type DiffsTheme } from "@pierre/diffs";
 
 /** pierre-light with every syntax color darkened until it reads on every light code surface. */
 export const READABLE_LIGHT_THEME_NAME = "t3-light";
@@ -38,14 +34,11 @@ export function readableOnLightCode(color: string, minContrast = MIN_CONTRAST): 
   return `#${rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("")}${match[2] ?? ""}`;
 }
 
-// Pierre 1.5 resolves themes to the standard Shiki settings array.
-type SyntaxTheme = ThemeRegistrationResolved & {
-  readonly settings?: ReadonlyArray<{
-    readonly scope?: string | ReadonlyArray<string>;
-    readonly settings?: Readonly<Record<string, unknown>>;
-  }>;
-};
+type ZedTheme = NonNullable<DiffsTheme["zed"]>;
 
+// Pairs that differ only in lightness would merge at one floor. The darker color of each pair
+// goes further, keeping pierre-light's order: numbers stay darker than operators, punctuation
+// darker than comments, and decorators darker than property names.
 const FURTHER_COLORS = new Set(["#1ca1c7", "#636363", "#1a85d4"]);
 const FURTHER_MIN_CONTRAST = 6;
 
@@ -57,19 +50,27 @@ export function readableSyntaxColor(color: string): string {
   );
 }
 
-function withReadableSyntax(theme: ThemeRegistrationResolved): ThemeRegistrationResolved {
-  const source = theme as SyntaxTheme;
-  const settings = source.settings?.map((entry) => {
-    const foreground = entry.settings?.foreground;
-    return typeof foreground === "string"
-      ? { ...entry, settings: { ...entry.settings, foreground: readableSyntaxColor(foreground) } }
-      : entry;
-  });
-  return { ...theme, name: READABLE_LIGHT_THEME_NAME, ...(settings ? { settings } : {}) };
+function withReadableSyntax(theme: ZedTheme): ZedTheme {
+  const syntax = Object.fromEntries(
+    Object.entries(theme.style.syntax ?? {}).map(([scope, style]) => [
+      scope,
+      typeof style === "string"
+        ? readableSyntaxColor(style)
+        : style.color
+          ? { ...style, color: readableSyntaxColor(style.color) }
+          : style,
+    ]),
+  );
+  return { ...theme, name: READABLE_LIGHT_THEME_NAME, style: { ...theme.style, syntax } };
 }
 
 // Themes resolve on the main thread and reach the diff workers already resolved.
-registerCustomTheme(READABLE_LIGHT_THEME_NAME, async () => {
-  const base = await getResolvedOrResolveTheme("pierre-light");
-  return withReadableSyntax(base);
-});
+registerCustomTheme(
+  READABLE_LIGHT_THEME_NAME,
+  async () => {
+    const base = await getResolvedOrResolveTheme("pierre-light", "highlights");
+    if (!base.zed) throw new Error("pierre-light has no Highlights palette");
+    return withReadableSyntax(base.zed);
+  },
+  "zed",
+);

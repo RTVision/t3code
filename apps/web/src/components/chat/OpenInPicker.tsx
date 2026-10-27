@@ -7,9 +7,10 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, use, useEffect, useRef } from "react";
+import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { useEditorDispatch } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { useRemoteOpenHint } from "../../remoteOpen";
@@ -284,38 +285,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   const backgroundThread = use(BackgroundThreadContext);
-  useEffect(() => {
-    if (!enableShortcut || !canOpenEditor || backgroundThread) return;
-    const handler = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || !isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!openInCwd) return;
-      if (!preferredEditor) return;
-      if (
-        preferredEditor.kind === "terminal"
-          ? !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-          : remote.mode === "local-exec" &&
-            !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-      )
-        return;
-      e.preventDefault();
-      const label = editorLabelForPlatform(preferredEditor.editor, navigator.platform);
-      void openInEditor(preferredEditor).then((opened) => {
-        if (opened) announce(`Opened in ${label}`);
-      });
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    backgroundThread,
-    canOpenEditor,
-    enableShortcut,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditor,
-    preferredEditor,
-    remote.mode,
-  ]);
   const toolbarLabel = isPanel
     ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
     : "Open";
@@ -449,7 +418,14 @@ export const OpenInPicker = memo(function OpenInPicker({
         panel={isPanel}
         disabled={primaryDisabled}
         title={preferredEditor?.kind === "terminal" ? terminal.message : undefined}
-        onClick={() => openInEditor(preferredEditor)}
+        {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
+        onClick={() => {
+          if (!preferredEditor) return;
+          const label = editorLabelForPlatform(preferredEditor.editor, navigator.platform);
+          void openInEditor(preferredEditor).then((opened) => {
+            if (opened) announce(`Opened in ${label}`);
+          });
+        }}
       >
         {preferredEditor?.kind === "terminal" ? (
           <NeovimIcon

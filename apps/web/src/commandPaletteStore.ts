@@ -6,6 +6,7 @@ import {
   type CommandPaletteUiState,
   reduceCommandPaletteUiState,
 } from "./components/CommandPalette.logic";
+import { rememberVimOverlayFocus } from "./vim/runtime";
 
 const INITIAL_STATE: CommandPaletteUiState = {
   open: false,
@@ -17,7 +18,11 @@ const INITIAL_STATE: CommandPaletteUiState = {
 export const useCommandPaletteStore = create<CommandPaletteUiState>(() => INITIAL_STATE);
 
 export function dispatchCommandPalette(action: CommandPaletteUiAction): void {
-  useCommandPaletteStore.setState((state) => reduceCommandPaletteUiState(state, action), true);
+  const state = useCommandPaletteStore.getState();
+  const next = reduceCommandPaletteUiState(state, action);
+  // Vim returns focus to the pane that held it once the palette closes.
+  if (!state.open && next.open) rememberVimOverlayFocus();
+  useCommandPaletteStore.setState(next, true);
 }
 
 // The palette is only mounted on app-shell routes (not /pair, sign-in or

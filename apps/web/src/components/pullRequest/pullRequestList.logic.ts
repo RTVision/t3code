@@ -524,19 +524,6 @@ export interface MergedPullRequestList {
   readonly truncatedEnvironments: ReadonlyArray<string>;
 }
 
-/** Preserve coverage errors from exhausted repository pages across list continuations. */
-export function mergePullRequestListErrors(
-  ...pages: ReadonlyArray<ReadonlyArray<EnvironmentPullRequestError> | undefined>
-): ReadonlyArray<EnvironmentPullRequestError> {
-  const errors = new Map<string, EnvironmentPullRequestError>();
-  for (const page of pages) {
-    for (const error of page ?? []) {
-      errors.set(JSON.stringify([error.environmentId, error.projectId, error.message]), error);
-    }
-  }
-  return [...errors.values()];
-}
-
 export function mergePullRequestLists(
   answers: ReadonlyArray<readonly [EnvironmentId, PullRequestListResult]>,
 ): MergedPullRequestList | null {
@@ -583,6 +570,19 @@ export function mergePullRequestLists(
     nextCursors,
     truncatedEnvironments,
   };
+}
+
+/** A continuation omits exhausted repositories; their retained rows still carry coverage errors. */
+export function mergePullRequestListErrors(
+  ...pages: ReadonlyArray<ReadonlyArray<EnvironmentPullRequestError> | undefined>
+): ReadonlyArray<EnvironmentPullRequestError> {
+  const errors = new Map<string, EnvironmentPullRequestError>();
+  for (const page of pages) {
+    for (const error of page ?? []) {
+      errors.set(JSON.stringify([error.environmentId, error.projectId, error.message]), error);
+    }
+  }
+  return [...errors.values()];
 }
 
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>

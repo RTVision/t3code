@@ -57,6 +57,7 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
   vcsActionManager: { stateAtom: () => "vcs-state" },
+  vcsStatusRevalidation: () => "vcs-revalidation",
 }));
 vi.mock("~/state/threads", () => ({
   threadEnvironment: {

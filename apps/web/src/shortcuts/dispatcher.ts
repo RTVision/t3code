@@ -75,6 +75,19 @@ function runScopes(scopes: readonly CommandScope[], event: KeyboardEvent): boole
   return false;
 }
 
+/** Runs a named command through the scopes, as if its shortcut had been pressed. */
+export function dispatchCommand(command: KeybindingCommand, event: KeyboardEvent): boolean {
+  for (const scopes of [captureScopes, globalScopes]) {
+    for (let index = scopes.length - 1; index >= 0; index -= 1) {
+      const scope = scopes[index];
+      if (!scope || (scope.options.when && !scope.options.when(event))) continue;
+      const handler = scope.commands[command];
+      if (handler !== undefined && handler(event) !== false) return true;
+    }
+  }
+  return false;
+}
+
 function dispatchCaptureKeyDown(event: KeyboardEvent): void {
   runScopes(captureScopes, event);
 }

@@ -1,9 +1,7 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useEffectEvent } from "react";
-
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -17,7 +15,6 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
-
 export function PullRequestGuideTab({
   environmentId,
   reference,
@@ -55,6 +52,7 @@ export function PullRequestGuideTab({
   const reviewKey = pullRequestReviewKey(reference);
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
+  const updatePendingComment = usePullRequestReviewStore((store) => store.updateComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =
     !canComment && onAskAboutLines === null
@@ -62,13 +60,15 @@ export function PullRequestGuideTab({
       : {
           canComment,
           rangeComments,
+          workspaceRoot,
+          environmentId,
+          onEdit: (commentId, body) => updatePendingComment(reviewKey, commentId, body),
           pending,
-          onComment: ({ path, oldPath, position, startPosition, body }) =>
+          onComment: ({ path, oldPath, position, body }) =>
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
               path,
               ...(oldPath === null ? {} : { oldPath }),
-              ...(startPosition === undefined ? {} : { startPosition }),
               position,
               body,
             }),
@@ -93,7 +93,6 @@ export function PullRequestGuideTab({
         {running ? "Reading the change..." : label}
       </Button>
     ) : null;
-
   if (guide === null) {
     if (query.isPending && data === null) {
       return (
@@ -118,7 +117,6 @@ export function PullRequestGuideTab({
       </div>
     );
   }
-
   const banner =
     stale || failure !== null || running ? (
       <Alert variant={running ? "info" : "warning"}>
@@ -131,7 +129,6 @@ export function PullRequestGuideTab({
         {!running && canWrite ? <AlertAction>{writeButton("Rewrite", "xs")}</AlertAction> : null}
       </Alert>
     ) : null;
-
   return (
     <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
       <GuideTour

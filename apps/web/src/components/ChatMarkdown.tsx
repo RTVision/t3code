@@ -121,11 +121,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import {
-  PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
-  usePreferredEditor,
-} from "../editorPreferences";
+import { PreferredEditorEnvironmentRequiredError, useEditorDispatch } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
@@ -217,6 +213,8 @@ import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
+type MarkdownImageAssetResource = ComponentProps<typeof ChatMarkdownAssetImage>["resource"];
+
 interface ChatMarkdownProps {
   /** Compact markdown transforms remove blocks before rendering inside a label. */
   inline?: boolean;
@@ -234,6 +232,8 @@ interface ChatMarkdownProps {
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
   imageBaseDir?: string | undefined;
+  /** Host-backed images, such as private uploads in a pull request description. */
+  resolveImageAsset?: ((source: string) => MarkdownImageAssetResource | null) | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -243,7 +243,6 @@ interface ChatMarkdownProps {
   sourceControlMedia?: boolean | undefined;
   headingLevelOffset?: number | undefined;
 }
-
 export interface ChatMarkdownContextReference {
   kind: string;
   contextId: string;
@@ -252,7 +251,6 @@ export interface ChatMarkdownContextReference {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
-
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
   presentation: PresentationIcon,
@@ -265,14 +263,12 @@ const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   email: MailIcon,
   slack: MessageSquareIcon,
 } satisfies Record<CodexArtifactTemplateKind, LucideIcon>;
-
 function CodexArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
   const Icon = ARTIFACT_TEMPLATE_ICON_BY_KIND[props.template.artifactKind];
   const presentationLabel = codexArtifactTemplatePresentationLabel(props.template.artifactKind);
-
   return (
     <div
       role="group"
@@ -325,11 +321,14 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   if (!match?.[1]) return null;
   return listItemStart + firstLine.indexOf(match[1]);
 }
-
 function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
-): { "--list-gutter": string } | undefined {
+):
+  | {
+      "--list-gutter": string;
+    }
+  | undefined {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
@@ -337,10 +336,14 @@ function orderedListGutterStyle(
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
-
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
-  { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
+  {
+    label: string;
+    Icon: typeof InfoIcon;
+    borderClassName: string;
+    titleClassName: string;
+  }
 > = {
   note: {
     label: "Note",
@@ -398,6 +401,7 @@ const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
 
 type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 
+/** The server config fields markdown reads. */
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
     pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
@@ -423,7 +427,9 @@ function markdownServerConfigFieldsEqual(
   );
 }
 
-// Compare only markdown config fields to avoid rerendering replies on every provider status push.
+// The config object changes with every provider status push and snapshot. The
+// atom keeps its previous value while the fields markdown reads are equal, so
+// those pushes don't re-render every visible reply.
 const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make((get) => {
     const next = markdownServerConfigFields(get(serverEnvironment.configValueAtom(environmentId)));
@@ -445,6 +451,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   onRunShellCommand,
   imageBaseDir,
+  resolveImageAsset,
   workspaceMutationId,
   onImageExpand,
   renderContextReference,
@@ -454,6 +461,7 @@ function useChatMarkdownState({
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
+  // A preview opened from another thread or workspace never carries over.
   const mediaScopeKey = [
     threadRef?.environmentId,
     threadRef?.threadId,
@@ -461,7 +469,8 @@ function useChatMarkdownState({
     cwd,
     imageBaseDir,
   ].join("\u0000");
-  // Hide requests from an old scope even if they resolve before effect cleanup.
+  // Tagged with the scope it was opened in: a request from the previous scope can
+  // resolve before the effect cleanup below invalidates it, and must stay hidden.
   const [localMedia, setLocalMedia] = useState<{
     scope: string;
     preview: ExpandedImagePreview;
@@ -476,7 +485,8 @@ function useChatMarkdownState({
     setMediaScope(mediaScopeKey);
     setLocalMedia(null);
   }
-  // Layout cleanup blocks stale requests from reaching onImageExpand before paint.
+  // A layout cleanup runs in the commit that changes scope, so a request resolving
+  // before paint cannot reach a parent onImageExpand either.
   useLayoutEffect(
     () => () => {
       mediaRequestId.current += 1;
@@ -517,8 +527,8 @@ function useChatMarkdownState({
       resolvedFilePath,
       cwd,
       threadRef,
-      // Read the connection on click; reconnect replaces it, and subscriptions would refresh every markdown
-      // context.
+      // Read at click time: a reconnect replaces the prepared connection, and
+      // subscribing would hand every rendered markdown element a new context.
       httpBaseUrl:
         environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
@@ -575,9 +585,10 @@ function useChatMarkdownState({
     markdownServerConfigFieldsAtom(environmentId),
   );
   const projects = useProjects();
-  const [preferredEditor] = usePreferredEditor(availableEditors);
-  const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const editorDispatch = useEditorDispatch(environmentId, availableEditors, cwd);
+  const preferredEditorMenuLabel = openInEditorMenuLabel(editorDispatch.choice?.editor ?? null);
+  const openInPreferredEditor = editorDispatch.open;
+  const canOpenPreferredEditor = editorDispatch.canOpen;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -660,12 +671,18 @@ function useChatMarkdownState({
   };
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
-  // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
+  // Subscribed rather than read at click time: the anchor has to decide
+  // synchronously whether to intercept its `_blank`, and a subscription is what
+  // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
   const resolveThreadPullRequest = (
     href: string,
-  ): (ThreadPullRequestKey & { readonly url: string }) | null => {
+  ):
+    | (ThreadPullRequestKey & {
+        readonly url: string;
+      })
+    | null => {
     if (
       threadRef === undefined ||
       readThreadShell(threadRef) === null ||
@@ -777,7 +794,8 @@ function useChatMarkdownState({
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
-    // Every open supersedes pending lookups, including synchronous opens.
+    // Claimed on every open so a synchronous one supersedes a lookup already
+    // in flight.
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
       useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
@@ -837,7 +855,7 @@ function useChatMarkdownState({
         theme={resolvedTheme}
         threadRef={threadRef}
         onOpen={
-          canUseShellActions
+          canOpenPreferredEditor
             ? async () =>
                 openInPreferredEditor(
                   markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
@@ -871,7 +889,6 @@ function useChatMarkdownState({
       />
     );
   };
-
   const componentState = {
     canOperateHost,
     canOperatePreview,
@@ -884,6 +901,7 @@ function useChatMarkdownState({
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
+    resolveImageAsset,
     workspaceMutationId,
     inlineCodeFileLinkMetaByText,
     inline,
@@ -916,14 +934,12 @@ function useChatMarkdownState({
     closeLocalMediaPreview,
   };
 }
-
 const ChatMarkdownRendererContext = React.createContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
 >(null!);
-
-// Isolate streamed source text from the renderer context; only offset-based renderers need it.
+// The markdown source changes on every streamed delta. Only the renderers that
+// slice it by node offset read it, so it sits apart from the renderer context.
 const ChatMarkdownTextContext = React.createContext("");
-
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
@@ -939,7 +955,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
     );
   };
 }
-
+// Keep component types stable when streaming changes the message state.
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1165,7 +1181,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 canOpenInApp: canOpenInPreview,
               }) !== "app"
             ) {
-              // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
+              // Chromium turns an Option/Alt-click into a download that never reaches the
+              // shell. On desktop, open the link here while the key is still down, so link
+              // routers such as Finicky can still read it.
               if (isElectron && event.altKey) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1287,7 +1305,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </Tooltip>
       );
     }
-
     const label = nodeToPlainText(children);
     const start = node?.position?.start.offset;
     const end = node?.position?.end.offset;
@@ -1345,6 +1362,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       sourceControlMedia,
       imageBaseDir,
       threadRef,
+      resolveImageAsset,
       workspaceMutationId,
       renderContextReference,
       fileLinkChip,
@@ -1372,6 +1390,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
+    const imageAsset = resolveImageAsset?.(classifiedSrc);
+    if (imageAsset && environmentId) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={imageAsset}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          style={authoredSizeStyle}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const mediaKind = mediaKindFromPath(classifiedSrc);
     if (mediaKind === "audio") {
@@ -1524,7 +1556,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
     }
-
     const language = extractFenceLanguage(codeBlock.className);
     if (
       mathEnabled &&
@@ -1588,7 +1619,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
 } satisfies Components;
-
 function ChatMarkdown({
   text,
   className,
@@ -1657,5 +1687,4 @@ function ChatMarkdown({
     </Root>
   );
 }
-
 export default memo(ChatMarkdown);

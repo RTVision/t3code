@@ -289,6 +289,24 @@ describe("pull request list answers across a reload", () => {
     expect(restored?.nextCursors).toEqual({});
   });
 
+  it("keeps coverage warnings for the rows it restores", () => {
+    const storage = makeStorage();
+    const warning = {
+      projectId: ProjectId.make("project-1"),
+      projectTitle: "t3code",
+      message: "Team review requests may be missing.",
+      partial: true,
+    };
+    rememberPullRequestListAnswer(
+      storage,
+      { environmentId: local, input },
+      { ...answer([listEntry(1)]), errors: [warning, ...answer([]).errors] },
+    );
+    expect(restorePullRequestList(storage, [{ environmentId: local, input }])?.errors).toEqual([
+      { ...warning, environmentId: local },
+    ]);
+  });
+
   it("falls back to a fresh read when the browser blocks storage", () => {
     vi.stubGlobal("window", {
       get localStorage(): Storage {
