@@ -13,6 +13,8 @@ import {
   type PullRequestActor,
   type PullRequestActionInput,
   type PullRequestListInput,
+  type PullRequestListStatsInput,
+  type PullRequestListStatsResult,
   type PullRequestDetail,
   type PullRequestDiffInput,
   type PullRequestMergeMethod,
@@ -269,6 +271,7 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
 /** Lets a client record what each answer says where it lands, rather than watching the data. */
 export interface PullRequestAnswerHandlers {
   readonly list?: QueryAnswerHandler<PullRequestListInput, PullRequestListResult>;
+  readonly listStats?: QueryAnswerHandler<PullRequestListStatsInput, PullRequestListStatsResult>;
   readonly detail?: QueryAnswerHandler<PullRequestRef, PullRequestDetail>;
   readonly checks?: QueryAnswerHandler<PullRequestRef, PullRequestChecks | null>;
 }

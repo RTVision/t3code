@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
+  useAtomMount: () => undefined,
   useAtomValue: (atom: unknown) =>
     atom === "editor-permission"
       ? state.scopes.has(AuthOrchestrationOperateScope)

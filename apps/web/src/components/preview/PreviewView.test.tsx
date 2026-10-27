@@ -414,15 +414,15 @@ it.each(["clear", "link", "move"] as const)(
     try {
       await act(async () => render());
       expect(mocks.getPreviewConfig.mock.results[0]?.type).toBe("return");
-      expect(await mocks.getPreviewConfig.mock.results[0]?.value).toEqual({ partition: "work" });
+      expect(await mocks.getPreviewConfig.mock.results[0]?.value).toEqual({ partition: "personal" });
       STUB_BROWSER_DEFAULTS.profileId = "personal";
       await act(async () => render());
       expect(await mocks.getPreviewConfig.mock.results.at(-1)?.value).toEqual({
-        partition: "work",
+        partition: "personal",
       });
       if (operation === "clear") {
         await act(async () => mocks.clearDataAction?.());
-        expect(cookies).toEqual({ default: true, work: false, personal: true });
+        expect(cookies).toEqual({ default: true, work: true, personal: false });
       } else {
         await act(async () => {
           if (operation === "link")
@@ -436,7 +436,7 @@ it.each(["clear", "link", "move"] as const)(
         expect(mocks.openPreview).toHaveBeenCalledWith(
           expect.objectContaining({
             environmentId: TEST_THREAD_REF.environmentId,
-            input: expect.objectContaining({ profileId: "work" }),
+            input: expect.objectContaining({ profileId: "personal" }),
           }),
         );
       }

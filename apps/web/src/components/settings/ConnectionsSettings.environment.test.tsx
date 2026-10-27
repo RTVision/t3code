@@ -106,7 +106,7 @@ function callComponent(element: ReactElement<Record<string, unknown>>) {
 }
 function renderPanel() {
   hooks.beginRender();
-  return ConnectionsSettings();
+  return ConnectionsSettings({ view: "environments" });
 }
 function relayControl() {
   const row = visitElements(
