@@ -23,6 +23,7 @@ export type SettingsPath =
   | "/settings/chat"
   | "/settings/diffs"
   | "/settings/keybindings"
+  | "/settings/editors"
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/threads"
@@ -89,6 +90,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
   "/settings/keybindings": "Keybindings",
+  "/settings/editors": "Editors",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/threads": "Threads",
@@ -118,6 +120,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
+      "/settings/editors",
       "/settings/snap-shot",
     ],
   },
@@ -243,6 +246,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+  },
+  {
+    id: "editors",
+    title: "Preferred editor and Neovim terminal",
+    to: "/settings/editors",
+    searchTerms: ["neovim nvim terminal executable rescan open editor"],
   },
   {
     id: "project-defaults",
@@ -1115,6 +1124,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diffs": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
+  "/settings/editors": null,
   "/settings/providers": null,
   "/settings/threads": null,
   "/settings/browser": null,
