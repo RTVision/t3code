@@ -110,7 +110,7 @@ vi.mock("~/composerDraftStore", () => ({
       },
     }),
 }));
-vi.mock("~/lib/sourceControlActions", () => ({
+vi.mock("~/state/sourceControlActions", () => ({
   useSourceControlActionRunning: () => false,
   useVcsInitAction: () => ({}),
   useVcsPullAction: () => ({}),
@@ -126,6 +126,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
           branch: featureBranch
             ? { status: "created", name: "feature" }
             : { status: "skipped_not_requested" },
+          pr: { status: "skipped_not_requested" },
           toast: { title: "Committed", description: "Committed", cta: { kind: "none" } },
         },
       };

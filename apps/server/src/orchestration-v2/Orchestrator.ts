@@ -5608,7 +5608,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId,
         activeAttemptId: attemptId,
         status: "queued",
-        ...(holdQueuedRun && !wakeSkipsHold ? { queueHeld: true } : {}),
+        ...((worktreeSetupUnresolved || holdQueuedRun) && !wakeSkipsHold
+          ? { queueHeld: true }
+          : {}),
         queuePosition:
           goalStopRunId !== undefined
             ? 1

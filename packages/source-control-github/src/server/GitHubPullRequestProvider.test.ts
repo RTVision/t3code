@@ -21,7 +21,6 @@ it.effect("dependency listings do not spend host requests loading actor avatars"
       Effect.provide(
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
           listPullRequests: () => Effect.succeed({ items: [], truncated: false, continues: false }),
-          listActorAvatars: () => Effect.die("relationship read requested avatars"),
         }),
       ),
     );
