@@ -34,7 +34,7 @@ export function useVimMode(): VimMode {
 }
 export function useVimAction(listener: Listener): void {
   // Register and unregister the listener with the shared Vim action bus.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscription lifecycle is inherently effectful.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscription lifecycle is inherently effectful.
   useEffect(() => {
     actions.add(listener);
     return () => {

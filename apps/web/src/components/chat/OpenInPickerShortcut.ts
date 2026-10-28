@@ -53,6 +53,7 @@ export function useOpenFavoriteEditorShortcut({
   const dispatch = useEditorDispatch(environmentId, availableEditors, openInCwd);
   const preferredEditor = dispatch.choice;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled locally
   useEffect(() => {
     if (!enabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {

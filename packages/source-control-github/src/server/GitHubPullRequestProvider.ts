@@ -32,9 +32,7 @@ import type {
 import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
-  ciRuns: true,
   diff: true,
-  fileViewedState: true,
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
@@ -361,38 +359,19 @@ export const make = Effect.gen(function* () {
           involvement: input.involvement,
           viewer: input.viewer,
           limit: input.limit,
-          relationshipOnly: input.relationshipOnly,
           query: input.query,
           cursor: input.cursor,
           filters: input.filters,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            Effect.suspend(() =>
-              input.relationshipOnly
-                ? Effect.succeed(page)
-                : cli
-                    .listActorAvatars({
-                      cwd: input.cwd,
-                      repository: input.repository,
-                      host: input.host,
-                      ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-                    })
-                    // A listing without faces is still a listing, so a failed lookup falls back to
-                    // the initials rather than taking the rows down with it.
-                    .pipe(
-                      Effect.orElseSucceed(() => new Map<string, string>()),
-                      Effect.map((avatarsByLogin) => ({
-                        ...page,
-                        items: page.items.map((item) => ({
-                          ...item,
-                          author: withAvatar(item.author, avatarsByLogin, input.host),
-                        })),
-                      })),
-                    ),
-            ),
-          ),
+          Effect.map((page) => ({
+            ...page,
+            items: page.items.map((item) => ({
+              ...item,
+              author: withAvatar(item.author, new Map<string, string>(), input.host),
+            })),
+          })),
         ),
 
     listChangeRequestsAcross: (input) =>
@@ -736,10 +715,6 @@ export const make = Effect.gen(function* () {
           reacted: input.reacted,
         })
         .pipe(Effect.mapError(fail("setReaction"))),
-
-    getViewedFiles: (input) =>
-      cli.getViewedFiles(input).pipe(Effect.mapError(fail("getViewedFiles"))),
-    setFileViewed: (input) => cli.setFileViewed(input).pipe(Effect.mapError(fail("setFileViewed"))),
 
     setThreadResolution: (input) =>
       cli

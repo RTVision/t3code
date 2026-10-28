@@ -70,7 +70,7 @@ export function PullRequestReactionBar({
   };
   const latest = useRef(current);
   // Reaction toggles can outlive the render that created them.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keep the event handler on the latest state.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the event handler on the latest state.
   useLayoutEffect(() => {
     latest.current = current;
   });

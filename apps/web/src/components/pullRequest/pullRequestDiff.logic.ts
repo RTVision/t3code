@@ -94,3 +94,15 @@ export interface DiffSliceState {
    */
   readonly revalidating: boolean;
 }
+
+export function getFileViewedRange<T extends { readonly fileKey: string }>(
+  files: ReadonlyArray<T>,
+  fileKey: string,
+  anchorFileKey: string | null,
+): ReadonlyArray<T> {
+  const index = files.findIndex((file) => file.fileKey === fileKey);
+  if (index === -1) return [];
+  const anchorIndex = files.findIndex((file) => file.fileKey === anchorFileKey);
+  if (anchorIndex === -1) return files.slice(index, index + 1);
+  return files.slice(Math.min(index, anchorIndex), Math.max(index, anchorIndex) + 1);
+}

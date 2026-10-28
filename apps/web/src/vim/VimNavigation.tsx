@@ -91,7 +91,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
     }
   }
   // Mirror current settings for document-level key handlers.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Keyboard handlers read mutable configuration.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keyboard handlers read mutable configuration.
   useLayoutEffect(() => {
     config.current = { settings, bindings, isOnSettings, help };
     if (!settings.enabled) {
@@ -102,7 +102,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
     }
   }, [settings, bindings, isOnSettings, help]);
   // Install the capture-phase keyboard handlers for Vim navigation.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Global event listeners require lifecycle cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Global event listeners require lifecycle cleanup.
   useLayoutEffect(() => {
     const suppressedReleases = new Set<string>();
     const deferredNormal = new WeakSet<KeyboardEvent>();

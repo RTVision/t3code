@@ -1,11 +1,5 @@
-/**
- * Both `apps/desktop/vite.config.ts` and the artifact stage in
- * scripts/build-desktop-artifact.ts derive from this list, so a package that is
- * external is also the only kind of package the staged production install
- * carries.
- */
+/** Keep bundler externals aligned with the staged production dependency list. */
 const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
-  // Native addons and the wrappers that dlopen them by real path.
   "@napi-rs/keyring",
   "@crowecawcaw/xa11y",
   "@clerk/electron-passkeys",

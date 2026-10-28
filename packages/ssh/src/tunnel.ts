@@ -38,6 +38,7 @@ import {
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  sshTargetLogFields,
   targetConnectionKey,
   targetAddressKey,
 } from "./command.ts";
@@ -126,15 +127,6 @@ function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCo
     stderr: "",
     message: `SSH environment connection was cancelled for ${target.alias || target.hostname}.`,
   });
-}
-
-function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
-  return {
-    alias: target.alias,
-    hostname: target.hostname,
-    username: target.username,
-    port: target.port,
-  };
 }
 
 function isNodeScriptRunner(runner: RemoteT3RunnerOptions | undefined): boolean {

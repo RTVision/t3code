@@ -86,7 +86,7 @@ produce catches them.
   sending.
 - **Work the provider starts on its own.** Background commands, subagents, workflows, and goals can
   finish or start a turn after T3's turn settled. Offer a continuation through
-  [`ProviderContinuationRequests`](../../packages/provider-core/src/server/continuationRequests.ts)
+  [`ProviderContinuationRequests`](../../packages/provider-core/src/server/ProviderContinuationRequests.ts)
   so the parent wakes, and report `hasPendingBackgroundWork` so the session is not released as
   idle. Dropping it, or killing the session, loses the result.
 - **Subagents outlive the run that launched them.** A child can report after its parent's turn

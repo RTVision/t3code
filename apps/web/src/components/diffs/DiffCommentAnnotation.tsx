@@ -58,6 +58,7 @@ export function DiffCommentAnnotation({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const shouldFocus = editing || (kind === "draft" && focusOnMount);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the draft textarea on the next animation frame after mount
   useLayoutEffect(() => {
     if (!shouldFocus) return;
     const frame = window.requestAnimationFrame(() => {

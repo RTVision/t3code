@@ -102,6 +102,7 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import {
+  getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
   foldChoicesAfterViewed,
@@ -295,6 +296,7 @@ function PullRequestCodeTab({
     wordWrap: settings.wordWrap,
   }));
   const [foldChoices, setFoldChoices] = useState<DiffFoldChoices>(() => new Map());
+  const [lastViewedPath, setLastViewedPath] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
   // An expanded default still folds what has been ticked off; only the toolbar opens everything.
@@ -336,6 +338,7 @@ function PullRequestCodeTab({
   const [previousScopeKey, setPreviousScopeKey] = useState(scopeKey);
   if (previousScopeKey !== scopeKey) {
     setPreviousScopeKey(scopeKey);
+    setLastViewedPath(null);
     setDraft(null);
     setSelectedLines(null);
     setFoldChoices(new Map());
@@ -503,6 +506,7 @@ function PullRequestCodeTab({
     isStale: isFileViewedStale,
   } = filesViewed;
   const appliedRefreshToken = useRef(refreshToken);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
@@ -517,6 +521,7 @@ function PullRequestCodeTab({
   // moved the conversation leaves the diff, and the reader's place in it, as it was.
   const registry = useContext(RegistryContext);
   const appliedRevalidateToken = useRef(revalidateToken);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes loaded diff pages after the pull request revision changes
   useEffect(() => {
     if (appliedRevalidateToken.current === revalidateToken) return;
     appliedRevalidateToken.current = revalidateToken;
@@ -757,11 +762,20 @@ function PullRequestCodeTab({
   // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
   // back. Folding is still held apart from what has been ticked, so folding everything ticks
   // nothing off.
-  const setFileViewed = (path: string, viewed: boolean, headerPinned: boolean) => {
-    if (!setViewed(path, viewed)) return;
-    setFoldChoices((current) =>
-      foldChoicesAfterViewed(path, viewed, effectiveFoldOverride, current),
+  const setFileViewed = (path: string, viewed: boolean, event: Event) => {
+    const range = getFileViewedRange(
+      annotatedFiles.map((file) => ({ ...file, fileKey: file.path })),
+      path,
+      "shiftKey" in event && event.shiftKey === true ? lastViewedPath : null,
     );
+    setLastViewedPath(path);
+    for (const file of range) {
+      if (!setViewed(file.path, viewed)) continue;
+      setFoldChoices((current) =>
+        foldChoicesAfterViewed(file.path, viewed, effectiveFoldOverride, current),
+      );
+    }
+    const headerPinned = isPinnedHeaderEvent(event, codeViewFrameRef.current);
     // Ticked from the pinned header, the reader is part way through the file. Left to itself
     // the viewer holds the next file where it was on screen and fills the gap from above with
     // code already read; putting the folded header at the top brings the next file up instead.
@@ -779,6 +793,7 @@ function PullRequestCodeTab({
     answeredReveal.current = revealRequest.nonce;
     revealFile(revealRequest.path);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals a requested file after its diff page loads
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
     answerReveal();
@@ -900,7 +915,7 @@ function PullRequestCodeTab({
     isViewed: filesViewed.isViewed,
     isStale: filesViewed.isStale,
     setFileViewed: (path: string, viewed: boolean, event: Event) =>
-      setFileViewed(path, viewed, isPinnedHeaderEvent(event, codeViewFrameRef.current)),
+      setFileViewed(path, viewed, event),
   };
   const renderHeaderMetadata = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     if (item.type !== "diff") return null;
@@ -1377,10 +1392,6 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // The toolbar rides above every branch below, not just the one with a patch in it: a commit
-  // whose diff is empty or unreadable still needs the scope dropdown that got the reader there.
-  // The viewer's footer says this where there is a viewer. The empty and raw-text bodies below
-  // have none, and without it a failed check would leave their old answer standing unannounced.
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}

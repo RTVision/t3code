@@ -19,7 +19,7 @@ export function EditorsSettingsPanel() {
   const state = useEditorChoice(environmentId, config?.availableEditors ?? []);
   const { capability, connection, refresh } = state.terminal;
   // Refresh the selected environment when the settings surface opens or changes.
-  // oxlint-disable-next-line t3code/react-effect-budget -- The capability is discovered asynchronously.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The capability is discovered asynchronously.
   useEffect(() => {
     void refresh();
   }, [refresh]);

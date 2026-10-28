@@ -48,7 +48,7 @@ export function VimTimeline({
   );
   const match = matches[selectedIndex];
   // Drive bounded history loading from the Vim search state.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Loading older timeline pages is an external side effect.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loading older timeline pages is an external side effect.
   useEffect(() => {
     if ((!searchingHistory && !goToTop) || historyError || !vimEnabled()) return;
     if (!loadEarlier) {
@@ -72,7 +72,7 @@ export function VimTimeline({
   }
 
   // Resolve a selected message into a list position and acknowledge the request.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scrolling and clearing the target are imperative.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scrolling and clearing the target are imperative.
   useEffect(() => {
     if (!target) return;
     const message = messages.find((item) => item.id === target);

@@ -81,13 +81,13 @@ export function useEditorChoice(
     Schema.String,
   );
   // Migrate the legacy editor preference once the new preference is available.
-  // oxlint-disable-next-line t3code/react-effect-budget -- This is a one-time persistence migration.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- This is a one-time persistence migration.
   useEffect(() => {
     if (!fallback && legacy) setFallback({ kind: "gui", editor: legacy });
   }, [fallback, legacy, setFallback]);
   const currentRouteKey = terminal.capability.preferenceKey || routeKey;
   // Adopt the environment capability route when it becomes known.
-  // oxlint-disable-next-line t3code/react-effect-budget -- The route is synchronized from an external capability.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The route is synchronized from an external capability.
   useEffect(() => {
     if (terminal.capability.preferenceKey && routeKey !== terminal.capability.preferenceKey)
       setRouteKey(terminal.capability.preferenceKey);
