@@ -24,7 +24,7 @@ export function useVimDiff({
   const previousVersion = useRef(fileVersion);
   const appliedTarget = useRef<CodeViewScrollTarget | null>(null);
   // Apply an imperative scroll target after the diff viewer is ready.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Scrolling is an imperative viewer operation.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scrolling is an imperative viewer operation.
   useEffect(() => {
     if (!target || appliedTarget.current === target || !viewer?.getInstance()) return;
     const file = "id" in target ? files.find((item) => item.fileKey === target.id) : undefined;

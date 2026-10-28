@@ -132,6 +132,13 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
+      # The ACP process-tree fixture compiles a pthread helper and must not silently skip on a fresh runner.
+      - name: Install C toolchain for process-tree fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+          command -v cc
+
       - uses: ./.github/actions/setup-apt-mirrors
         if: needs.changes.outputs.build != 'false'
 
@@ -225,16 +232,6 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
-
-      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
-      # but ACP process-tree live tests compile a small pthread fixture with `cc`
-      # and soft-skip when it is missing. Install build-essential so that path
-      # always runs in CI instead of silently no-oping.
-      - name: Install C toolchain for process-tree fixtures
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential
-          command -v cc
 
       - uses: ./.github/actions/setup-apt-mirrors
 

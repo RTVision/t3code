@@ -40,8 +40,6 @@ export interface CodexAppServerIncomingRequest {
 export interface CodexAppServerPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
-  /** Observes child process exit independently of the input stream. */
-  readonly processExit?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   // Test override; production uses MAX_INCOMING_MESSAGE_BYTES.
@@ -57,7 +55,6 @@ export interface CodexAppServerPatchedProtocolOptions {
 }
 
 export interface CodexAppServerPatchedProtocol {
-  readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
   readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
   readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
   readonly request: (
@@ -178,7 +175,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const terminationHandled = yield* Ref.make(false);
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
-    const termination = yield* Deferred.make<never, CodexError.CodexAppServerError>();
     const activeRequestHandlers = yield* Ref.make(0);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -215,7 +211,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             yield* Ref.set(terminationFailure, Option.some(error));
             yield* failAllPending(error);
             yield* Queue.end(outgoing);
-            yield* Deferred.fail(termination, error);
             yield* Deferred.succeed(terminationSignal, undefined);
             yield* Scope.close(requestHandlerScope, Exit.void).pipe(
               Effect.forkIn(protocolScope, { startImmediately: true }),
@@ -408,14 +403,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     };
 
-    // Observe process exit even while an inbound handler is still running.
-    if (options.processExit) {
-      yield* options.processExit.pipe(
-        Effect.flatMap((error) => handleTermination(() => Effect.succeed(error))),
-        Effect.forkScoped,
-      );
-    }
-
     yield* options.stdio.stdin.pipe(
       Stream.interruptWhen(Deferred.await(terminationSignal)),
       Stream.decodeText(),
@@ -510,7 +497,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       });
 
     return {
-      awaitTermination: Deferred.await(termination),
       incomingNotifications: Stream.fromQueue(incomingNotifications),
       incomingRequests: Stream.fromQueue(incomingRequests),
       request,

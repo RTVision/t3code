@@ -137,7 +137,7 @@ export function ElectronBrowserHost() {
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
   const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
   // Persist a desktop profile before Electron attaches the guest partition.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Partition selection must be latched imperatively.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Partition selection must be latched imperatively.
   useEffect(() => {
     if (!isElectron || !hydrated) return;
     for (const session of sessions) {

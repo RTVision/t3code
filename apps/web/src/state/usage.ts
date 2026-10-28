@@ -11,7 +11,6 @@ import {
 } from "@t3tools/contracts";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
@@ -38,7 +37,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     for (const [environmentId, presentation] of presentations) {
       const isConnected = presentation.connection.phase === "connected";
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
-      const session = Option.getOrNull(AsyncResult.value(sessionResult));
+      const session = AsyncResult.getOrElse(sessionResult, () => null);
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
         session,
@@ -57,7 +56,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         continue;
       }
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      const summary = Option.getOrNull(AsyncResult.value(result));
+      const summary = AsyncResult.getOrElse(result, () => null);
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,

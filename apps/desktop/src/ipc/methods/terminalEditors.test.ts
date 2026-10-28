@@ -121,7 +121,6 @@ function harness(
           catalog = Option.some(value);
           return true;
         }),
-      clear: Effect.void,
     }),
     Settings.layerTest(settings),
   );

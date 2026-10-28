@@ -7,7 +7,7 @@ import {
   ThreadId,
   type AuthEnvironmentScope,
   type EditorId,
-  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
@@ -21,14 +21,15 @@ const state = vi.hoisted(() => ({
   choice: { kind: "gui", editor: "vscode" } as EditorChoice,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
-  updateMetadata: vi.fn(),
+  link: vi.fn(),
+  unlink: vi.fn(),
   search: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
   toast: vi.fn(),
-  linkedPullRequest: null as ThreadLinkedPullRequest | null,
+  pullRequests: [] as ThreadPullRequestLink[],
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => {
@@ -68,9 +69,11 @@ vi.mock(import("../state/use-atom-command"), async (original) => {
   return {
     ...(await original()),
     useAtomCommand: ((command: unknown) =>
-      command === threadEnvironment.updateMetadata
-        ? state.updateMetadata
-        : state.openEditor) as never,
+      command === threadEnvironment.linkPullRequest
+        ? state.link
+        : command === threadEnvironment.unlinkPullRequest
+          ? state.unlink
+          : state.openEditor) as never,
   };
 });
 vi.mock(import("../state/session"), async (original) => {
@@ -107,10 +110,8 @@ vi.mock(import("../state/server"), async (original) => {
 });
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
-  readThreadShell: (() => ({ linkedPullRequest: state.linkedPullRequest })) as never,
-  useProjects: (() => [
-    { id: linkedPullRequest.projectId, environmentId: threadRef.environmentId },
-  ]) as never,
+  readThreadShell: (() => ({ pullRequests: state.pullRequests })) as never,
+  useProjects: (() => [{ id: projectId, environmentId: threadRef.environmentId }]) as never,
 }));
 vi.mock("../state/shell", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/shell")>()),
@@ -118,10 +119,6 @@ vi.mock("../state/shell", async (importOriginal) => ({
     openInEditor: { permissionAtom: () => "editor-permission" },
     revealInFileManager: "revealInFileManager",
   },
-}));
-vi.mock("../state/threads", async (original) => ({
-  ...(await original<typeof import("../state/threads")>()),
-  threadEnvironment: { updateMetadata: "updateMetadata" },
 }));
 vi.mock(import("../hooks/useLocalStorage"), async (original) => ({
   ...(await original()),
@@ -160,21 +157,6 @@ vi.mock("../hooks/useCopyToClipboard", () => ({
   writeTextToClipboard: state.copy,
   useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
 }));
-vi.mock("~/hooks/usePullRequestLinking", () => ({
-  usePullRequestLinking: () => ({
-    mode: "single",
-    canLink: (href: string) => href === linkedPullRequest.url,
-    isLinked: (_thread: unknown, href: string) => state.linkedPullRequest?.url === href,
-    changeLink: async (ref: typeof threadRef, href: string, linked: boolean) =>
-      state.updateMetadata({
-        environmentId: ref.environmentId,
-        input: {
-          threadId: ref.threadId,
-          linkedPullRequest: linked ? { ...linkedPullRequest, url: href } : null,
-        },
-      }),
-  }),
-}));
 vi.mock(import("@t3tools/client-runtime/source-control-clients"), async (original) => {
   const actual = await original();
   return {
@@ -195,11 +177,11 @@ vi.mock(import("@t3tools/client-runtime/source-control-clients"), async (origina
     },
   };
 });
-vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: ((projects: readonly { id: ProjectId }[]) => projects[0]) as never,
-  matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>
+  matchesLinkedPullRequestUrl: (candidate: ThreadPullRequestLink, href: string) =>
     candidate.url === href,
   parseChangeRequestUrl: ((href: string) =>
     href === linkedPullRequest.url
@@ -217,17 +199,22 @@ const threadRef = {
   environmentId: EnvironmentId.make("selected"),
   threadId: ThreadId.make("thread"),
 };
-const linkedPullRequest: ThreadLinkedPullRequest = {
-  projectId: ProjectId.make("project"),
+const projectId = ProjectId.make("project");
+const linkedPullRequest: ThreadPullRequestLink = {
+  host: "github.com",
   repository: "example/repo",
   number: 42,
   url: "https://github.com/example/repo/pull/42",
+  source: "manual",
+  linkedAt: "2026-09-08T00:00:00.000Z",
+  snapshot: null,
+  stack: null,
 };
 const serverConfig = {
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
-  environment: { platform: { os: "linux" }, capabilities: { threadPullRequestLinking: true } },
+  environment: { platform: { os: "linux" }, capabilities: {} },
 };
 
 function setup() {
@@ -235,9 +222,10 @@ function setup() {
   state.allowed = true;
   state.choice = { kind: "gui", editor: "vscode" };
   state.listeners.clear();
-  state.linkedPullRequest = null;
+  state.pullRequests = [];
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.link.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.unlink.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
@@ -348,7 +336,8 @@ it.each(["link-to-thread", "unlink-from-thread"])(
   "rechecks %s after a native context menu returns",
   async (action) => {
     using _setup = setup();
-    state.linkedPullRequest = action === "unlink-from-thread" ? linkedPullRequest : null;
+    state.pullRequests = action === "unlink-from-thread" ? [linkedPullRequest] : [];
+    const command = action === "link-to-thread" ? state.link : state.unlink;
     let choose: (action: string) => void = () => {
       throw new Error("Menu not opened");
     };
@@ -365,18 +354,19 @@ it.each(["link-to-thread", "unlink-from-thread"])(
       state.allowed = false;
       choose(action);
     });
-    expect(state.updateMetadata).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
 
     await setAllowed(true);
     state.choose.mockResolvedValue(action);
     await screen.openContextMenu();
     await vi.waitFor(() =>
-      expect(state.updateMetadata).toHaveBeenCalledExactlyOnceWith({
+      expect(command).toHaveBeenCalledExactlyOnceWith({
         environmentId: threadRef.environmentId,
-        input: {
+        input: expect.objectContaining({
           threadId: threadRef.threadId,
-          linkedPullRequest: action === "link-to-thread" ? linkedPullRequest : null,
-        },
+          repository: "example/repo",
+          number: 42,
+        }),
       }),
     );
   },

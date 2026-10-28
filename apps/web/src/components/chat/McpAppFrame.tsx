@@ -168,9 +168,11 @@ export function McpAppFrame(props: {
   }));
   const hostRef = useRef<McpAppHost | null>(null);
   const latest = useRef(readLive());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the latest MCP app callbacks available to the iframe bridge
   useEffect(() => {
     latest.current = readLive();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads tool metadata for the mounted MCP iframe and ignores replies after its scope changes
   useEffect(() => {
     let cancelled = false;
     void latest.current
@@ -426,10 +428,13 @@ export function McpAppFrame(props: {
     };
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes theme, width, display mode and tool definition to the MCP app host in the iframe
   useEffect(() => {
     hostRef.current?.updateHostContext();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Context changes trigger a resend.
   }, [theme, width, displayMode, toolDefinition]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends the current tool call to the MCP app host, again for each new iframe document
   useEffect(() => {
     if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.

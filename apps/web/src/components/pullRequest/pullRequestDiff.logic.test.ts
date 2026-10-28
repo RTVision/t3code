@@ -1,7 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import { getFileViewedRange, isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
   hunks: ReadonlyArray<{
@@ -43,5 +43,21 @@ describe("isFileDiffCollapsed", () => {
     const choices = new Map([["b.ts", true]]);
     expect(isFileDiffCollapsed("b.ts", null, choices, false)).toBe(true);
     expect(isFileDiffCollapsed("c.ts", null, choices, false)).toBe(false);
+  });
+});
+
+describe("getFileViewedRange", () => {
+  const files = ["c.ts", "a.ts", "b.ts", "d.ts"].map((fileKey) => ({ fileKey }));
+
+  it("includes both endpoints in displayed order in either direction", () => {
+    expect(getFileViewedRange(files, "b.ts", "c.ts")).toEqual(files.slice(0, 3));
+    expect(getFileViewedRange(files, "c.ts", "b.ts")).toEqual(files.slice(0, 3));
+    expect(getFileViewedRange(files, "a.ts", "a.ts")).toEqual([files[1]]);
+  });
+
+  it("changes only the clicked file without a current anchor", () => {
+    expect(getFileViewedRange(files, "a.ts", null)).toEqual([files[1]]);
+    expect(getFileViewedRange(files, "a.ts", "removed.ts")).toEqual([files[1]]);
+    expect(getFileViewedRange(files, "removed.ts", "a.ts")).toEqual([]);
   });
 });

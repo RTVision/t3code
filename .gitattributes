@@ -9,3 +9,6 @@ apps/server/schema/** linguist-generated
 **/*.graphql.ts linguist-generated
 
 patches/@pierre%2Fdiffs@1.6.1.patch whitespace=-space-before-tab
+
+# Unified patches contain context lines with a required leading space.
+patches/*.patch whitespace=-blank-at-eol
