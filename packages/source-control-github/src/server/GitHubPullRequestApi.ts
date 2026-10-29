@@ -743,6 +743,7 @@ export class GitHubPullRequestApi extends Context.Service<
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly updatePullRequest: (input: {
+      readonly maintainerCanModify?: boolean | undefined;
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
@@ -2928,6 +2929,9 @@ export const make = Effect.gen(function* () {
               pullRequestId,
               // A field the caller did not name is left out of the request entirely, so GitHub
               // keeps the words that are there rather than being asked for an empty one.
+              ...(input.maintainerCanModify === undefined
+                ? {}
+                : { maintainerCanModify: input.maintainerCanModify }),
               ...(input.title === undefined ? {} : { title: input.title }),
               ...(input.body === undefined ? {} : { body: input.body }),
             })

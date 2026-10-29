@@ -75,6 +75,29 @@ Download the Windows x64 or Linux x64 installer from
 [RTVision GitHub Releases](https://github.com/RTVision/t3code/releases).
 Desktop installers are unsigned.
 
+### Nix (nixpkgs)
+
+T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
+These instructions install upstream T3 Code, rather than the RTVision build. Run
+`nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` to install from `nixos-unstable` and requires Nix 2.30 or later with
+`nix-command` and `flakes` enabled. Launch the desktop app with `t3code-desktop`;
+the package also includes the `t3` command.
+
+On NixOS, you can instead add the package to your system configuration, using
+a nixpkgs revision that includes `t3code`:
+
+```nix
+environment.systemPackages = [ pkgs.t3code ];
+```
+
+Apply the change with `sudo nixos-rebuild switch`. For Home Manager, add
+`pkgs.t3code` to `home.packages` and run `home-manager switch`.
+
+Update a profile installation with `nix profile upgrade t3code`. For NixOS or
+Home Manager, update your configuration's nixpkgs input or channel and rebuild.
+Nix manages both the desktop app and the bundled
+`t3` command; use Nix to update them instead of the in-app updater or `t3 update`.
+
 ### The `t3` command
 
 The desktop app includes the `t3` command-line tool. To run it from any
