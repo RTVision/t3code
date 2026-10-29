@@ -695,9 +695,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (workAnchorId === undefined)
       yield* patchHistoryMeta((history) =>
         isActiveHistoryRequestCursor(requestCursor, history)
-          ? { ...history, loading: true, error: null,
-                ...(requestThroughEntryId === undefined ? {} : { pendingThroughEntryId: requestThroughEntryId }),
-              }
+          ? {
+              ...history,
+              loading: true,
+              error: null,
+              ...(requestThroughEntryId === undefined
+                ? {}
+                : { pendingThroughEntryId: requestThroughEntryId }),
+            }
           : history,
       );
     const failLoad = (message: string) =>
