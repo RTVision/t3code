@@ -758,7 +758,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             complete &&
             (workAnchorId !== undefined
               ? page.nextCursor !== null
-              : requestThroughEntryId === undefined &&
+              : throughEntryId === undefined &&
                 page.hasMoreHistory &&
                 !page.items.some(
                   ({ item }) => item.type === "user_message" && item.createdBy === "user",
