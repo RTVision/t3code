@@ -674,6 +674,7 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
 
 function shouldUseBoundedThreadSnapshot(input: {
   readonly acceptBoundedSnapshot?: boolean;
+  readonly acceptDeferredWork?: boolean;
 }): boolean {
   return input.acceptBoundedSnapshot === true;
 }
@@ -807,6 +808,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly afterSequence?: number;
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
+    readonly acceptDeferredWork?: boolean;
     readonly acceptCompactTurnItems?: boolean;
     readonly acceptDedupedBodies?: boolean;
     readonly acceptCompactIds?: boolean;
@@ -896,6 +898,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
               rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+              deferWork: input.acceptDeferredWork === true,
               userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
             })
           : threadManagement.getThreadSnapshot(input.threadId)
@@ -3083,6 +3086,7 @@ export const layerWsRpc = (
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
+        [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>
           input.inspectOnly && !input.updateTool
             ? deviceService.inspect

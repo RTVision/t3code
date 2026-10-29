@@ -38,6 +38,8 @@ it.effect("dependency listings do not spend host requests loading actor avatars"
   }),
 );
 const coreFields = {
+  maintainerCanModify: true,
+  canEditMaintainerEdits: false,
   reviewRequestTeams: [],
   checksTruncated: false,
   comparison: { behindBy: 0, viewerCanUpdate: true },
@@ -227,6 +229,7 @@ describe("gitHubViewerPermissions", () => {
       });
 
       expect(detail.viewerPermissions).toEqual({
+        maintainerEdits: false,
         actions: ["ready", "draft", "close", "reopen"],
         comment: true,
         resolve: false,
