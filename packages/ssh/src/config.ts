@@ -368,6 +368,7 @@ export const discoverSshHosts = Effect.fn("ssh/config.discoverSshHosts")(functio
   const distroFileSystem = FileSystem.FileSystem.of({
     ...fs,
     exists: Effect.fn("FileSystem.FileSystem.exists")((path) => fs.exists(toWindows(path))),
+    stat: Effect.fn("FileSystem.FileSystem.stat")((path) => fs.stat(toWindows(path))),
     readFileString: Effect.fn("FileSystem.FileSystem.readFileString")((path, encoding) =>
       fs.readFileString(toWindows(path), encoding),
     ),

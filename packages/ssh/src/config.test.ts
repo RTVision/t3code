@@ -17,43 +17,62 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
-  it.effect("reads only the selected distro and resolves absolute Linux Includes", () => {
-    const prefix = String.raw`\\wsl.localhost\Debian`;
-    const files = new Map([
-      [
-        String.raw`${prefix}\home\test\.ssh\config`,
-        "Host distro-host\nInclude /etc/ssh/custom.conf\n",
-      ],
-      [String.raw`${prefix}\etc\ssh\custom.conf`, "Host included-host\n"],
-      [String.raw`${prefix}\home\test\.ssh\known_hosts`, "known-host ssh-ed25519 AAAA\n"],
-    ]);
-    const accessed: string[] = [];
-    const fs = FileSystem.makeNoop({
-      exists: (path) =>
-        Effect.sync(() => {
+  it.effect("reads only the selected distro and resolves absolute Linux Includes", () =>
+    Effect.gen(function* () {
+      const realFs = yield* FileSystem.FileSystem;
+      const directory = yield* makeTempHomeDir();
+      const prefix = String.raw`\\wsl.localhost\Debian`;
+      const skipped = String.raw`${prefix}\etc\ssh\directory`;
+      const files = new Map([
+        [
+          String.raw`${prefix}\home\test\.ssh\config`,
+          "Host distro-host\nInclude /etc/ssh/directory /etc/ssh/custom.conf\n",
+        ],
+        [String.raw`${prefix}\etc\ssh\custom.conf`, "Host included-host\n"],
+        [String.raw`${prefix}\home\test\.ssh\known_hosts`, "known-host ssh-ed25519 AAAA\n"],
+      ]);
+      const accessed: string[] = [];
+      const stats: string[] = [];
+      const fs = FileSystem.makeNoop({
+        exists: (path) =>
+          Effect.sync(() => {
+            accessed.push(path);
+            return files.has(path) || path === skipped;
+          }),
+        stat: (path) => {
           accessed.push(path);
-          return files.has(path);
+          stats.push(path);
+          return realFs.stat(path === skipped ? directory : import.meta.filename);
+        },
+        readFileString: (path) =>
+          Effect.sync(() => {
+            accessed.push(path);
+            assert.notEqual(path, skipped);
+            return files.get(path) ?? "";
+          }),
+      });
+      const hosts = yield* discoverSshHosts({ homeDir: String.raw`C:\Users\windows` }).pipe(
+        Effect.provideService(SshRunner, {
+          kind: "wsl",
+          distro: "Debian",
+          homeDir: "/home/test",
+          tunnelHost: "127.0.0.1",
         }),
-      readFileString: (path) => Effect.succeed(files.get(path) ?? ""),
-    });
-    return Effect.gen(function* () {
-      const hosts = yield* discoverSshHosts({ homeDir: String.raw`C:\Users\windows` });
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provide(NodePath.layerWin32),
+      );
       assert.deepEqual(
         hosts.map((host) => host.alias),
         ["distro-host", "included-host", "known-host"],
       );
       assert.isTrue(accessed.every((path) => path.startsWith(prefix)));
-    }).pipe(
-      Effect.provideService(SshRunner, {
-        kind: "wsl",
-        distro: "Debian",
-        homeDir: "/home/test",
-        tunnelHost: "127.0.0.1",
-      }),
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provide(NodePath.layerWin32),
-    );
-  });
+      assert.deepEqual(stats, [
+        String.raw`${prefix}\home\test\.ssh\config`,
+        skipped,
+        String.raw`${prefix}\etc\ssh\custom.conf`,
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
   it.effect("deduplicates hosts through quoted and escaped Include paths like OpenSSH", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
