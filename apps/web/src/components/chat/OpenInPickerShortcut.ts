@@ -1,4 +1,8 @@
-import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { useEditorDispatch } from "../../editorPreferences";
@@ -53,11 +57,16 @@ export function useOpenFavoriteEditorShortcut({
   const dispatch = useEditorDispatch(environmentId, availableEditors, openInCwd);
   const preferredEditor = dispatch.choice;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled locally
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
   useEffect(() => {
     if (!enabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || !isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      if (
+        event.repeat ||
+        event.defaultPrevented ||
+        !isOpenFavoriteEditorShortcut(event, keybindings)
+      )
+        return;
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();
