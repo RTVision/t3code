@@ -25,7 +25,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     AzureDevOps.definition,
   ],
   {
-    claimChangeRequestUrlsFirst: [GitCafe.definition.kind],
+    claimChangeRequestUrlsFirst: [GitCafe.definition.kind, AzureDevOps.definition.kind],
     recognizeRemotesIn: [
       GitCafe.definition.kind,
       Gitea.definition.kind,
