@@ -712,6 +712,95 @@ function makeCodexReplayTranscript(input: {
   };
 }
 
+it.effect("reads the active MCP binding when a handoff starts the native Codex thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-codex-mcp-handoff");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const activeConfig = {
+        environmentId: EnvironmentId.make("environment-codex-mcp-handoff"),
+        threadId,
+        providerSessionId: "mcp-codex-handoff",
+        providerInstanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer active-codex-token",
+        browserToolsAvailable: true,
+      };
+      const transcript = makeCodexReplayTranscript({
+        scenario: "mcp-handoff",
+        entries: codexReplayPreamble({
+          nativeThreadId: "native-mcp-handoff",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        }).slice(0, 5),
+      });
+      const context = yield* Layer.build(CodexReplay.layerReplay(transcript));
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      let threadStartParams: unknown;
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: {
+          open: () =>
+            Effect.succeed({
+              ...client,
+              request: (method, params) => {
+                if (method === "thread/start") threadStartParams = params;
+                return client.request(method, params);
+              },
+            }),
+        },
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(transcript.scenario),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-codex-mcp-handoff"),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* mcpSessions.set({
+        ...activeConfig,
+        providerSessionId: "mcp-claude-prior",
+        providerInstanceId: ProviderInstanceId.make("claude-proxy"),
+        authorizationHeader: "Bearer stale-claude-token",
+      });
+      // Construct the provider effect while the old binding is still present,
+      // then finish attachment before executing it.
+      const ensureThread = runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      yield* mcpSessions.set(activeConfig);
+      yield* ensureThread;
+      // Replay deliberately ignores machine-specific MCP config, so inspect
+      // the actual native request as well as replaying the protocol.
+      assert.deepEqual(threadStartParams, {
+        cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+        model: CODEX_TEST_MODEL_SELECTION.model,
+        config: {
+          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+          "mcp_servers.t3-code": {
+            url: activeConfig.endpoint,
+            tool_timeout_sec: 3_900,
+            http_headers: { Authorization: activeConfig.authorizationHeader },
+          },
+        },
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 function withReplayRequestId(
   entry: CodexReplay.CodexAppServerReplayEntry,
   id: number,
