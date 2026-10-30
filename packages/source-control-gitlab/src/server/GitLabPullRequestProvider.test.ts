@@ -65,7 +65,6 @@ describe("getChangeRequest base freshness", () => {
     checks: [],
     viewerCanMerge: true,
     reviewerIds: [],
-    headRepositoryNameWithOwner: null,
   };
 
   it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
@@ -133,6 +132,7 @@ describe("merge request reads", () => {
     url: "https://gitlab.com/acme/web/-/merge_requests/7",
     author: null,
     headBranch: "feat/page",
+    headRepositoryNameWithOwner: null,
     baseBranch: "main",
     state: "open" as const,
     isDraft: false,
@@ -162,7 +162,12 @@ describe("merge request reads", () => {
           getMergeRequestDetail: (input) =>
             Effect.sync(() => {
               calls.detail += 1;
-              return { ...detail, number: input.number, viewerCanMerge: host.viewerCanMerge };
+              return {
+                ...detail,
+                number: input.number,
+                headRepositoryNameWithOwner: null,
+                viewerCanMerge: host.viewerCanMerge,
+              };
             }),
           getProjectMergeCapabilities: () =>
             Effect.sync(() => {

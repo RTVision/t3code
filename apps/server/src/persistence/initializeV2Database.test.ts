@@ -591,13 +591,16 @@ it.effect("removes copies left by a killed start, but not one that is still runn
     }
     NodeFS.mkdirSync(NodePath.join(directory, unrelated));
     const destinationPath = NodePath.join(directory, "statev2.sqlite");
-    NodeFS.writeFileSync(destinationPath, "existing V2 database");
+    const database = new NodeSqlite.DatabaseSync(destinationPath);
+    database.exec("CREATE TABLE existing_v2_work (text TEXT)");
+    database.close();
+    const original = NodeFS.readFileSync(destinationPath);
     yield* initializeV2Database(destinationPath);
     assert.deepEqual(
       NodeFS.readdirSync(directory).sort(),
       [running, unrelated, "statev2.sqlite"].sort(),
     );
-    assert.equal(NodeFS.readFileSync(destinationPath, "utf8"), "existing V2 database");
+    assert.deepEqual(NodeFS.readFileSync(destinationPath), original);
   }).pipe(
     Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
