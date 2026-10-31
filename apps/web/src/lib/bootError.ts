@@ -1,7 +1,7 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
-import { T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 
-const FALLBACK_TRIAGE_COMMAND = `${T3_NPX_COMMAND} triage`;
+const FALLBACK_TRIAGE_COMMAND =
+  "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage";
 const DOWNLOAD_URL = "https://t3.codes/download";
 const ISSUE_URL = "https://github.com/RTVision/t3code/issues/new";
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";

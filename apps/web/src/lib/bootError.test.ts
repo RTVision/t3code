@@ -1,5 +1,4 @@
 import type { DesktopBridge, DesktopCliCommandState, DesktopUpdateState } from "@t3tools/contracts";
-import { T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -44,20 +43,22 @@ describe("resolveTriageCommand", () => {
 
   it("falls back to npx without a usable desktop launcher", async () => {
     using _warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(resolveTriageCommand(undefined)).resolves.toBe(`${T3_NPX_COMMAND} triage`);
+    await expect(resolveTriageCommand(undefined)).resolves.toBe(
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage",
+    );
     await expect(resolveTriageCommand({} as DesktopBridge)).resolves.toBe(
-      `${T3_NPX_COMMAND} triage`,
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage",
     );
     await expect(resolveTriageCommand(desktopWith(async () => notOnPath(null)))).resolves.toBe(
-      `${T3_NPX_COMMAND} triage`,
+      "npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage",
     );
     const staleWindowsPathEntry = { ...notOnPath(null), supported: true, onPath: true };
     await expect(
       resolveTriageCommand(desktopWith(async () => staleWindowsPathEntry)),
-    ).resolves.toBe(`${T3_NPX_COMMAND} triage`);
+    ).resolves.toBe("npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage");
     await expect(
       resolveTriageCommand(desktopWith(() => Promise.reject(new Error("ipc closed")))),
-    ).resolves.toBe(`${T3_NPX_COMMAND} triage`);
+    ).resolves.toBe("npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage");
   });
 });
 
