@@ -80,6 +80,8 @@ export interface DraftState {
   readonly runtimeMode: RuntimeMode;
   /** Not editable in the dialog, but preserved so editing an agent-created task keeps it. */
   readonly interactionMode: ProviderInteractionMode;
+  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
+  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -233,6 +235,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     modelOptions: task.modelSelection.options ?? [],
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
+    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,

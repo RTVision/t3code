@@ -57,6 +57,17 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
 export class EditorOpenError extends Schema.TaggedError<EditorOpenError>()("EditorOpenError", {
   message: Schema.String,
 }) {}
+export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
+  const [legacy] = useEditorPreference<EditorId | null, EditorId | null>(
+    LAST_EDITOR_KEY,
+    null,
+    NullableEditorId,
+  );
+  const preferred =
+    legacy !== null && availableEditors.includes(legacy) ? legacy : (availableEditors[0] ?? null);
+  return [preferred] as const;
+}
+
 export function useEditorChoice(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],

@@ -14,6 +14,7 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
+  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -42,6 +43,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -57,10 +59,12 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -68,12 +72,11 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
+import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
-  draftModelSelection,
   webhookDraftErrors,
   webhookDeliveryLabel,
   matchesScheduledTaskScope,
@@ -89,8 +92,6 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { readPromptUltrathink, TraitsPicker } from "../chat/TraitsPicker";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -115,14 +116,17 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
   root: "Use the project checkout",
   existing_worktree: "Use a specific checkout",
 };
+
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
   title: "",
@@ -142,6 +146,7 @@ const EMPTY_DRAFT: DraftState = {
   modelOptions: [],
   runtimeMode: "full-access",
   interactionMode: "default",
+  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -270,10 +275,19 @@ function Field({
   );
 }
 
+function splitModelKey(value: string): ModelSelection | null {
+  const index = value.indexOf(":");
+  if (index <= 0 || index === value.length - 1) return null;
+  return {
+    instanceId: ProviderInstanceId.make(value.slice(0, index)),
+    model: value.slice(index + 1),
+  };
+}
+
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
-    const minutes = schedule.everyMs / 60000;
+    const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
@@ -287,11 +301,8 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
   return `${days} at ${schedule.timeOfDay}`;
 }
-/**
- * `formatRelativeTime` only handles the past, and `nextRunAt` is a future
- * instant — render "in 5m" style labels for upcoming runs instead of a
- * misleading "just now".
- */
+
+/** formatRelativeTime handles only the past; upcoming runs need future labels. */
 function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
   const diffMs = new Date(value).getTime() - nowMs;
@@ -300,7 +311,7 @@ function relativeLabel(value: string | null, nowMs: number): string {
     if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
-  const minutes = Math.ceil(diffMs / 60000);
+  const minutes = Math.ceil(diffMs / 60_000);
   if (minutes < 2) return "in under a minute";
   if (minutes < 60) return `in ${minutes}m`;
   const hours = Math.round(minutes / 60);
@@ -308,8 +319,7 @@ function relativeLabel(value: string | null, nowMs: number): string {
   return `in ${Math.round(hours / 24)}d`;
 }
 
-// The clock is the label's own minute tick: the React Compiler caches a
-// `Date.now()` read in render on the timestamp alone.
+// Use the label's minute tick because the compiler caches render-time Date.now() on the timestamp.
 export function ScheduledRelativeLabel(props: { value: string | null }) {
   const nowMinute = useNowMinute();
   return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
@@ -329,12 +339,14 @@ function deliveryOutcomeVariant(outcome: string) {
   if (outcome === "dispatch_failed" || outcome === "rejected_signature") return "error";
   return "outline";
 }
+
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   if (status === "failed") return "error";
   if (status === "succeeded") return "success";
   if (status === "running") return "info";
   return "outline";
 }
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -527,23 +539,18 @@ function ScheduledTaskEnvironmentList({
       summaries["No tasks on"]!.push(label);
     }
   }
+
   return (
     <SettingsGroup>
       {populated.map(({ environment, tasks }) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-        const transport = environmentTransportLabel(environment);
         return (
           <div key={environment.environmentId} className="divide-y divide-border/50">
             <EnvironmentRow
               kind={resolveEnvironmentMachineKind(environment.serverConfig)}
               label={primary}
               subtitle={
-                <>
-                  {secondary && secondary !== transport ? (
-                    <span className="block truncate">{secondary}</span>
-                  ) : null}
-                  <span className="block truncate">{transport}</span>
-                </>
+                <ScheduledTaskEnvironmentSubtitle environment={environment} secondary={secondary} />
               }
             >
               <ConnectionStatusDot
@@ -600,6 +607,25 @@ function ScheduledTaskEnvironmentList({
     </SettingsGroup>
   );
 }
+
+function ScheduledTaskEnvironmentSubtitle({
+  environment,
+  secondary,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly secondary: string;
+}) {
+  const transport = useEnvironmentTransportLabel(environment);
+  return (
+    <>
+      {secondary && secondary !== transport ? (
+        <span className="block truncate">{secondary}</span>
+      ) : null}
+      <span className="block truncate">{transport}</span>
+    </>
+  );
+}
+
 function ScheduledTaskEnvironmentSection({
   environment,
   taskId,
@@ -673,6 +699,7 @@ function ScheduledTaskEnvironmentSection({
     </SettingsSection>
   );
 }
+
 function ScheduledTaskRow({
   environmentId,
   task,
@@ -799,6 +826,7 @@ function ScheduledTaskRow({
     />
   );
 }
+
 function WebhookDeliveriesDialog({
   environmentId,
   task,
@@ -828,6 +856,7 @@ function WebhookDeliveriesDialog({
   const deliveries = deliveriesQuery.data?.deliveries ?? null;
   const selected = selectedQuery.data?.delivery ?? null;
   const error = selectedId === null ? deliveriesQuery.error : selectedQuery.error;
+
   return (
     <Dialog
       open
@@ -961,6 +990,7 @@ function WebhookDeliveriesDialog({
     </Dialog>
   );
 }
+
 function DeliveryBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-1">
@@ -971,6 +1001,7 @@ function DeliveryBlock({ title, children }: { title: string; children: ReactNode
     </div>
   );
 }
+
 function WebhookEndpointField({
   environmentId,
   task,
@@ -1045,6 +1076,7 @@ function WebhookEndpointField({
     </div>
   );
 }
+
 function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const cloudLink = usePrimaryCloudLinkState();
   if (cloudLink.target?.environmentId !== environmentId || cloudLink.data === null) return null;
@@ -1059,6 +1091,7 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
     </p>
   );
 }
+
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
@@ -1087,6 +1120,38 @@ function ScheduledTaskEditorDialog({
         />
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function ScheduledTaskDestination({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
+}) {
+  const ref = threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the title.
+  const family = useEnvironmentQuery(
+    ref !== null && shell === null ? threadFamilies.familyAtom(environmentId, ref.threadId) : null,
+  );
+  const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
+  return (
+    <Field label="Destination">
+      {ref === null ? (
+        <p className="text-sm text-muted-foreground">
+          Each run starts a new thread with the workspace and model below.
+        </p>
+      ) : (
+        <div className="space-y-1 text-sm">
+          <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
+          <p className="text-muted-foreground">
+            Each run continues this conversation, in its workspace and with its current model.
+          </p>
+        </div>
+      )}
+    </Field>
   );
 }
 
@@ -1144,9 +1209,9 @@ function ScheduledTaskEditorForm({
     settings,
     selectedProject?.id ?? null,
   );
+
   const firstInstance = instanceEntries[0];
-  // A picked model whose provider is off for this project falls back to the default.
-  const draftSelection = draftModelSelection(draft, null);
+  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
   const activeSelection =
     draftSelection &&
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
@@ -1155,24 +1220,13 @@ function ScheduledTaskEditorForm({
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
-  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
-  // Offer only the modes the task's provider supports; a stored mode it no
-  // longer offers shows (and saves) as the provider's first supported mode.
-  const supportedRuntimeModes = activeEntry?.snapshot.supportedRuntimeModes;
-  const compatibleRuntimeModes =
-    supportedRuntimeModes && supportedRuntimeModes.length > 0
-      ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
-      : runtimeModeOptions;
-  const runtimeMode = compatibleRuntimeModes.includes(draft.runtimeMode)
-    ? draft.runtimeMode
-    : (compatibleRuntimeModes[0] ?? draft.runtimeMode);
-  const RuntimeModeIcon = runtimeModeConfig[runtimeMode].icon;
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
     activeInstanceId,
     activeModel,
   );
+
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -1182,6 +1236,7 @@ function ScheduledTaskEditorForm({
       }),
     );
   };
+
   const submit = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -1233,6 +1288,12 @@ function ScheduledTaskEditorForm({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
+    const modelSelection =
+      draft.baseModelSelection !== null &&
+      draft.baseModelSelection.instanceId === selection.instanceId &&
+      draft.baseModelSelection.model === selection.model
+        ? draft.baseModelSelection
+        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1252,8 +1313,8 @@ function ScheduledTaskEditorForm({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
-      modelSelection: selection,
-      runtimeMode,
+      modelSelection,
+      runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };
@@ -1271,6 +1332,7 @@ function ScheduledTaskEditorForm({
     }
     onClose();
   };
+
   return (
     <>
       <DialogHeader>
@@ -1298,7 +1360,7 @@ function ScheduledTaskEditorForm({
                   ...current,
                   projectId: "",
                   modelKey: "",
-                  modelOptions: [],
+                  baseModelSelection: null,
                   baseRef: "main",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1368,6 +1430,11 @@ function ScheduledTaskEditorForm({
               }
             />
           </Field>
+
+          <ScheduledTaskDestination
+            environmentId={environmentId}
+            threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+          />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Project" htmlFor="scheduled-task-project">
@@ -1465,7 +1532,7 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label="Model">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <div>
               <ProviderModelPicker
                 environmentId={environmentId}
                 disabled={saving || !connected}
@@ -1476,79 +1543,11 @@ function ScheduledTaskEditorForm({
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) => {
-                  if (instanceId === activeInstanceId && model === activeModel) return;
-                  setDraft((current) => ({
-                    ...current,
-                    modelKey: `${instanceId}:${model}`,
-                    modelOptions: [],
-                  }));
-                }}
+                onInstanceModelChange={(instanceId, model) =>
+                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                }
               />
-              {activeEntry ? (
-                <TraitsPicker
-                  disabled={saving || !connected}
-                  provider={activeEntry.driverKind}
-                  instanceId={activeInstanceId}
-                  models={activeEntry.models}
-                  model={activeModel}
-                  // Prompt-injected effort (Claude's Ultrathink) edits the task prompt,
-                  // as it does in the composer.
-                  promptUltrathink={readPromptUltrathink(draft.prompt)}
-                  onPromptEdit={(edit) =>
-                    setDraft((current) => ({ ...current, prompt: edit(current.prompt) }))
-                  }
-                  modelOptions={activeSelection?.options ?? []}
-                  planModeEnabled={settings.planModeEnabled}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  onModelOptionsChange={(options) =>
-                    setDraft((current) => ({
-                      ...current,
-                      modelKey: `${activeInstanceId}:${activeModel}`,
-                      modelOptions: options ?? [],
-                    }))
-                  }
-                />
-              ) : null}
             </div>
-          </Field>
-
-          {/* A run sent into a bound thread keeps that thread's permissions. */}
-          <Field
-            label="Permissions"
-            {...(draft.threadId ? { hint: "Uses the bound thread's permissions" } : {})}
-          >
-            <Select
-              value={runtimeMode}
-              disabled={saving || !connected || draft.threadId !== ""}
-              onValueChange={(value) => {
-                if (value) setDraft((current) => ({ ...current, runtimeMode: value }));
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Permissions">
-                <RuntimeModeIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <SelectValue>{runtimeModeConfig[runtimeMode].label}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup alignItemWithTrigger={false}>
-                {compatibleRuntimeModes.map((mode) => {
-                  const option = runtimeModeConfig[mode];
-                  const Icon = option.icon;
-                  return (
-                    <SelectItem key={mode} value={mode} className="min-w-64">
-                      <div className="grid gap-0.5">
-                        <span className="inline-flex items-center gap-1.5 font-medium">
-                          <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                          {option.label}
-                        </span>
-                        <span className="text-xs leading-4 text-muted-foreground">
-                          {option.description}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  );
-                })}
-              </SelectPopup>
-            </Select>
           </Field>
 
           <div className="space-y-3">

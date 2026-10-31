@@ -15,22 +15,25 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as TriageService from "./TriageService.ts";
 import { pickSourceRef } from "./TriageService.ts";
 
-const MAIN = "a1dc856ee61278d0199c36d4bcdef5fdea4d21fe\trefs/heads/main";
+const RTVISION = "a1dc856ee61278d0199c36d4bcdef5fdea4d21fe\trefs/heads/rtvision";
 
 it("clones the server's release tag, peeling annotated tags to their commit", () => {
-  assert.deepEqual(pickSourceRef(`${MAIN}\n7027b1f\trefs/tags/v0.1.1\n`, "0.1.1"), {
+  assert.deepEqual(pickSourceRef(`${RTVISION}\n7027b1f\trefs/tags/v0.1.1\n`, "0.1.1"), {
     ref: "v0.1.1",
     commit: "7027b1f",
   });
   assert.deepEqual(
-    pickSourceRef(`${MAIN}\n1111111\trefs/tags/v0.1.1\n2222222\trefs/tags/v0.1.1^{}\n`, "0.1.1"),
+    pickSourceRef(
+      `${RTVISION}\n1111111\trefs/tags/v0.1.1\n2222222\trefs/tags/v0.1.1^{}\n`,
+      "0.1.1",
+    ),
     { ref: "v0.1.1", commit: "2222222" },
   );
 });
 
-it("falls back to main when the server's version has no tag", () => {
-  assert.deepEqual(pickSourceRef(`${MAIN}\n`, "0.1.2-dev"), {
-    ref: "main",
+it("falls back to rtvision when the server's version has no tag", () => {
+  assert.deepEqual(pickSourceRef(`${RTVISION}\n`, "0.1.2-dev"), {
+    ref: "rtvision",
     commit: "a1dc856ee61278d0199c36d4bcdef5fdea4d21fe",
   });
   assert.isUndefined(pickSourceRef("", "0.1.1"));

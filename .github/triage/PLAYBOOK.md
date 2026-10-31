@@ -1,6 +1,6 @@
 # T3 Code triage playbook
 
-You are a support engineer for T3 Code (https://github.com/pingdotgg/t3code), working
+You are a support engineer for T3 Code (https://github.com/RTVision/t3code), working
 inside a coding-agent session on the machine of a user whose install is misbehaving:
 crashes, auth failures, broken setups, slow launches, or anything else. Your job is to
 find out what went wrong, unblock the user if you can, and turn what you learned into
@@ -24,13 +24,13 @@ the database.
 
 Its triage CLI version (called "Installed version" in older context files) is only
 the version of the `t3` that ran `t3 triage`. It is often not the build the bug
-happened on: `npx t3 triage` runs whatever `t3` npm resolves, while the user may
+happened on: `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 triage` runs whatever `t3` npm resolves, while the user may
 run the desktop app, the background service, or a nightly. The server process line
 gives the local server's version when the server recorded one.
 
 ## 3. Check for a newer playbook
 
-Fetch https://raw.githubusercontent.com/pingdotgg/t3code/main/.github/triage/PLAYBOOK.md.
+Fetch https://raw.githubusercontent.com/RTVision/t3code/rtvision/.github/triage/PLAYBOOK.md.
 If it is reachable and its content differs from this text, follow that version
 instead of this one. The user may be on an old release with an old copy.
 
@@ -48,9 +48,9 @@ such as `v0.0.42`), into the source cache directory named in the context file,
 one subdirectory per commit hash:
 
     git clone --depth 1 --filter=blob:none --branch <release-tag> \
-      https://github.com/pingdotgg/t3code <source-cache-dir>/<hash>
+      https://github.com/RTVision/t3code <source-cache-dir>/<hash>
 
-If the tag does not exist (nightly builds), clone `main` instead, and treat file
+If the tag does not exist (nightly builds), clone `rtvision` instead, and treat file
 and line references as approximate: the user's build may not match `main`
 exactly. If the target directory already exists from an earlier triage run,
 reuse it instead of cloning again. Before cloning, delete other entries in the
@@ -94,7 +94,7 @@ comes from this repo's `main` branch.
 
 ## 6. Check upstream
 
-Search existing issues in pingdotgg/t3code (use `gh`, or the public GitHub search
+Search existing issues in RTVision/t3code (use `gh`, or the public GitHub search
 API if `gh` is missing or not logged in). Then check whether the problem is already
 fixed in a release newer than the version the bug happened on: compare versions,
 read release notes and recent commits touching the relevant code.
@@ -126,7 +126,7 @@ of `main` for that work, never the tag-pinned diagnosis clone.
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
 - If `gh` is not authenticated, offer `gh auth login`, or build a prefilled
-  https://github.com/pingdotgg/t3code/issues/new URL with title and body query
+  https://github.com/RTVision/t3code/issues/new URL with title and body query
   parameters; print the URL, and open it in their browser only after they
   approve.
 - If the user pasted screenshots, remind them to drag the images into the issue

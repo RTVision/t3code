@@ -16,7 +16,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { buildTriageAppPrompt, type TriageSourceClone } from "./triagePrompt.ts";
 import { triageSourceCacheDir, writeTriageSession } from "./triageSession.ts";
 
-const T3CODE_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
+const T3CODE_REPOSITORY_URL = "https://github.com/RTVision/t3code";
 
 // No tty: a credential prompt would hang until the timeout, so git must fail
 // instead. An empty GIT_ASKPASS also skips core.askPass and SSH_ASKPASS helpers.
@@ -47,7 +47,7 @@ const describeClient = (client: AuthClientPresentationMetadata) =>
     .filter((part) => part !== undefined)
     .join(" ");
 
-/** Picks the release tag for `version`, or `main` when the build has no tag. */
+/** Picks the release tag for `version`, or the fork's integration branch when untagged. */
 export const pickSourceRef = (lsRemoteOutput: string, version: string) => {
   const commits = new Map(
     lsRemoteOutput
@@ -60,8 +60,8 @@ export const pickSourceRef = (lsRemoteOutput: string, version: string) => {
   // Annotated tags list the tag object first and the commit as `^{}`.
   const tagCommit = commits.get(`refs/tags/${tag}^{}`) ?? commits.get(`refs/tags/${tag}`);
   if (tagCommit !== undefined) return { ref: tag, commit: tagCommit };
-  const mainCommit = commits.get("refs/heads/main");
-  return mainCommit === undefined ? undefined : { ref: "main", commit: mainCommit };
+  const branchCommit = commits.get("refs/heads/rtvision");
+  return branchCommit === undefined ? undefined : { ref: "rtvision", commit: branchCommit };
 };
 
 const make = Effect.gen(function* () {
@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
   });
 
   // Release tags never move, so one lookup serves every later session. Builds
-  // with no tag track main, which does move, so they look it up each time.
+  // with no tag track rtvision, which does move, so they look it up each time.
   let releaseSource: { readonly ref: string; readonly commit: string } | undefined;
   const resolveSource = Effect.fn("TriageService.resolveSource")(function* () {
     if (releaseSource !== undefined) return releaseSource;
@@ -129,12 +129,12 @@ const make = Effect.gen(function* () {
     const listed = yield* runGit(
       "resolveSourceRef",
       sourceDir,
-      ["ls-remote", T3CODE_REPOSITORY_URL, tag, `${tag}^{}`, "refs/heads/main"],
+      ["ls-remote", T3CODE_REPOSITORY_URL, tag, `${tag}^{}`, "refs/heads/rtvision"],
       // Triage still starts without source; a dead network should not stall it.
       5_000,
     );
     const source = pickSourceRef(listed.stdout, serverVersion);
-    if (source?.ref !== "main") releaseSource = source;
+    if (source?.ref !== "rtvision") releaseSource = source;
     return source;
   });
 

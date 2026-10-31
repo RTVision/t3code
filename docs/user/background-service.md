@@ -8,63 +8,54 @@ to keep a terminal open.
 Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then
 run these commands on the machine that will host T3 Code:
 
-| Task                            | Command                                                                                   |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| Install and start               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service install`   |
-| Inspect status and log location | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service status`    |
-| Update the running server       | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service update`    |
-| Stop and remove from startup    | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest service uninstall` |
+| Task                                  | Command                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| Set up access from your other devices | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up`                |
+| See how your other devices reach it   | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 status`            |
+| Install and start                     | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service install`   |
+| Inspect status and log location       | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service status`    |
+| Move to a newer release               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 update`            |
+| Restart                               | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service restart`   |
+| Stop and remove from startup          | `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
+Running `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service install` again repairs a service that `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service status`
+reports as broken.
 
-Install and update use the version of the CLI you invoke. Replace `latest` with
-an exact version, such as `0.0.51`, to pin one. An older CLI refuses to replace a
-newer service unless you explicitly add `--allow-downgrade`.
-
-The Update button and `service update` ask a running daemon to update through its
-T3 service launcher, preserving the service's environment. This also works with
-an externally installed launcher service, such as an OpenRC package. Run the CLI
-as the service user, with `--base-dir` if it uses a custom T3 home.
-
-Installation, removal, and service-manager repairs still use the platform support
-listed below. To repair a running systemd or launchd service definition, use
-`service install`. Explicit downgrades also use that native installation path;
-externally packaged services follow their package's downgrade procedure.
-
-SSH uses the configured daemon and reports when it is unavailable. It will not
-start a second server in the same T3 home. To switch back to an SSH-launched
-server after uninstalling the daemon, disconnect the SSH environment in
-Settings → Connections, then connect again. If you removed an externally
-packaged service or uninstalled with an older CLI, also remove `runtime/service-state.json` and
-`runtime/server-runtime.json` from its T3 home after the service has stopped.
-
-Updating restarts the server. Finish active work first, and wait for any remote
-update already in progress. To match a remote client's version, follow
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 update` downloads the newest release on your channel and switches `t3`
+and the service to it. Restarting interrupts running agent turns, terminals,
+and remote clients, so it asks first; answer no and the service keeps running
+the old version until you run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service restart`. Pass `--yes` from a
+script. A server you started by hand is left running; stop and start it again
+to pick up the new version. Wait for any remote update already in progress
+before updating; to match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
-Node/npm installations need Node.js and npm available to the service user for
-updates. Standalone CLI archives are available from
-[RTVision GitHub Releases](https://github.com/RTVision/t3code/releases); extract
-the complete archive to keep its runtime files together. Standalone Linux builds
-require glibc. Use the npm package on Alpine.
+Pass an exact version (`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 update 0.0.42`) to pin one, `--channel nightly` to
+switch trains, or `--allow-downgrade` to move backwards. `preview` is a
+maintainers' test train: its builds can be broken and are never offered as
+updates, so the installer and `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 update` ask for confirmation before
+installing one.
 
-Standalone services download their updates as release archives. Node services
-continue to install the `@rtvision/t3` npm package. Both use the service launcher
-to validate the replacement before switching the running server.
-`t3 uninstall` removes the background service, the `t3` launcher, and the
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 uninstall` removes the background service, the `t3` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.t3/userdata` are kept, along with `service.env`
 under T3 home. Pass `--yes` from a script.
 
 ## Local network access
 
-The service listens on your local network and Tailscale addresses, so the
-desktop and mobile apps on the same network connect directly instead of through
-T3 Connect. The hosted web app at app.t3.codes stays on T3 Connect, because
-browsers block plain HTTP from an HTTPS page. The service does not answer on
-public addresses, and every device still needs to pair or sign in. To keep the service reachable from this machine only, set
-`T3CODE_HOST=127.0.0.1` in `service.env` (below). Any `T3CODE_HOST` value
-replaces this default.
+A new service answers only on this machine. Other devices reach it through
+T3 Connect, or directly once you choose the local network in `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up` (or run
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up --lan`, which sets `T3CODE_LAN=true` in `service.env`). It then listens on
+your local network and Tailscale addresses, so the desktop and mobile apps on
+the same network connect directly instead of through T3 Connect. It still does
+not answer on public addresses. Anyone on the same network can reach the port,
+so a pairing code is all that keeps them out. The hosted web app at app.t3.codes
+stays on T3 Connect, because browsers block plain HTTP from an HTTPS page.
+
+A service installed before `T3CODE_LAN` existed keeps listening on the local
+network. `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 status` says so, and `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up --no-lan` turns it off. Any
+`T3CODE_HOST` value replaces this setting.
 
 ## Configure the service environment
 
@@ -82,9 +73,9 @@ literal: shell commands and variable expansion are not evaluated. Entries
 override the inherited service environment, except for `PATH`, `T3CODE_HOME`,
 `T3_BOOT_SERVICE_UNIT`, and `T3_SERVICE_LAUNCHER_CONTEXT` (including case variants).
 
-Run `t3 service restart` after changing the file. Changes apply when the service
+Run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service restart` after changing the file. Changes apply when the service
 starts again; switching the server version alone keeps the current values.
-For a service installed before env-file support, run `t3 service install` once
+For a service installed before env-file support, run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service install` once
 with an up-to-date CLI.
 A missing file is ignored; other read failures stop service startup.
 If the file contains credentials, restrict access to that file with `chmod 600`
@@ -92,7 +83,7 @@ If the file contains credentials, restrict access to that file with `chmod 600`
 
 ## Platform support
 
-The built-in Linux installer needs systemd user services. Setup enables lingering so T3 Code starts at
+Linux needs systemd user services. Setup enables lingering so T3 Code starts at
 boot and keeps running after logout. If this needs administrator permission,
 setup prints a recovery command before changing the service.
 
@@ -101,9 +92,13 @@ Mac logged in and awake for unattended remote access. Installing over SSH while
 nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
-Windows background services are not supported.
+Windows background services are not supported. To keep a Windows host available
+through T3 Connect, leave the desktop app running with its local environment
+enabled, or keep `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve` running in a terminal. Minimize the desktop app rather
+than closing its last window, which stops its local server. Linking T3 Connect
+does not configure automatic startup at Windows sign-in.
 
-T3 Connect can offer service installation during setup, but the two are managed
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
 
 ## Keep the server responsive when agents use all memory
@@ -121,12 +116,12 @@ It shows the system settings it will change, asks before applying them, and
 then asks for your sudo password. If the machine runs Tailscale or SSH, it
 also offers to protect them, so you can still reach the machine. Memory
 protection takes effect at once. The server's protection from the kernel's
-out-of-memory killer takes effect after `t3 service restart`. `t3 service status` reports whether
-the protection is in place, and `t3 service protect --undo` removes it.
+out-of-memory killer takes effect after `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service restart`. `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service status` reports whether
+the protection is in place, and `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service protect --undo` removes it.
 
 ## Troubleshooting
 
-Start with `t3 service status` on the host. It prints the log path and, on Linux,
+Start with `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service status` on the host. It prints the log path and, on Linux,
 checks whether the installed service is running, enabled, and allowed to survive
 logout.
 
@@ -145,15 +140,15 @@ ssh -t your-server 'sudo loginctl enable-linger "$(id -un)"'
 
 Then retry service setup as your normal user. Run only the `loginctl` command
 with sudo; running T3 Code as root creates a separate installation and Connect
-identity. Without administrator access, run `t3 serve` in a terminal and keep
+identity. Without administrator access, run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve` in a terminal and keep
 that session open.
 
-| Status problem                          | Next step                                                                                                                      |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
-| `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.                     |
-| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `t3 service restart`.                            |
+| Status problem                          | Next step                                                                                                                                                       |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                                                              |
+| `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support.                                  |
+| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.                                                      |
+| `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 service restart`. |
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or

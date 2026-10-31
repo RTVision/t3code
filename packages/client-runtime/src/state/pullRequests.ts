@@ -213,7 +213,7 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-function createPullRequestRefreshAtomFamily<R, E>(
+function makePullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const events = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -246,6 +246,21 @@ function createPullRequestRefreshAtomFamily<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: PullRequestRefreshScope;
   }) => scoped(JSON.stringify(target));
+}
+
+const refreshFamiliesByRuntime = new WeakMap<
+  object,
+  ReturnType<typeof makePullRequestRefreshAtomFamily>
+>();
+
+function createPullRequestRefreshAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+): ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>> {
+  const existing = refreshFamiliesByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makePullRequestRefreshAtomFamily<R, E>>;
+  const refreshes = makePullRequestRefreshAtomFamily(runtime);
+  refreshFamiliesByRuntime.set(runtime, refreshes);
+  return refreshes;
 }
 
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
