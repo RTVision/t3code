@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -16,7 +17,7 @@ import { writeTextToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useScratchProject } from "./useScratchProject";
 
-export const TRIAGE_CLI_COMMAND = "npx t3 triage";
+export const TRIAGE_CLI_COMMAND = `${T3_NPX_COMMAND} triage`;
 
 const copyTriageCliCommand = () =>
   writeTextToClipboard(TRIAGE_CLI_COMMAND, "command").catch(() =>

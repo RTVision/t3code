@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off globalFetch:off - This browser and WebView transport runs without an Effect runtime.
 import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
+import { T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 import {
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   type PreviewStreamHostSetup,
@@ -451,7 +452,7 @@ const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
       return { need: value.need, command: value.command };
     }
   } catch {}
-  return { need: "sandbox", command: "sudo npx t3 browser setup" };
+  return { need: "sandbox", command: `sudo ${T3_NPX_COMMAND} browser setup` };
 };
 
 export const previewStreamHostSetupMessage = (setup: PreviewStreamHostSetup) =>

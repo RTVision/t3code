@@ -141,6 +141,67 @@ export const make = Effect.gen(function* () {
       ? Effect.succeed(api.baseUrl.value)
       : Effect.fail(failure("resolveRepository", cwd, GiteaCli.GITEA_SETUP_HINT));
 
+  // SSH remotes can name a tea alias rather than the web server, so resolve the
+  // configured login before persisting the browser identity and PR host.
+  const refineRepositoryIdentity: NonNullable<
+    SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+  > = Effect.fn("GiteaSourceControlProvider.refineRepositoryIdentity")(function* ({
+    identity,
+    resolveContext,
+  }) {
+    if (
+      !identity.rootPath ||
+      (identity.provider !== undefined &&
+        identity.provider !== "unknown" &&
+        identity.provider !== "gitea")
+    )
+      return identity;
+    const baseUrl = Option.getOrUndefined(api.baseUrl);
+    if (
+      baseUrl === undefined ||
+      giteaRepositoryFromRemote(identity.locator.remoteUrl, baseUrl, api.sshHosts) === null
+    )
+      return identity;
+    const context = yield* resolveContext({
+      cwd: identity.rootPath,
+      context: {
+        provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+        remoteName: identity.locator.remoteName,
+        remoteUrl: identity.locator.remoteUrl,
+      },
+    });
+    if (context?.provider.kind !== "gitea") return identity;
+    const repository = giteaRepositoryFromRemote(
+      identity.locator.remoteUrl,
+      context.provider.baseUrl,
+      api.sshHosts,
+    );
+    if (repository === null) return identity;
+    return {
+      ...identity,
+      provider: SourceControlProviderKind.make("gitea"),
+      webUrl: `${context.provider.baseUrl.replace(/\/+$/u, "")}/${repository}`,
+    };
+  });
+
+  const resolveRemoteWebHost: NonNullable<
+    SourceControlProvider.SourceControlProvider["Service"]["resolveRemoteWebHost"]
+  > = Effect.fn("GiteaSourceControlProvider.resolveRemoteWebHost")(function* ({
+    cwd,
+    context,
+    resolveContext,
+  }) {
+    if (!isSshRemoteUrl(context.remoteUrl)) return null;
+    const resolved = yield* resolveContext({
+      cwd,
+      context: {
+        ...context,
+        provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+      },
+    });
+    return resolved?.provider.kind === "gitea" ? new URL(resolved.provider.baseUrl).host : null;
+  });
+
   const resolveRepository = Effect.fn("GiteaSourceControlProvider.resolveRepository")(
     function* (input: {
       readonly cwd: string;
@@ -241,6 +302,8 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitea"),
+    refineRepositoryIdentity,
+    resolveRemoteWebHost,
     listChangeRequests: Effect.fn("GiteaSourceControlProvider.listChangeRequests")(
       function* (input) {
         const { repository } = yield* resolveRepository(input);

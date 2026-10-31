@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import { T3_NPX_COMMAND } from "@t3tools/shared/releasePackage";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -20,7 +21,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
-const CLI_COMMAND = "npx t3 triage";
+const CLI_COMMAND = `${T3_NPX_COMMAND} triage`;
 
 /**
  * In-app `t3 triage`, as on web: the server writes the session files and

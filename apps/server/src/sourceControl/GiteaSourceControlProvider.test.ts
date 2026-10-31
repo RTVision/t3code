@@ -76,6 +76,7 @@ function setup(
       Layer.mergeAll(
         Layer.mock(GiteaCli.GiteaCli)({
           baseUrl: Option.some("https://forge.example.test"),
+          sshHosts: ["forge-alias"],
           request,
         }),
         FileSystem.layerNoop({ readFileString: () => Effect.succeed("PR body") }),
@@ -94,6 +95,40 @@ function setup(
   );
   return { provider, request, fetchBranch, fetchTracking, ensureRemote, switchRef, localBranches };
 }
+
+it.effect("refines SSH aliases to the configured Gitea web repository", () => {
+  const { provider } = setup(() => ({ body: {} }));
+  const identity = {
+    canonicalKey: "forge-alias:team/repo",
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "origin",
+      remoteUrl: "git@forge-alias:team/repo.git",
+    },
+    rootPath: "/repo",
+    provider: SourceControlProviderKind.make("unknown"),
+  };
+  return Effect.gen(function* () {
+    const refined = yield* (yield* provider).refineRepositoryIdentity!({
+      identity,
+      resolveContext: () => Effect.succeed(context),
+    });
+    assert.strictEqual(refined.provider, "gitea");
+    assert.strictEqual(refined.webUrl, "https://forge.example.test/team/repo");
+  });
+});
+
+it.effect("resolves the web host for SSH aliases", () => {
+  const { provider } = setup(() => ({ body: {} }));
+  return Effect.gen(function* () {
+    const host = yield* (yield* provider).resolveRemoteWebHost!({
+      cwd: "/repo",
+      context,
+      resolveContext: () => Effect.succeed(context),
+    });
+    assert.strictEqual(host, "forge.example.test");
+  });
+});
 
 it.effect("maps merged state, draft and deleted source repository accurately", () => {
   const { provider } = setup(() => ({
