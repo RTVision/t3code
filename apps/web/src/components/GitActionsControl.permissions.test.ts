@@ -43,6 +43,8 @@ vi.mock("~/state/entities", () => ({
   useThreadProjection: (ref: unknown) =>
     ref === null || state.detail === null ? null : { projection: { thread: state.detail } },
   useQuietThreadShell: () => state.shell,
+  useQuietThreadProjection: (ref: unknown) =>
+    ref === null || state.detail === null ? null : { projection: { thread: state.detail } },
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>

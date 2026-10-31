@@ -256,6 +256,7 @@ vi.mock("~/previewMiniPlayerStore", () => {
 
 vi.mock("~/rightPanelStore", () => ({
   selectSelectedRightPanelSurface: () => null,
+  rightPanelHostRef: (ref: unknown) => ref,
   useRightPanelStore: {
     getState: () => ({ close: mocks.closeRightPanel, openBrowser: vi.fn(), byThreadKey: {} }),
   },
