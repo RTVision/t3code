@@ -125,7 +125,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
 import {
   PreferredEditorEnvironmentRequiredError,
-  useOpenInPreferredEditor,
+  useEditorDispatch,
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
@@ -632,7 +632,11 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const { open: openInPreferredEditor, canOpen: canOpenPreferredEditor } = useEditorDispatch(
+    environmentId,
+    availableEditors,
+  );
+  const canOpenInPreferredEditor = canUseShellActions && canOpenPreferredEditor;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -857,7 +861,7 @@ function useChatMarkdownState({
         theme={resolvedTheme}
         threadRef={threadRef}
         onOpen={
-          canUseShellActions
+          canOpenInPreferredEditor
             ? async () =>
                 openInPreferredEditor(
                   markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
