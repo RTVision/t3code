@@ -129,12 +129,11 @@ case "$(uname -s)" in
   *) fail "unsupported operating system $(uname -s); use the desktop app or npm" ;;
 esac
 case "$(uname -m)" in
-  arm64 | aarch64) arch="arm64" ;;
   x86_64 | amd64) arch="x64" ;;
-  *) fail "unsupported architecture $(uname -m)" ;;
+  *) fail "RTVision releases provide a Linux x64 CLI only; use the desktop app or run T3 Code from source" ;;
 esac
-if [ "${platform}-${arch}" = darwin-x64 ]; then
-  fail "there is no t3 CLI for Intel Macs. Install the desktop app from https://t3.codes/download, or run a server from source: https://github.com/${repo}/blob/main/docs/user/install.md#intel-macs"
+if [ "$platform" != linux ]; then
+  fail "RTVision releases provide a Linux x64 CLI only; use the desktop app or run T3 Code from source"
 fi
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 if command -v sha256sum >/dev/null 2>&1; then
@@ -205,7 +204,7 @@ else
   fetch_status=0
   fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
   if [ "$fetch_status" -eq 44 ]; then
-    fail "t3 ${version} has no release archive for ${platform}-${arch}; install the Node package with \`npm install --global --registry=https://npm-registry.rtvision.com/ @rtvision/t3@${version}\`"
+    fail "t3 ${version} has no release archive for ${platform}-${arch}; RTVision publishes Linux x64 and Windows x64 only"
   elif [ "$fetch_status" -ne 0 ]; then
     fail "could not download the release checksums"
   fi

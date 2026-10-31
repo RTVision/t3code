@@ -527,7 +527,9 @@ function TerminalSessionViewport({
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canActivateTerminalLink = useEffectEvent(
     (text: string) =>
-      isTerminalUrl(text) || readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+      isTerminalUrl(text) ||
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      readEnvironmentScope(environmentId, AuthTerminalOperateScope),
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -637,13 +639,14 @@ function TerminalSessionViewport({
   }, [canOperateTerminal, terminalId, threadRef]);
 
   // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
-  const linkActivationScopeRef = useRef(canOpenHostEditor);
+  const linkActivationScopeRef = useRef(canOpenHostEditor || canOperateTerminal);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes link activation styling on the imperative terminal surface when the editor grant changes
   useEffect(() => {
-    if (linkActivationScopeRef.current === canOpenHostEditor) return;
-    linkActivationScopeRef.current = canOpenHostEditor;
+    const canActivateEditorLink = canOpenHostEditor || canOperateTerminal;
+    if (linkActivationScopeRef.current === canActivateEditorLink) return;
+    linkActivationScopeRef.current = canActivateEditorLink;
     terminalRef.current?.refreshLinkActivation();
-  }, [canOpenHostEditor]);
+  }, [canOpenHostEditor, canOperateTerminal]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
