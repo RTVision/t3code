@@ -467,7 +467,7 @@ export function PullRequestDetailPanel({
     setMergeMethodSelection({ pullRequestKey, method });
   };
   const [handoff, setHandoff] = useState<string | null>(null);
-  const turnRefresh = usePullRequestTurnRefresh(environmentId);
+  const turnRefresh = usePullRequestTurnRefresh(environmentId, reference);
   const handoffSummary = detail ?? sharedSummary;
   const terminology = sourceControlClients.get(
     handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,

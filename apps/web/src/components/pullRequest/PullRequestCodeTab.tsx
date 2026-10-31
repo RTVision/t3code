@@ -266,7 +266,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
-  revalidateToken = 0,
+  backgroundRefreshToken = 0,
   revealRequest = null,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
@@ -282,7 +282,7 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   refreshToken?: number;
   /** Bumped when the pull request reports a new revision: re-read the loaded pages in place. */
-  revalidateToken?: number;
+  backgroundRefreshToken?: number;
   /** A file another tab asked to show. A new nonce asks again for the same path. */
   revealRequest?: {
     readonly path: string;
@@ -537,11 +537,11 @@ function PullRequestCodeTab({
   // the answer for each is compared against the page it would replace (above). One that only
   // moved the conversation leaves the diff, and the reader's place in it, as it was.
   const registry = useContext(RegistryContext);
-  const appliedRevalidateToken = useRef(revalidateToken);
+  const appliedRevalidateToken = useRef(backgroundRefreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes loaded diff pages after the pull request revision changes
   useEffect(() => {
-    if (appliedRevalidateToken.current === revalidateToken) return;
-    appliedRevalidateToken.current = revalidateToken;
+    if (appliedRevalidateToken.current === backgroundRefreshToken) return;
+    appliedRevalidateToken.current = backgroundRefreshToken;
     // The page being read goes too, so a first read still out when the revision moved is asked
     // again rather than landing with the older answer.
     const cursors = new Set([...loadedSlices.map((slice) => slice.cursor), cursor]);
@@ -572,7 +572,7 @@ function PullRequestCodeTab({
     reference,
     refreshFilesViewed,
     registry,
-    revalidateToken,
+    backgroundRefreshToken,
     scopeKey,
   ]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;

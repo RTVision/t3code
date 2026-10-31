@@ -4,6 +4,7 @@ import {
   type ServerNpmRelease,
 } from "@t3tools/contracts";
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -58,12 +59,14 @@ function toRelease(spec: string, json: string) {
 export const make = Effect.fn("NpmRelease.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const http = yield* HttpClient.HttpClient;
-  const lookupPublic = Effect.fn("NpmRelease.lookupPublic")(function* (spec: string) {
+  const lookupRegistry = Effect.fn("NpmRelease.lookupRegistry")(function* (spec: string) {
     const unreachable = new ServerNpmReleaseError({
-      reason: "npm is not installed and the public npm registry could not be reached.",
+      reason: "npm is not installed and RTVision's npm registry could not be reached.",
     });
     const json = yield* Effect.gen(function* () {
-      const response = yield* http.get(`https://registry.npmjs.org/t3/${spec}`);
+      const response = yield* http.get(
+        `${T3_NPM_REGISTRY}${T3_NPM_PACKAGE.replace("/", "%2F")}/${encodeURIComponent(spec)}`,
+      );
       if (response.status === 404) return Option.none<string>();
       if (response.status < 200 || response.status >= 300) return yield* unreachable;
       return Option.some(yield* response.text);
@@ -79,15 +82,23 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
     capacity: 32,
     timeToLive: Duration.minutes(1),
     lookup: Effect.fn("NpmRelease.lookup")(function* (spec: string) {
-      // Without npm there is no configured registry to honor, so use the public one.
+      // Without npm, query the same private registry used by the packaged CLI.
       const npmPath = yield* resolveCommandPath("npm");
-      if (npmPath === null) return yield* lookupPublic(spec);
+      if (npmPath === null) return yield* lookupRegistry(spec);
       const output = yield* npmPermits
         .withPermits(1)(
           runner.run({
             command: npmPath,
             // Named fields keep the output small; the full package document grows with every release.
-            args: ["view", "--global", "--json", `t3@${spec}`, "version", "t3code"],
+            args: [
+              "view",
+              "--global",
+              "--json",
+              `--registry=${T3_NPM_REGISTRY}`,
+              `${T3_NPM_PACKAGE}@${spec}`,
+              "version",
+              "t3code",
+            ],
             timeout: Duration.seconds(15),
             maxOutputBytes: 256 * 1024,
           }),

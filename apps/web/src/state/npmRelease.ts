@@ -3,13 +3,35 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { Atom } from "effect/reactivity";
 
+import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import { environmentSummaries } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { serverEnvironment } from "./server";
 
 const isServerNpmReleaseError = Schema.is(ServerNpmReleaseError);
+
+/** Used by the release publication check, which must stay on RTVision's private registry. */
+export const npmReleasePublished = Effect.fn("npmReleasePublished")((version: string) =>
+  Effect.gen(function* () {
+    const response = yield* HttpClient.get(
+      `${T3_NPM_REGISTRY}${T3_NPM_PACKAGE.replace("/", "%2F")}/${encodeURIComponent(version)}`,
+    );
+    if (response.status === 404) return false;
+    const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
+      Effect.flatMap((ok) => ok.json),
+    );
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      "version" in body &&
+      typeof body.version === "string" &&
+      body.version === version
+    );
+  }),
+);
 
 function unsupportedLookup(config: ServerConfig | null): ServerNpmReleaseError | null {
   if (config === null) {

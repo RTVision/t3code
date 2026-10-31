@@ -81,7 +81,15 @@ it.effect.each([
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       command: expect.stringMatching(/[/\\]npm(?:\.cmd)?$/i),
-      args: ["view", "--global", "--json", `t3@${fixture.spec}`, "version", "t3code"],
+      args: [
+        "view",
+        "--global",
+        "--json",
+        "--registry=https://npm-registry.rtvision.com/",
+        `@rtvision/t3@${fixture.spec}`,
+        "version",
+        "t3code",
+      ],
       maxOutputBytes: 256 * 1024,
     });
     yield* TestClock.adjust("1 minute");
@@ -131,7 +139,7 @@ it.effect.each([
   }),
 );
 
-it.effect("falls back to public npm only when npm is not installed", () =>
+it.effect("uses RTVision's registry when npm is not installed", () =>
   Effect.gen(function* () {
     const urls: string[] = [];
     const service = yield* makeService(
@@ -153,9 +161,9 @@ it.effect("falls back to public npm only when npm is not installed", () =>
     yield* TestClock.adjust("15 seconds");
     expect(Result.isFailure(yield* Fiber.join(stalled))).toBe(true);
     expect(urls).toEqual([
-      "https://registry.npmjs.org/t3/nightly",
-      "https://registry.npmjs.org/t3/9.9.9",
-      "https://registry.npmjs.org/t3/latest",
+      "https://npm-registry.rtvision.com/@rtvision%2Ft3/nightly",
+      "https://npm-registry.rtvision.com/@rtvision%2Ft3/9.9.9",
+      "https://npm-registry.rtvision.com/@rtvision%2Ft3/latest",
     ]);
   }),
 );

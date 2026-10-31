@@ -143,6 +143,7 @@ const EMPTY_DRAFT: DraftState = {
   startFromOrigin: true,
   existingWorktreePath: "",
   modelKey: "",
+  modelOptions: [],
   runtimeMode: "full-access",
   interactionMode: "default",
   baseModelSelection: null,

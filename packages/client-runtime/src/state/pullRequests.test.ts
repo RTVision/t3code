@@ -1181,6 +1181,7 @@ it.effect("shares one refresh stream between independently created pull request 
   Effect.scoped(
     Effect.gen(function* () {
       const revision = yield* SubscriptionRef.make(0);
+      const streamReady = Latch.makeUnsafe();
       let subscriptions = 0;
       let title = "Original title";
       const client = {
@@ -1188,7 +1189,15 @@ it.effect("shares one refresh stream between independently created pull request 
           Stream.unwrap(
             Effect.sync(() => {
               subscriptions++;
-              return SubscriptionRef.changes(revision);
+              return Stream.concat(
+                Stream.fromEffect(
+                  Effect.sync(() => {
+                    streamReady.openUnsafe();
+                    return 0;
+                  }),
+                ),
+                SubscriptionRef.changes(revision),
+              );
             }),
           ),
         [WS_METHODS.pullRequestsSummary]: () => Effect.sync(() => ({ title, state: "open" })),
@@ -1206,10 +1215,7 @@ it.effect("shares one refresh stream between independently created pull request 
         yield* Effect.addFinalizer(() => Effect.sync(unmount));
         expect((yield* AtomRegistry.getResult(registry, atom)).title).toBe(title);
       }
-      yield* AtomRegistry.getResult(
-        registry,
-        atoms.refreshes({ environmentId: target.environmentId, input: {} }),
-      ).pipe(Effect.orDie);
+      yield* streamReady.await;
       expect(subscriptions).toBe(1);
 
       const changed = [summary, detail].map((atom) => {
