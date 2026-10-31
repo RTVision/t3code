@@ -2145,8 +2145,14 @@ export default function ChatView(props: ChatViewProps) {
     }
     const frame = window.requestAnimationFrame(() => focusComposerStable());
     return () => window.cancelAnimationFrame(frame);
-  }, [activeThread?.id, embedded, focusComposerStable, isLocalDraftThread, terminalUiState.terminalOpen]);
-  // Existing threads reopen in Vim normal mode without stealing focus from a restored terminal.
+  }, [
+    activeThread?.id,
+    embedded,
+    focusComposerStable,
+    isLocalDraftThread,
+    terminalUiState.terminalOpen,
+  ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores Vim normal-mode focus when an existing thread opens
   useEffect(() => {
     if (embedded || !routeThreadKey || !vimEnabled() || isLocalDraftThread) return;
     const frame = window.requestAnimationFrame(() => focusVimNormal());
