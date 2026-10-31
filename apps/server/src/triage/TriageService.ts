@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
   });
 
   // Release tags never move, so one lookup serves every later session. Builds
-  // with no tag track main, which does move, so they look it up each time.
+  // with no tag track rtvision, which does move, so they look it up each time.
   let releaseSource: { readonly ref: string; readonly commit: string } | undefined;
   const resolveSource = Effect.fn("TriageService.resolveSource")(function* () {
     if (releaseSource !== undefined) return releaseSource;
@@ -129,12 +129,12 @@ const make = Effect.gen(function* () {
     const listed = yield* runGit(
       "resolveSourceRef",
       sourceDir,
-      ["ls-remote", T3CODE_REPOSITORY_URL, tag, `${tag}^{}`, "refs/heads/main"],
+      ["ls-remote", T3CODE_REPOSITORY_URL, tag, `${tag}^{}`, "refs/heads/rtvision"],
       // Triage still starts without source; a dead network should not stall it.
       5_000,
     );
     const source = pickSourceRef(listed.stdout, serverVersion);
-    if (source?.ref !== "main") releaseSource = source;
+    if (source?.ref !== "rtvision") releaseSource = source;
     return source;
   });
 

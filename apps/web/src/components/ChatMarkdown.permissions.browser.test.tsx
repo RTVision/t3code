@@ -18,6 +18,7 @@ import { useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  terminalAllowed: false,
   choice: { kind: "gui", editor: "vscode" } as EditorChoice,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
@@ -80,8 +81,9 @@ vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
-    scope !== AuthTerminalOperateScope &&
-    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
+    (scope !== AuthTerminalOperateScope
+      ? scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed
+      : state.terminalAllowed);
   return {
     ...(await original()),
     readEnvironmentScope,
@@ -220,6 +222,7 @@ const serverConfig = {
 function setup() {
   using stack = new DisposableStack();
   state.allowed = true;
+  state.terminalAllowed = false;
   state.choice = { kind: "gui", editor: "vscode" };
   state.listeners.clear();
   state.pullRequests = [];
@@ -383,4 +386,13 @@ it("keeps denied terminal-editor routes out of the context menu even when local 
   expect(offeredActions()).toContain("reveal");
   expect(state.openEditor).not.toHaveBeenCalled();
   expect(state.toast).not.toHaveBeenCalled();
+});
+
+it("offers terminal-editor routes when terminal authorization is granted", async () => {
+  using _setup = setup();
+  state.choice = { kind: "terminal", editor: "neovim" };
+  state.terminalAllowed = true;
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
+  expect(offeredActions()).toContain("open");
 });

@@ -50,7 +50,7 @@ one subdirectory per commit hash:
     git clone --depth 1 --filter=blob:none --branch <release-tag> \
       https://github.com/RTVision/t3code <source-cache-dir>/<hash>
 
-If the tag does not exist (nightly builds), clone `main` instead, and treat file
+If the tag does not exist (nightly builds), clone `rtvision` instead, and treat file
 and line references as approximate: the user's build may not match `main`
 exactly. If the target directory already exists from an earlier triage run,
 reuse it instead of cloning again. Before cloning, delete other entries in the

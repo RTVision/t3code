@@ -636,7 +636,7 @@ function useChatMarkdownState({
     environmentId,
     availableEditors,
   );
-  const canOpenInPreferredEditor = canUseShellActions && canOpenPreferredEditor;
+  const canOpenInPreferredEditor = canOpenPreferredEditor;
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });

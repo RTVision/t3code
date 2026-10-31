@@ -52,17 +52,17 @@ If `t3` or `t3 start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
+To try T3 Code once without installing it, run `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@latest` instead (needs
 Node.js for `npx`).
 
 ### Intel Macs
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+([Install vp](https://github.com/RTVision/t3code#install-vp)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
+git clone https://github.com/RTVision/t3code
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
@@ -146,7 +146,7 @@ on web and desktop. The store apps work with both stable and Nightly servers. Te
 
 - **iPhone and iPad:** TestFlight is invite-only.
 - **Android:** download an APK from the
-  [Android beta releases](https://github.com/pingdotgg/t3code/releases?q=android-beta-).
+  [Android beta releases](https://github.com/RTVision/t3code/releases?q=android-beta-).
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
