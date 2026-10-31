@@ -530,7 +530,10 @@ function ConnectAccountOption({
             <p className="text-sm text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
-            <CommandBlock command="npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 connect" className="mt-3" />
+            <CommandBlock
+              command="npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 connect"
+              className="mt-3"
+            />
             <p className="mt-3 text-xs text-muted-foreground">
               Keep T3 Code running. Select the computers you want to set up above.
             </p>
@@ -639,11 +642,21 @@ function PairingForm({
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
               On the computer with your code, start T3 Code or run{" "}
-              <code className="font-mono">npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve</code>, then run:
+              <code className="font-mono">
+                npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 serve
+              </code>
+              , then run:
             </p>
-            <CommandBlock command="npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair" className="mt-2" />
+            <CommandBlock
+              command="npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 pair"
+              className="mt-2"
+            />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up --tailscale</code> instead.
+              On a tailnet, run{" "}
+              <code className="font-mono">
+                npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3 up --tailscale
+              </code>{" "}
+              instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>

@@ -63,7 +63,8 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
     null,
     NullableEditorId,
   );
-  const preferred = legacy !== null && availableEditors.includes(legacy) ? legacy : (availableEditors[0] ?? null);
+  const preferred =
+    legacy !== null && availableEditors.includes(legacy) ? legacy : (availableEditors[0] ?? null);
   return [preferred] as const;
 }
 

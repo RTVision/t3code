@@ -55,52 +55,56 @@ export interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
-  const handleShortcut = useEffectEvent((event: KeyboardEvent, requestedCommand?: KeybindingCommand) => {
-    const { keybindings } = input;
-    if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
-      event.stopPropagation();
-      return;
-    }
-    if (input.threadFindActive && event.key === "Escape") return;
-    if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
-      event.stopPropagation();
-      return;
-    }
-    if (!input.enabled || isCommandPaletteOpen()) return;
-    const terminalFocusOwner = requestedCommand
-      ? (document.activeElement?.closest("[data-terminal-owner]")?.getAttribute("data-terminal-owner") as TerminalFocusOwner | null)
-      : getTerminalFocusOwner();
-    if (isInSideChatPane(event.target) && !requestedCommand) return;
-    if (event.defaultPrevented && !requestedCommand && terminalFocusOwner === null) return;
-    const shortcutContext = input.getShortcutContext(event.target);
+  const handleShortcut = useEffectEvent(
+    (event: KeyboardEvent, requestedCommand?: KeybindingCommand) => {
+      const { keybindings } = input;
+      if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
+        event.stopPropagation();
+        return;
+      }
+      if (input.threadFindActive && event.key === "Escape") return;
+      if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
+        event.stopPropagation();
+        return;
+      }
+      if (!input.enabled || isCommandPaletteOpen()) return;
+      const terminalFocusOwner = requestedCommand
+        ? (document.activeElement
+            ?.closest("[data-terminal-owner]")
+            ?.getAttribute("data-terminal-owner") as TerminalFocusOwner | null)
+        : getTerminalFocusOwner();
+      if (isInSideChatPane(event.target) && !requestedCommand) return;
+      if (event.defaultPrevented && !requestedCommand && terminalFocusOwner === null) return;
+      const shortcutContext = input.getShortcutContext(event.target);
 
-    if (
-      !shortcutContext.terminalFocus &&
-      !vimEnabled() &&
-      !requestedCommand &&
-      !shortcutContext.modelPickerOpen &&
-      shouldTypeToFocusComposer(event) &&
-      input.composerRef.current?.insertTextAtEnd(event.key) === true
-    ) {
+      if (
+        !shortcutContext.terminalFocus &&
+        !vimEnabled() &&
+        !requestedCommand &&
+        !shortcutContext.modelPickerOpen &&
+        shouldTypeToFocusComposer(event) &&
+        input.composerRef.current?.insertTextAtEnd(event.key) === true
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const command =
+        requestedCommand ??
+        resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+          context: shortcutContext,
+        });
+      if (!command) return;
+      const run =
+        input.commands[command] ??
+        composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
+        input.fallback(command);
+      if (!run || run({ event, terminalFocusOwner }) === false) return;
       event.preventDefault();
       event.stopPropagation();
-      return;
-    }
-
-    const command =
-      requestedCommand ??
-      resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-        context: shortcutContext,
-      });
-    if (!command) return;
-    const run =
-      input.commands[command] ??
-      composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
-      input.fallback(command);
-    if (!run || run({ event, terminalFocusOwner }) === false) return;
-    event.preventDefault();
-    event.stopPropagation();
-  });
+    },
+  );
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.key !== "Escape" ||
