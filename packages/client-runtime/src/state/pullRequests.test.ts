@@ -1209,7 +1209,7 @@ it.effect("shares one refresh stream between independently created pull request 
       yield* AtomRegistry.getResult(
         registry,
         atoms.refreshes({ environmentId: target.environmentId, input: {} }),
-      );
+      ).pipe(Effect.orDie);
       expect(subscriptions).toBe(1);
 
       const changed = [summary, detail].map((atom) => {

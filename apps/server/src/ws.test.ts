@@ -1,4 +1,7 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as DiskSpace from "./diskSpace.ts";
+import * as GiteaCli from "./sourceControl/GiteaCli.ts";
+import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -479,7 +482,11 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
-  Layer.mock(DocumentText.DocumentText)({}),
+  Layer.mock(DiskSpace.DiskSpace)({ current: Effect.succeed(null), streamChanges: Stream.never }),
+  Layer.mock(DocumentText.DocumentText)({
+    ensure: () => Effect.as(Effect.void, undefined as string | undefined),
+  }),
+  Layer.mock(GiteaCli.GiteaCli)({ baseUrl: Option.none() }),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),

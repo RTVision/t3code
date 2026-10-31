@@ -253,7 +253,7 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
           return;
         }
         yield* Console.log(formatServiceChange(result));
-      }).pipe(Effect.provide(layer(config)));
+      }).pipe(Effect.provide(Layer.merge(layer(config), ServerConfig.layer(config))));
     }),
   ),
 );
