@@ -63,6 +63,7 @@ vi.mock("~/state/filesystem", () => ({
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select: (settings: ClientSettings) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),
   updateClientSettings: async () => {},
