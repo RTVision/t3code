@@ -377,6 +377,7 @@ it.each(["clear", "link", "move"] as const)(
     STUB_BROWSER_DEFAULTS.profileId = "work";
     Object.assign(window, {
       desktopBridge: {
+        onMenuAction: () => () => undefined,
         preview: {
           setAnnotationTheme: async () => undefined,
           onPointerEvent: () => () => undefined,
