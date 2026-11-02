@@ -376,7 +376,7 @@ const layerHttpServer = Layer.unwrap(
       },
     );
   }),
-).pipe(Layer.provide(ManagedPolicy.layer));
+).pipe(Layer.provide(ManagedPolicy.layer), Layer.provide(NetService.layer));
 
 const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer));
 

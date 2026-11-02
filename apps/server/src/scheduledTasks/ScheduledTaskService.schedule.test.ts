@@ -180,6 +180,7 @@ it.effect("checks a new or changed worktree base branch, but not an unchanged on
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
+      ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
         checkWorktreeBase: ({ projectId, workspaceStrategy }) => {
           const baseRef = workspaceStrategy.type === "worktree" ? workspaceStrategy.baseRef : "";
