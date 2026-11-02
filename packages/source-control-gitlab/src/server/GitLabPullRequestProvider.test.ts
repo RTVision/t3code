@@ -578,6 +578,7 @@ describe("review decisions", () => {
     url: "https://gitlab.com/acme/web/-/merge_requests/7",
     author: null,
     headBranch: "feat/page",
+    headRepositoryNameWithOwner: "acme/web",
     baseBranch: "main",
     state: "open" as const,
     isDraft: false,
