@@ -47,6 +47,10 @@ vi.mock("../../state/server", async (original) => ({
   primaryServerKeybindingsAtom: "keys",
   serverEnvironment: { updateStateAtom: () => state.updateAtom },
 }));
+vi.mock("../../state/entities", async (original) => ({
+  ...(await original<typeof import("../../state/entities")>()),
+  useServerConfigs: () => new Map(),
+}));
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   useEnvironments: () => ({ environments: [] }),

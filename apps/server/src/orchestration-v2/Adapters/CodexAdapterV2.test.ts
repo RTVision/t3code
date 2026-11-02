@@ -796,10 +796,19 @@ it.effect("reads the active MCP binding when a handoff starts the native Codex t
         model: CODEX_TEST_MODEL_SELECTION.model,
         config: {
           ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+          [T3_THREAD_ENV_KEY]: threadId,
           "mcp_servers.t3-code": {
             url: activeConfig.endpoint,
             tool_timeout_sec: 3_900,
             http_headers: { Authorization: activeConfig.authorizationHeader },
+            disabled_tools: ["t3_thread_wait"],
+          },
+          "mcp_servers.t3-code-direct": {
+            url: activeConfig.endpoint,
+            tool_timeout_sec: 3_900,
+            http_headers: { Authorization: activeConfig.authorizationHeader },
+            enabled_tools: ["t3_thread_wait"],
+            omit_tools_from: ["code_mode", "deferred"],
           },
         },
       });

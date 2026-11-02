@@ -37,7 +37,10 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => [],
 }));
-vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("~/state/server", () => ({
+  primaryServerKeybindingsAtom: {},
+  serverEnvironment: { hiddenThreadTagsAtom: () => Atom.make([]) },
+}));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: [] }),
