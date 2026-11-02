@@ -183,7 +183,7 @@ function FileViewedToggle({ path, stat }: { readonly path: string; readonly stat
       {stat}
       <label
         data-viewed-toggle=""
-        className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+        className="flex w-18 shrink-0 cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
