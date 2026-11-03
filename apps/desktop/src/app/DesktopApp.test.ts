@@ -1,3 +1,4 @@
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Deferred from "effect/Deferred";
@@ -213,6 +214,7 @@ it.effect(
             }),
             FileSystem.layerNoop({}),
             Layer.mock(NetService.NetService, {}),
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {}),
             Path.layer,
             Layer.succeed(
               HttpClient.HttpClient,

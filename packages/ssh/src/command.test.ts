@@ -153,7 +153,7 @@ describe("ssh command", () => {
       );
       assert.match(stdout, /^serveraliveinterval 15\r?$/mu);
       assert.match(stdout, /^serveralivecountmax 3\r?$/mu);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
@@ -161,7 +161,11 @@ describe("ssh command", () => {
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const layerProcess = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner);
+    const layerProcess = Layer.mergeAll(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
+      NodeCrypto.layer,
+      layerSpawner,
+    );
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(

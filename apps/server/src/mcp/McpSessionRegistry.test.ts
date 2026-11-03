@@ -256,7 +256,7 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
           NodeServices.layer,
           NodeCrypto.layer,

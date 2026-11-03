@@ -1238,4 +1238,4 @@ export const runServer: Effect.Effect<
   never,
   Layer.Error<typeof layerMakeServer>,
   NodeServices.NodeServices | ServerConfig.ServerConfig
-> = Layer.launch(layerMakeServer);
+> = Layer.launch(layerMakeServer.pipe(Layer.provide(NodeCrypto.layer)));

@@ -1,4 +1,4 @@
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import {
   WsRpcGroup,
   WS_METHODS,
@@ -169,7 +169,7 @@ export const updateRunningService = Effect.fn("cli.service.updateRunning")(funct
   const constructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (url) =>
-      new NodeSocket.NodeWS.WebSocket(url, {
+      new NodeWS.WebSocket(url, {
         headers: { authorization: `Bearer ${token}` },
       }) as unknown as globalThis.WebSocket,
   );

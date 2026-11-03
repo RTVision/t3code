@@ -1,3 +1,5 @@
+import * as Layer from "effect/Layer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -39,11 +41,12 @@ const makeShellHarness = Effect.fn("makeShellHarness")(function* (script: string
     commands.push(command);
     // Exercise the Linux payload with real processes. WSL's Windows argument
     // transport and login-shell environment need the separate Windows smoke test.
-    const args = command.args
+    const commandArgs = command.args.map(String);
+    const args = commandArgs
       .slice(4)
       .map((arg, index) => (index === 0 && arg === "-lc" ? "-c" : arg));
     const spawn = nativeSpawner.spawn(
-      ChildProcess.make(command.args[3]!, args, {
+      ChildProcess.make(commandArgs[3]!, args, {
         ...command.options,
         env: { ...command.options.env, PATH: `${directory}:/usr/bin:/bin` },
       }),
@@ -95,12 +98,12 @@ describe("WSL SSH runner", () => {
       assert.equal(harness.commands[0]?.command, "wsl.exe");
       assert.include(harness.commands[0]?.args ?? [], "-lc");
       assert.notInclude((harness.commands[0]?.args ?? []).join(" "), "test password");
-      const runtimeDirectory = harness.commands[0]?.args[7];
+      const runtimeDirectory = harness.commands[0]?.args[7]?.toString();
       assert.isDefined(runtimeDirectory);
       assert.isFalse(yield* harness.fs.exists(runtimeDirectory!));
     }).pipe(
       Effect.provideService(SshRunner, runner),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Effect.scoped,
     ),
   );
@@ -119,10 +122,10 @@ describe("WSL SSH runner", () => {
       yield* Effect.exit(child.exitCode);
       assert.isFalse(yield* child.isRunning);
       assert.equal(harness.commands.length, 2);
-      assert.isFalse(yield* harness.fs.exists(harness.commands[0]!.args[7]!));
+      assert.isFalse(yield* harness.fs.exists(String(harness.commands[0]!.args[7]!)));
     }).pipe(
       Effect.provideService(SshRunner, runner),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Effect.scoped,
     ),
   );
@@ -142,7 +145,7 @@ describe("WSL SSH runner", () => {
       );
       assert.equal(Number(yield* child.exitCode), 125);
       assert.isFalse(yield* fs.exists(directory));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 
   it.effect("separates runner connections without changing the remote server identity", () =>
@@ -151,6 +154,6 @@ describe("WSL SSH runner", () => {
       const wsl = { ...target, runner: { kind: "wsl", distro: "Debian" } as const };
       assert.notEqual(targetConnectionKey(target), targetConnectionKey(wsl));
       assert.equal(yield* remoteStateKey(target), yield* remoteStateKey(wsl));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

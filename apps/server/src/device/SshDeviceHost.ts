@@ -9,6 +9,7 @@ import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/comm
 import * as NetService from "@t3tools/shared/Net";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -133,6 +134,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const digest = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
   const owner = yield* ownerFor(config.id);
@@ -144,6 +146,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       | Path.Path
       | ChildProcessSpawner.ChildProcessSpawner
       | Digest.Digest
+      | SecureRandom.SecureRandom
       | ServerConfig.ServerConfig
     >,
   ) =>
@@ -153,6 +156,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       Effect.provideService(ServerConfig.ServerConfig, server),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Digest.Digest, digest),
+      Effect.provideService(SecureRandom.SecureRandom, random),
     );
   const lock = yield* Semaphore.make(1);
   let stopped = false;
