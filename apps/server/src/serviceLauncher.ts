@@ -84,8 +84,23 @@ const databaseBackupDir = (baseDir: string, updateId: string) =>
 const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
 
+// Older launchers read only the plain directory and delete live files missing from it.
+const compressedBackupDir = (baseDir: string, updateId: string) =>
+  `${databaseBackupDir(baseDir, updateId)}-zstd`;
+
 const compressedBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   `${databaseBackupFile(backupDir, suffix)}.zst`;
+
+async function existingDatabaseBackup(
+  baseDir: string,
+  updateId: string,
+): Promise<{ readonly dir: string; readonly compressed: boolean } | undefined> {
+  const plain = databaseBackupDir(baseDir, updateId);
+  if (await pathExists(plain)) return { dir: plain, compressed: false };
+  const compressed = compressedBackupDir(baseDir, updateId);
+  if (await pathExists(compressed)) return { dir: compressed, compressed: true };
+  return undefined;
+}
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -185,7 +200,7 @@ async function decompressDatabaseFile(source: string, destination: string): Prom
   await NodeStreamPromises.pipeline(
     NodeFS.createReadStream(source),
     NodeZlib.createZstdDecompress(),
-    NodeFS.createWriteStream(destination),
+    NodeFS.createWriteStream(destination, { mode: 0o600 }),
   );
 }
 
@@ -280,14 +295,15 @@ async function backupDatabaseOnce(
   pending: PendingServiceUpdate,
   canClone: BackupSpaceProbe["canClone"],
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
+  if ((await existingDatabaseBackup(baseDir, pending.id)) !== undefined) return;
 
+  const plainDir = databaseBackupDir(baseDir, pending.id);
+  const clone = await canClone(pending.dbPath, NodePath.dirname(plainDir));
+  const backupDir = clone ? plainDir : compressedBackupDir(baseDir, pending.id);
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
-    const clone = await canClone(pending.dbPath, NodePath.dirname(backupDir));
     for (const suffix of DB_FILE_SUFFIXES) {
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
@@ -309,11 +325,13 @@ async function backupDatabaseOnce(
   }
 }
 
-const restoreMarkerPath = (baseDir: string, updateId: string) =>
-  NodePath.join(databaseBackupDir(baseDir, updateId), RESTORE_MARKER);
-
-const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
-  pathExists(restoreMarkerPath(baseDir, pending.id));
+async function databaseRestorePending(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<boolean> {
+  const backup = await existingDatabaseBackup(baseDir, pending.id);
+  return backup !== undefined && pathExists(NodePath.join(backup.dir, RESTORE_MARKER));
+}
 
 // Mark before live writes so recovery cannot boot a partial restore.
 async function markDatabaseRestorePending(backupDir: string): Promise<void> {
@@ -356,20 +374,20 @@ async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  const backup = await existingDatabaseBackup(baseDir, pending.id);
+  if (backup === undefined) return;
 
-  await markDatabaseRestorePending(backupDir);
+  await markDatabaseRestorePending(backup.dir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
   for (const suffix of DB_FILE_SUFFIXES) {
     const livePath = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
-    const compressedSource = compressedBackupFile(backupDir, suffix);
-    const compressed = await pathExists(compressedSource);
-    if (compressed || (await pathExists(source))) {
+    const source = backup.compressed
+      ? compressedBackupFile(backup.dir, suffix)
+      : databaseBackupFile(backup.dir, suffix);
+    if (await pathExists(source)) {
       // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
-      if (compressed) await decompressDatabaseFile(compressedSource, target);
+      if (backup.compressed) await decompressDatabaseFile(source, target);
       else await copyDatabaseFile(source, target);
       await syncFile(target);
       directories.add(NodePath.dirname(target));
@@ -381,10 +399,10 @@ async function restoreDatabaseBackup(
 }
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, updateId);
-  if (!(await pathExists(backupDir))) return;
-  await NodeFSP.rm(backupDir, { recursive: true, force: true });
-  await syncDirectory(NodePath.dirname(backupDir));
+  const dirs = [databaseBackupDir(baseDir, updateId), compressedBackupDir(baseDir, updateId)];
+  if (!(await Promise.all(dirs.map(pathExists))).some(Boolean)) return;
+  for (const dir of dirs) await NodeFSP.rm(dir, { recursive: true, force: true });
+  await syncDirectory(NodePath.join(baseDir, "runtime", "db-backup"));
 }
 
 export async function readServiceState(filePath: string): Promise<ServiceState> {

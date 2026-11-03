@@ -517,12 +517,13 @@ if (context.update?.status === "pending") {
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
-import { readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
-  const backupDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id);
-  writeFileSync(${JSON.stringify(backupListingPath)}, readdirSync(backupDir).sort().join(","));
+  const backupDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id${backup === "cloned" ? "" : ' + "-zstd"'});
+  const plainDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id);
+  writeFileSync(${JSON.stringify(backupListingPath)}, readdirSync(backupDir).sort().join(",") + (existsSync(plainDir) ? "" : " (no plain dir)"));
   writeFileSync(context.update.dbPath, "database after migration");
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   writeFileSync(context.update.dbPath + "-shm", "trial shm");
@@ -567,16 +568,19 @@ if (context.update?.status === "pending") {
         assert.equal(state.update?.status, "rolled-back");
         assert.equal(
           yield* fs.readFileString(backupListingPath),
-          backup === "cloned" ? "database" : "database.zst",
+          backup === "cloned" ? "database" : "database.zst (no plain dir)",
         );
         assert.equal(yield* fs.readFileString(databaseFile), original);
+        if (kind === "dangling symlink" && backup === "compressed") {
+          assert.equal((yield* fs.stat(databaseFile)).mode & 0o777, 0o600);
+        }
         if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), linkTarget);
         assert.isFalse(yield* fs.exists(path.join(root, "original.sqlite")));
         assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
         assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
         const updateId = state.update?.id;
         assert.isDefined(updateId);
-        assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+        assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
       }),
   );
 
