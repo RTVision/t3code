@@ -422,8 +422,9 @@ permissions:
 publicHoistPattern:
   - "@cursor/sdk-*"
 
-# ffi-rs labels its x64 musl package as glibc. Keep it available on Alpine,
-# along with Linux x64 dependencies used by the Windows WSL release payload.
+# Keep Linux x64 glibc dependencies used by the Windows WSL release payload.
+# ffi-rs must stay >= 1.3.4: earlier releases label the x64 musl binary as
+# glibc, so npm skips it on Alpine and the server crashes at startup.
 supportedArchitectures:
   cpu: [current, x64]
   libc: [current, glibc]
