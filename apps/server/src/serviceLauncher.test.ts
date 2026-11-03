@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import {
-  databaseBackupBlocker,
+  databaseBackupAdmission,
   Launcher,
   pruneRuntimeVersions,
   main,
@@ -587,7 +587,7 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  const requestUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
+  const requestUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>, databaseSize?: number) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -597,7 +597,8 @@ if (context.update?.status === "pending") {
       const replyPath = path.join(root, "rejection.txt");
       const trialMarker = path.join(root, "trial-started");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "database");
+      if (databaseSize === undefined) yield* fs.writeFileString(databasePath, "database");
+      else yield* writeSparseFile(databasePath, databaseSize);
       const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
       const childSource = `
 import { writeFileSync } from "node:fs";
@@ -650,7 +651,10 @@ if (context.update?.status === "pending") {
         reason: yield* fs.readFileString(replyPath).pipe(Effect.orElseSucceed(() => "")),
         trialStarted: yield* fs.exists(trialMarker),
         state: yield* Effect.promise(() => readServiceState(statePath)),
-        database: yield* fs.readFileString(databasePath),
+        database:
+          databaseSize === undefined
+            ? yield* fs.readFileString(databasePath)
+            : Number((yield* fs.stat(databasePath)).size),
         backups: yield* fs.readDirectory(path.join(root, "runtime", "db-backup")),
       };
     });
@@ -670,34 +674,42 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  // Free space drops to zero once the server stops; only the pre-stop admission decides the recheck.
   it.effect.each([
     {
-      case: "returns to the old version when the backup overruns its budget",
-      free: (check: number) => (check === 0 ? 1024 ** 4 : 0),
+      case: "returns to the old version when a compressed-budget backup overruns it",
+      databaseSize: 1.5 * 1024 ** 3,
+      freeBeforeStop: 1.5 * 1024 ** 3,
       trialStarted: false,
     },
     {
-      case: "starts the trial when a full copy would have fit",
-      free: () => 500 * 1024 ** 2,
+      case: "starts the trial when a full copy fit before stopping",
+      databaseSize: undefined,
+      freeBeforeStop: 500 * 1024 ** 2,
       trialStarted: true,
     },
-  ])("rechecks space after a compressed backup: $case", ({ free, trialStarted: expected }) =>
-    Effect.gen(function* () {
-      let freeChecks = 0;
-      const { trialStarted, state, database, backups } = yield* requestUpdate({
-        readFreeBytes: () => Promise.resolve(free(freeChecks++)),
-        canClone: () => Promise.resolve(false),
-      });
+  ])(
+    "rechecks space after a compressed backup: $case",
+    ({ databaseSize, freeBeforeStop, trialStarted: expected }) =>
+      Effect.gen(function* () {
+        let freeChecks = 0;
+        const { trialStarted, state, database, backups } = yield* requestUpdate(
+          {
+            readFreeBytes: () => Promise.resolve(freeChecks++ === 0 ? freeBeforeStop : 0),
+            canClone: () => Promise.resolve(false),
+          },
+          databaseSize,
+        );
 
-      assert.equal(trialStarted, expected);
-      assert.equal(state.activeVersion, "1.0.0");
-      assert.equal(
-        state.update?.status === "failed" && state.update.reason === "db-backup-failed",
-        !expected,
-      );
-      assert.equal(database, "database");
-      assert.deepEqual(backups, []);
-    }),
+        assert.equal(trialStarted, expected);
+        assert.equal(state.activeVersion, "1.0.0");
+        assert.equal(
+          state.update?.status === "failed" && state.update.reason === "db-backup-failed",
+          !expected,
+        );
+        assert.equal(database, databaseSize ?? "database");
+        assert.deepEqual(backups, []);
+      }),
   );
 
   it.effect("refuses the update when free space cannot be checked", () =>
@@ -785,20 +797,20 @@ setInterval(() => {}, 1_000);
       yield* writeSparseFile(databasePath, 10 * 1024 ** 3);
       const check = (free: number, cloneable: boolean) =>
         Effect.promise(() =>
-          databaseBackupBlocker(root, databasePath, {
+          databaseBackupAdmission(root, databasePath, {
             readFreeBytes: () => Promise.resolve(free),
             canClone: () => Promise.resolve(cloneable),
           }),
         );
 
-      assert.isUndefined(yield* check(11 * 1024 ** 3, false));
-      assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
-      assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
-      assert.isUndefined(yield* check(3.5 * 1024 ** 3, false));
-      const blocker = yield* check(3 * 1024 ** 3, false);
-      assert.include(blocker ?? "", "Not enough free disk space");
-      assert.include(blocker ?? "", "3.5 GB needed, 3.0 GB free");
-      assert.include(blocker ?? "", "The server was not stopped");
+      assert.deepEqual(yield* check(11 * 1024 ** 3, false), { fullCopyFits: true });
+      assert.deepEqual(yield* check(1.5 * 1024 ** 3, true), { fullCopyFits: false });
+      assert.include((yield* check(0.5 * 1024 ** 3, true)).refusal, "1.0 GB needed, 0.5 GB free");
+      assert.deepEqual(yield* check(3.5 * 1024 ** 3, false), { fullCopyFits: false });
+      const { refusal } = yield* check(3 * 1024 ** 3, false);
+      assert.include(refusal, "Not enough free disk space");
+      assert.include(refusal, "3.5 GB needed, 3.0 GB free");
+      assert.include(refusal, "The server was not stopped");
     }),
   );
 });

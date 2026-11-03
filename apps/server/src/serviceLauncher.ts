@@ -276,23 +276,26 @@ const backupHeadroomBytes = (databaseBytes: number) =>
   Math.max(BACKUP_MIN_HEADROOM_BYTES, databaseBytes * BACKUP_HEADROOM_FRACTION);
 
 /** Check before stopping the server so full disks refuse updates without an outage. */
-export async function databaseBackupBlocker(
+export async function databaseBackupAdmission(
   baseDir: string,
   dbPath: string,
   probe: Partial<BackupSpaceProbe> = {},
-): Promise<string | undefined> {
+): Promise<{ readonly refusal?: string; readonly fullCopyFits: boolean }> {
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
   const [size, free] = await Promise.all([databaseBytes(dbPath), readFreeBytes(backupRoot)]);
-  if (free >= fullCopyBytes(size)) return undefined;
+  if (free >= fullCopyBytes(size)) return { fullCopyFits: true };
   const headroomBytes = backupHeadroomBytes(size);
   const needed = (await canClone(dbPath, backupRoot))
     ? headroomBytes
     : Math.min(fullCopyBytes(size), headroomBytes + size * COMPRESSED_BACKUP_SIZE_FRACTION);
-  if (free >= needed) return undefined;
+  if (free >= needed) return { fullCopyFits: false };
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
-  return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
+  return {
+    refusal: `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`,
+    fullCopyFits: false,
+  };
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
@@ -300,15 +303,13 @@ async function backupDatabaseOnce(
   baseDir: string,
   pending: PendingServiceUpdate,
   probe: BackupSpaceProbe,
+  admittedOnCompressedBudget: boolean,
 ): Promise<void> {
   if ((await existingDatabaseBackup(baseDir, pending.id)) !== undefined) return;
 
   const plainDir = databaseBackupDir(baseDir, pending.id);
   const backupRoot = NodePath.dirname(plainDir);
   const clone = await probe.canClone(pending.dbPath, backupRoot);
-  const size = await databaseBytes(pending.dbPath);
-  // Only budget-limited compressed backups recheck; a full copy would have fit otherwise.
-  const recheckSpace = !clone && (await probe.readFreeBytes(backupRoot)) < fullCopyBytes(size);
   const backupDir = clone ? plainDir : compressedBackupDir(baseDir, pending.id);
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
@@ -328,7 +329,12 @@ async function backupDatabaseOnce(
       }
     }
     // The pre-stop check guessed the compressed size; leave the trial room to migrate.
-    if (recheckSpace && (await probe.readFreeBytes(backupRoot)) < backupHeadroomBytes(size)) {
+    if (
+      !clone &&
+      admittedOnCompressedBudget &&
+      (await probe.readFreeBytes(backupRoot)) <
+        backupHeadroomBytes(await databaseBytes(pending.dbPath))
+    ) {
       throw new Error("The compressed database backup left too little free disk space.");
     }
     await NodeFSP.rename(stagingDir, backupDir);
@@ -573,6 +579,8 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  // Lost on restart; recovered trials then skip the recheck, like a full copy would.
+  #compressedBudgetUpdateId: string | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
 
   constructor(
@@ -687,10 +695,12 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending, {
-        ...filesystemBackupSpaceProbe,
-        ...this.#backupSpaceProbe,
-      });
+      await backupDatabaseOnce(
+        this.#baseDir,
+        pending,
+        { ...filesystemBackupSpaceProbe, ...this.#backupSpaceProbe },
+        this.#compressedBudgetUpdateId === pending.id,
+      );
     } catch {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
@@ -799,17 +809,17 @@ export class Launcher {
       return;
     }
     // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
-    const backupBlocker = await databaseBackupBlocker(
+    const admission = await databaseBackupAdmission(
       this.#baseDir,
       message.dbPath,
       this.#backupSpaceProbe,
-    ).catch(
-      (error: unknown) =>
-        `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
-    );
+    ).catch((error: unknown) => ({
+      refusal: `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
+      fullCopyFits: false,
+    }));
     if (!child.process.connected) return;
-    if (backupBlocker !== undefined) {
-      await reject(backupBlocker);
+    if (admission.refusal !== undefined) {
+      await reject(admission.refusal);
       return;
     }
 
@@ -823,6 +833,7 @@ export class Launcher {
     const next: ServiceState = { ...this.#state, update: pending };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
+    this.#compressedBudgetUpdateId = admission.fullCopyFits ? undefined : pending.id;
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
