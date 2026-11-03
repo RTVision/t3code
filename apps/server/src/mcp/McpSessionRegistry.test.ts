@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -53,7 +54,7 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeCrypto.layer)),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
@@ -243,7 +244,7 @@ it.effect(
       }).pipe(
         Effect.provide(
           McpHttpServer.layerThreadToolkit.pipe(
-            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(threadsLayer),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
@@ -255,9 +256,10 @@ it.effect(
       );
     }).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
           NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     ),

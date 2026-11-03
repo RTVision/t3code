@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -101,8 +101,8 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
       }),
     );
   }
-  const crypto = yield* Crypto.Crypto;
-  const runtimeDirectory = `/tmp/t3code-ssh-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+  const random = yield* SecureRandom.SecureRandom;
+  const runtimeDirectory = `/tmp/t3code-ssh-${yield* random.uuidV4()}`;
   const scope = yield* Scope.Scope;
   // Killing wsl.exe does not guarantee termination of the distro-side ssh.
   yield* Scope.addFinalizer(

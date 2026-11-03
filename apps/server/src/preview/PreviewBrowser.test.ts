@@ -1,8 +1,10 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { HostLinuxLibc } from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -90,9 +92,9 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-browser-test-" });
   const systemRoot = path.join(baseDir, "system");
   const archive = options.archive ?? browserArchive;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const sha256 =
-    options.sha256 ?? Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie));
+    options.sha256 ?? Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie));
   const requests: Array<string> = [];
   const browser = yield* PreviewBrowser.makePreviewBrowser({
     baseDir,
@@ -136,7 +138,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   return { browser, fs, path, baseDir, systemRoot, installRoot, requests };
 });
 
-it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser", (it) => {
   it.effect.skipIf(hostPlatform === "win32")(
     "uses native Chromium on musl Linux even with a downloaded browser present",
     () =>

@@ -49,7 +49,7 @@ export interface RpcSession {
   readonly client: WsRpcProtocolClient;
   readonly initialConfig: Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly subscribeServerConfig: (
-    input: ServerConfigSubscriptionInput,
+    input?: ServerConfigSubscriptionInput,
   ) => ServerConfigSubscription;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
@@ -400,7 +400,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }),
       ),
     );
-    const subscribeServerConfig = (requested: ServerConfigSubscriptionInput) => {
+    const subscribeServerConfig = (
+      requested: ServerConfigSubscriptionInput = serverConfigInput,
+    ) => {
       const input = withLowDiskSpace(requested);
       return Stream.unwrap(
         validatedInitialConfig.pipe(
