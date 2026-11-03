@@ -488,9 +488,13 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  it.effect.each(["file", "symlink", "dangling symlink"] as const)(
-    "restores the database when a migrating trial exits, with the database a %s",
-    (kind) =>
+  it.effect.each(
+    (["file", "symlink", "dangling symlink"] as const).flatMap((kind) =>
+      (["cloned", "compressed"] as const).map((backup) => ({ kind, backup })),
+    ),
+  )(
+    "restores a $backup backup when a migrating trial exits, with the database a $kind",
+    ({ kind, backup }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -501,6 +505,7 @@ if (context.update?.status === "pending") {
           kind === "file" ? databasePath : path.join(root, "data", "original.sqlite");
         const linkTarget = kind === "dangling symlink" ? "../original.sqlite" : databaseFile;
         const original = "database before migration";
+        const backupListingPath = path.join(root, "backup-listing.txt");
         yield* fs.makeDirectory(path.dirname(databaseFile), { recursive: true });
         if (kind === "dangling symlink") {
           yield* fs.makeDirectory(path.join(root, "data", "sub"));
@@ -512,9 +517,12 @@ if (context.update?.status === "pending") {
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
-import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
+  const backupDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id);
+  writeFileSync(${JSON.stringify(backupListingPath)}, readdirSync(backupDir).sort().join(","));
   writeFileSync(context.update.dbPath, "database after migration");
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   writeFileSync(context.update.dbPath + "-shm", "trial shm");
@@ -545,6 +553,7 @@ if (context.update?.status === "pending") {
         const launcher = new Launcher(
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
+          { backupSpaceProbe: { canClone: () => Promise.resolve(backup === "cloned") } },
         );
         yield* Effect.promise(() =>
           launcher.run().then(
@@ -556,6 +565,10 @@ if (context.update?.status === "pending") {
         const state = yield* Effect.promise(() => readServiceState(statePath));
         assert.equal(state.activeVersion, "1.0.0");
         assert.equal(state.update?.status, "rolled-back");
+        assert.equal(
+          yield* fs.readFileString(backupListingPath),
+          backup === "cloned" ? "database" : "database.zst",
+        );
         assert.equal(yield* fs.readFileString(databaseFile), original);
         if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), linkTarget);
         assert.isFalse(yield* fs.exists(path.join(root, "original.sqlite")));
@@ -724,7 +737,7 @@ setInterval(() => {}, 1_000);
     }),
   );
 
-  it.effect("checks database backup space against clone or full-copy needs", () =>
+  it.effect("checks database backup space against clone or compressed-copy needs", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -742,9 +755,10 @@ setInterval(() => {}, 1_000);
       assert.isUndefined(yield* check(11 * 1024 ** 3, false));
       assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
       assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
-      const blocker = yield* check(8 * 1024 ** 3, false);
+      assert.isUndefined(yield* check(3.5 * 1024 ** 3, false));
+      const blocker = yield* check(3 * 1024 ** 3, false);
       assert.include(blocker ?? "", "Not enough free disk space");
-      assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
+      assert.include(blocker ?? "", "3.5 GB needed, 3.0 GB free");
       assert.include(blocker ?? "", "The server was not stopped");
     }),
   );

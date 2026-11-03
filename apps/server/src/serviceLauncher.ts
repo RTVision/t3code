@@ -7,7 +7,9 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeUtil from "node:util";
+import * as NodeZlib from "node:zlib";
 
 import type {
   PendingServiceUpdate,
@@ -81,6 +83,9 @@ const databaseBackupDir = (baseDir: string, updateId: string) =>
 
 const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
+
+const compressedBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
+  `${databaseBackupFile(backupDir, suffix)}.zst`;
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -167,10 +172,29 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
   if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
 }
 
+// Level 1 keeps the server's downtime near a plain copy; real databases measured about 10x smaller.
+async function compressDatabaseFile(source: string, destination: string): Promise<void> {
+  await NodeStreamPromises.pipeline(
+    NodeFS.createReadStream(source),
+    NodeZlib.createZstdCompress({ params: { [NodeZlib.constants.ZSTD_c_compressionLevel]: 1 } }),
+    NodeFS.createWriteStream(destination, { mode: 0o600 }),
+  );
+}
+
+async function decompressDatabaseFile(source: string, destination: string): Promise<void> {
+  await NodeStreamPromises.pipeline(
+    NodeFS.createReadStream(source),
+    NodeZlib.createZstdDecompress(),
+    NodeFS.createWriteStream(destination),
+  );
+}
+
 const GIB = 1024 ** 3;
-// Cloned backups still need headroom for trial writes and migrations to diverge.
-const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
-const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
+// Backups still need headroom for trial writes and migrations to diverge.
+const BACKUP_MIN_HEADROOM_BYTES = GIB;
+const BACKUP_HEADROOM_FRACTION = 0.1;
+// Compressed size is unknown until the server stops; a backup that overruns this fails and rolls back.
+const COMPRESSED_BACKUP_SIZE_FRACTION = 0.25;
 
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
@@ -241,18 +265,21 @@ export async function databaseBackupBlocker(
   const size = files.reduce((total, file) => total + file.size, 0);
   const fullCopyBytes = size * 1.05;
   if (free >= fullCopyBytes) return undefined;
-  const clonedBytes = Math.max(
-    CLONED_BACKUP_MIN_HEADROOM_BYTES,
-    size * CLONED_BACKUP_HEADROOM_FRACTION,
-  );
-  const needed = (await canClone(dbPath, backupRoot)) ? clonedBytes : fullCopyBytes;
+  const headroomBytes = Math.max(BACKUP_MIN_HEADROOM_BYTES, size * BACKUP_HEADROOM_FRACTION);
+  const needed = (await canClone(dbPath, backupRoot))
+    ? headroomBytes
+    : Math.min(fullCopyBytes, headroomBytes + size * COMPRESSED_BACKUP_SIZE_FRACTION);
   if (free >= needed) return undefined;
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
+async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  canClone: BackupSpaceProbe["canClone"],
+): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
 
@@ -260,12 +287,19 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
+    const clone = await canClone(pending.dbPath, NodePath.dirname(backupDir));
     for (const suffix of DB_FILE_SUFFIXES) {
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await copyDatabaseFile(source, destination);
-      await syncFile(destination);
+      if (clone) {
+        const destination = databaseBackupFile(stagingDir, suffix);
+        await copyDatabaseFile(source, destination);
+        await syncFile(destination);
+      } else {
+        const destination = compressedBackupFile(stagingDir, suffix);
+        await compressDatabaseFile(source, destination);
+        await syncFile(destination);
+      }
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
@@ -330,10 +364,13 @@ async function restoreDatabaseBackup(
   for (const suffix of DB_FILE_SUFFIXES) {
     const livePath = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
-    if (await pathExists(source)) {
+    const compressedSource = compressedBackupFile(backupDir, suffix);
+    const compressed = await pathExists(compressedSource);
+    if (compressed || (await pathExists(source))) {
       // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
-      await copyDatabaseFile(source, target);
+      if (compressed) await decompressDatabaseFile(compressedSource, target);
+      else await copyDatabaseFile(source, target);
       await syncFile(target);
       directories.add(NodePath.dirname(target));
     } else {
@@ -618,7 +655,11 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
+      await backupDatabaseOnce(
+        this.#baseDir,
+        pending,
+        this.#backupSpaceProbe?.canClone ?? filesystemBackupSpaceProbe.canClone,
+      );
     } catch {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
