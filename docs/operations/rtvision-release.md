@@ -33,8 +33,12 @@ npm view @rtvision/t3@<version> version dist.integrity --registry=https://npm-re
 ```
 
 Confirm the published version and integrity match the tarball, and smoke-test a
-clean Node installation, including the service preflight. Then edit the draft
-release notes to describe the changes and publish the release:
+clean Node installation on Alpine the way self-update installs it: plain `npm`
+with `npm_config_build_from_source=true`, outside any pnpm workspace. Run the
+service preflight, then start `t3 serve` and load its page. The preflight does
+not load the server, so a native package that npm skips on musl (0.0.102's
+`ffi-rs`) passes it and still crashes the updated service on boot. Then edit the
+draft release notes to describe the changes and publish the release:
 
 ```sh
 gh release edit v<version> --repo RTVision/t3code --draft=false --latest
