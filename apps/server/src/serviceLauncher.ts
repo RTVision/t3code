@@ -7,7 +7,9 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
+import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeUtil from "node:util";
+import * as NodeZlib from "node:zlib";
 
 import type {
   PendingServiceUpdate,
@@ -81,6 +83,24 @@ const databaseBackupDir = (baseDir: string, updateId: string) =>
 
 const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
+
+// Older launchers read only the plain directory and delete live files missing from it.
+const compressedBackupDir = (baseDir: string, updateId: string) =>
+  `${databaseBackupDir(baseDir, updateId)}-zstd`;
+
+const compressedBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
+  `${databaseBackupFile(backupDir, suffix)}.zst`;
+
+async function existingDatabaseBackup(
+  baseDir: string,
+  updateId: string,
+): Promise<{ readonly dir: string; readonly compressed: boolean } | undefined> {
+  const plain = databaseBackupDir(baseDir, updateId);
+  if (await pathExists(plain)) return { dir: plain, compressed: false };
+  const compressed = compressedBackupDir(baseDir, updateId);
+  if (await pathExists(compressed)) return { dir: compressed, compressed: true };
+  return undefined;
+}
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -167,10 +187,29 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
   if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
 }
 
+// Level 1 keeps the server's downtime near a plain copy; real databases measured about 10x smaller.
+async function compressDatabaseFile(source: string, destination: string): Promise<void> {
+  await NodeStreamPromises.pipeline(
+    NodeFS.createReadStream(source),
+    NodeZlib.createZstdCompress({ params: { [NodeZlib.constants.ZSTD_c_compressionLevel]: 1 } }),
+    NodeFS.createWriteStream(destination, { mode: 0o600 }),
+  );
+}
+
+async function decompressDatabaseFile(source: string, destination: string): Promise<void> {
+  await NodeStreamPromises.pipeline(
+    NodeFS.createReadStream(source),
+    NodeZlib.createZstdDecompress(),
+    NodeFS.createWriteStream(destination, { mode: 0o600 }),
+  );
+}
+
 const GIB = 1024 ** 3;
-// Cloned backups still need headroom for trial writes and migrations to diverge.
-const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
-const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
+// Backups still need headroom for trial writes and migrations to diverge.
+const BACKUP_MIN_HEADROOM_BYTES = GIB;
+const BACKUP_HEADROOM_FRACTION = 0.1;
+// Compressed size is unknown until the server stops; a backup that overruns this fails and rolls back.
+const COMPRESSED_BACKUP_SIZE_FRACTION = 0.25;
 
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
@@ -228,34 +267,50 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
+const fullCopyBytes = (databaseBytes: number) => databaseBytes * 1.05;
+
+const databaseBytes = async (dbPath: string) =>
+  (await statDatabaseFiles(dbPath)).reduce((total, file) => total + file.size, 0);
+
+const backupHeadroomBytes = (databaseBytes: number) =>
+  Math.max(BACKUP_MIN_HEADROOM_BYTES, databaseBytes * BACKUP_HEADROOM_FRACTION);
+
 /** Check before stopping the server so full disks refuse updates without an outage. */
-export async function databaseBackupBlocker(
+export async function databaseBackupAdmission(
   baseDir: string,
   dbPath: string,
   probe: Partial<BackupSpaceProbe> = {},
-): Promise<string | undefined> {
+): Promise<{ readonly refusal?: string; readonly fullCopyFits: boolean }> {
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
-  const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
-  const size = files.reduce((total, file) => total + file.size, 0);
-  const fullCopyBytes = size * 1.05;
-  if (free >= fullCopyBytes) return undefined;
-  const clonedBytes = Math.max(
-    CLONED_BACKUP_MIN_HEADROOM_BYTES,
-    size * CLONED_BACKUP_HEADROOM_FRACTION,
-  );
-  const needed = (await canClone(dbPath, backupRoot)) ? clonedBytes : fullCopyBytes;
-  if (free >= needed) return undefined;
+  const [size, free] = await Promise.all([databaseBytes(dbPath), readFreeBytes(backupRoot)]);
+  if (free >= fullCopyBytes(size)) return { fullCopyFits: true };
+  const headroomBytes = backupHeadroomBytes(size);
+  const needed = (await canClone(dbPath, backupRoot))
+    ? headroomBytes
+    : Math.min(fullCopyBytes(size), headroomBytes + size * COMPRESSED_BACKUP_SIZE_FRACTION);
+  if (free >= needed) return { fullCopyFits: false };
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
-  return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
+  return {
+    refusal: `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`,
+    fullCopyFits: false,
+  };
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
+async function backupDatabaseOnce(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  probe: BackupSpaceProbe,
+  admittedOnCompressedBudget: boolean,
+): Promise<void> {
+  if ((await existingDatabaseBackup(baseDir, pending.id)) !== undefined) return;
 
+  const plainDir = databaseBackupDir(baseDir, pending.id);
+  const backupRoot = NodePath.dirname(plainDir);
+  const clone = await probe.canClone(pending.dbPath, backupRoot);
+  const backupDir = clone ? plainDir : compressedBackupDir(baseDir, pending.id);
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
@@ -263,9 +318,24 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
     for (const suffix of DB_FILE_SUFFIXES) {
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await copyDatabaseFile(source, destination);
-      await syncFile(destination);
+      if (clone) {
+        const destination = databaseBackupFile(stagingDir, suffix);
+        await copyDatabaseFile(source, destination);
+        await syncFile(destination);
+      } else {
+        const destination = compressedBackupFile(stagingDir, suffix);
+        await compressDatabaseFile(source, destination);
+        await syncFile(destination);
+      }
+    }
+    // The pre-stop check guessed the compressed size; leave the trial room to migrate.
+    if (
+      !clone &&
+      admittedOnCompressedBudget &&
+      (await probe.readFreeBytes(backupRoot)) <
+        backupHeadroomBytes(await databaseBytes(pending.dbPath))
+    ) {
+      throw new Error("The compressed database backup left too little free disk space.");
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));
@@ -275,11 +345,13 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   }
 }
 
-const restoreMarkerPath = (baseDir: string, updateId: string) =>
-  NodePath.join(databaseBackupDir(baseDir, updateId), RESTORE_MARKER);
-
-const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
-  pathExists(restoreMarkerPath(baseDir, pending.id));
+async function databaseRestorePending(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+): Promise<boolean> {
+  const backup = await existingDatabaseBackup(baseDir, pending.id);
+  return backup !== undefined && pathExists(NodePath.join(backup.dir, RESTORE_MARKER));
+}
 
 // Mark before live writes so recovery cannot boot a partial restore.
 async function markDatabaseRestorePending(backupDir: string): Promise<void> {
@@ -322,18 +394,21 @@ async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  const backup = await existingDatabaseBackup(baseDir, pending.id);
+  if (backup === undefined) return;
 
-  await markDatabaseRestorePending(backupDir);
+  await markDatabaseRestorePending(backup.dir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
   for (const suffix of DB_FILE_SUFFIXES) {
     const livePath = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
+    const source = backup.compressed
+      ? compressedBackupFile(backup.dir, suffix)
+      : databaseBackupFile(backup.dir, suffix);
     if (await pathExists(source)) {
       // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
-      await copyDatabaseFile(source, target);
+      if (backup.compressed) await decompressDatabaseFile(source, target);
+      else await copyDatabaseFile(source, target);
       await syncFile(target);
       directories.add(NodePath.dirname(target));
     } else {
@@ -344,10 +419,10 @@ async function restoreDatabaseBackup(
 }
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, updateId);
-  if (!(await pathExists(backupDir))) return;
-  await NodeFSP.rm(backupDir, { recursive: true, force: true });
-  await syncDirectory(NodePath.dirname(backupDir));
+  const dirs = [databaseBackupDir(baseDir, updateId), compressedBackupDir(baseDir, updateId)];
+  if (!(await Promise.all(dirs.map(pathExists))).some(Boolean)) return;
+  for (const dir of dirs) await NodeFSP.rm(dir, { recursive: true, force: true });
+  await syncDirectory(NodePath.join(baseDir, "runtime", "db-backup"));
 }
 
 export async function readServiceState(filePath: string): Promise<ServiceState> {
@@ -504,6 +579,8 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  // Lost on restart; recovered trials then skip the recheck, like a full copy would.
+  #compressedBudgetUpdateId: string | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
 
   constructor(
@@ -618,7 +695,12 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
+      await backupDatabaseOnce(
+        this.#baseDir,
+        pending,
+        { ...filesystemBackupSpaceProbe, ...this.#backupSpaceProbe },
+        this.#compressedBudgetUpdateId === pending.id,
+      );
     } catch {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
@@ -727,17 +809,17 @@ export class Launcher {
       return;
     }
     // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
-    const backupBlocker = await databaseBackupBlocker(
+    const admission = await databaseBackupAdmission(
       this.#baseDir,
       message.dbPath,
       this.#backupSpaceProbe,
-    ).catch(
-      (error: unknown) =>
-        `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
-    );
+    ).catch((error: unknown) => ({
+      refusal: `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
+      fullCopyFits: false,
+    }));
     if (!child.process.connected) return;
-    if (backupBlocker !== undefined) {
-      await reject(backupBlocker);
+    if (admission.refusal !== undefined) {
+      await reject(admission.refusal);
       return;
     }
 
@@ -751,6 +833,7 @@ export class Launcher {
     const next: ServiceState = { ...this.#state, update: pending };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
+    this.#compressedBudgetUpdateId = admission.fullCopyFits ? undefined : pending.id;
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }

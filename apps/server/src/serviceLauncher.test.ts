@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import {
-  databaseBackupBlocker,
+  databaseBackupAdmission,
   Launcher,
   pruneRuntimeVersions,
   main,
@@ -488,9 +488,13 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  it.effect.each(["file", "symlink", "dangling symlink"] as const)(
-    "restores the database when a migrating trial exits, with the database a %s",
-    (kind) =>
+  it.effect.each(
+    (["file", "symlink", "dangling symlink"] as const).flatMap((kind) =>
+      (["cloned", "compressed"] as const).map((backup) => ({ kind, backup })),
+    ),
+  )(
+    "restores a $backup backup when a migrating trial exits, with the database a $kind",
+    ({ kind, backup }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -501,6 +505,7 @@ if (context.update?.status === "pending") {
           kind === "file" ? databasePath : path.join(root, "data", "original.sqlite");
         const linkTarget = kind === "dangling symlink" ? "../original.sqlite" : databaseFile;
         const original = "database before migration";
+        const backupListingPath = path.join(root, "backup-listing.txt");
         yield* fs.makeDirectory(path.dirname(databaseFile), { recursive: true });
         if (kind === "dangling symlink") {
           yield* fs.makeDirectory(path.join(root, "data", "sub"));
@@ -510,11 +515,16 @@ if (context.update?.status === "pending") {
         }
         yield* fs.writeFileString(databaseFile, original);
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
+        yield* fs.writeFileString(`${databasePath}-wal`, "committed wal");
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
-import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
+  const backupDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id${backup === "cloned" ? "" : ' + "-zstd"'});
+  const plainDir = join(${JSON.stringify(path.join(root, "runtime", "db-backup"))}, context.update.id);
+  writeFileSync(${JSON.stringify(backupListingPath)}, readdirSync(backupDir).sort().join(",") + (existsSync(plainDir) ? "" : " (no plain dir)"));
   writeFileSync(context.update.dbPath, "database after migration");
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   writeFileSync(context.update.dbPath + "-shm", "trial shm");
@@ -545,6 +555,7 @@ if (context.update?.status === "pending") {
         const launcher = new Launcher(
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
+          { backupSpaceProbe: { canClone: () => Promise.resolve(backup === "cloned") } },
         );
         yield* Effect.promise(() =>
           launcher.run().then(
@@ -556,18 +567,27 @@ if (context.update?.status === "pending") {
         const state = yield* Effect.promise(() => readServiceState(statePath));
         assert.equal(state.activeVersion, "1.0.0");
         assert.equal(state.update?.status, "rolled-back");
+        assert.equal(
+          yield* fs.readFileString(backupListingPath),
+          backup === "cloned"
+            ? "database,database-wal"
+            : "database-wal.zst,database.zst (no plain dir)",
+        );
         assert.equal(yield* fs.readFileString(databaseFile), original);
+        if (kind === "dangling symlink" && backup === "compressed") {
+          assert.equal((yield* fs.stat(databaseFile)).mode & 0o777, 0o600);
+        }
         if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), linkTarget);
         assert.isFalse(yield* fs.exists(path.join(root, "original.sqlite")));
-        assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
+        assert.equal(yield* fs.readFileString(`${databasePath}-wal`), "committed wal");
         assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
         const updateId = state.update?.id;
         assert.isDefined(updateId);
-        assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+        assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
       }),
   );
 
-  const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
+  const requestUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>, databaseSize?: number) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -577,7 +597,8 @@ if (context.update?.status === "pending") {
       const replyPath = path.join(root, "rejection.txt");
       const trialMarker = path.join(root, "trial-started");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "database");
+      if (databaseSize === undefined) yield* fs.writeFileString(databasePath, "database");
+      else yield* writeSparseFile(databasePath, databaseSize);
       const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
       const childSource = `
 import { writeFileSync } from "node:fs";
@@ -627,15 +648,20 @@ if (context.update?.status === "pending") {
       );
 
       return {
-        reason: yield* fs.readFileString(replyPath),
+        reason: yield* fs.readFileString(replyPath).pipe(Effect.orElseSucceed(() => "")),
         trialStarted: yield* fs.exists(trialMarker),
         state: yield* Effect.promise(() => readServiceState(statePath)),
+        database:
+          databaseSize === undefined
+            ? yield* fs.readFileString(databasePath)
+            : Number((yield* fs.stat(databasePath)).size),
+        backups: yield* fs.readDirectory(path.join(root, "runtime", "db-backup")),
       };
     });
 
   it.effect("refuses a backup that cannot fit and leaves the server running", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+      const { reason, trialStarted, state } = yield* requestUpdate({
         readFreeBytes: () => Promise.resolve(0),
         canClone: () => Promise.resolve(true),
       });
@@ -648,9 +674,47 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  // Free space drops to zero once the server stops; only the pre-stop admission decides the recheck.
+  it.effect.each([
+    {
+      case: "returns to the old version when a compressed-budget backup overruns it",
+      databaseSize: 1.5 * 1024 ** 3,
+      freeBeforeStop: 1.5 * 1024 ** 3,
+      trialStarted: false,
+    },
+    {
+      case: "starts the trial when a full copy fit before stopping",
+      databaseSize: undefined,
+      freeBeforeStop: 500 * 1024 ** 2,
+      trialStarted: true,
+    },
+  ])(
+    "rechecks space after a compressed backup: $case",
+    ({ databaseSize, freeBeforeStop, trialStarted: expected }) =>
+      Effect.gen(function* () {
+        let freeChecks = 0;
+        const { trialStarted, state, database, backups } = yield* requestUpdate(
+          {
+            readFreeBytes: () => Promise.resolve(freeChecks++ === 0 ? freeBeforeStop : 0),
+            canClone: () => Promise.resolve(false),
+          },
+          databaseSize,
+        );
+
+        assert.equal(trialStarted, expected);
+        assert.equal(state.activeVersion, "1.0.0");
+        assert.equal(
+          state.update?.status === "failed" && state.update.reason === "db-backup-failed",
+          !expected,
+        );
+        assert.equal(database, databaseSize ?? "database");
+        assert.deepEqual(backups, []);
+      }),
+  );
+
   it.effect("refuses the update when free space cannot be checked", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+      const { reason, trialStarted, state } = yield* requestUpdate({
         readFreeBytes: () => Promise.reject(new Error("statfs unavailable")),
       });
 
@@ -724,7 +788,7 @@ setInterval(() => {}, 1_000);
     }),
   );
 
-  it.effect("checks database backup space against clone or full-copy needs", () =>
+  it.effect("checks database backup space against clone or compressed-copy needs", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -733,19 +797,20 @@ setInterval(() => {}, 1_000);
       yield* writeSparseFile(databasePath, 10 * 1024 ** 3);
       const check = (free: number, cloneable: boolean) =>
         Effect.promise(() =>
-          databaseBackupBlocker(root, databasePath, {
+          databaseBackupAdmission(root, databasePath, {
             readFreeBytes: () => Promise.resolve(free),
             canClone: () => Promise.resolve(cloneable),
           }),
         );
 
-      assert.isUndefined(yield* check(11 * 1024 ** 3, false));
-      assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
-      assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
-      const blocker = yield* check(8 * 1024 ** 3, false);
-      assert.include(blocker ?? "", "Not enough free disk space");
-      assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
-      assert.include(blocker ?? "", "The server was not stopped");
+      assert.deepEqual(yield* check(11 * 1024 ** 3, false), { fullCopyFits: true });
+      assert.deepEqual(yield* check(1.5 * 1024 ** 3, true), { fullCopyFits: false });
+      assert.include((yield* check(0.5 * 1024 ** 3, true)).refusal, "1.0 GB needed, 0.5 GB free");
+      assert.deepEqual(yield* check(3.5 * 1024 ** 3, false), { fullCopyFits: false });
+      const { refusal } = yield* check(3 * 1024 ** 3, false);
+      assert.include(refusal, "Not enough free disk space");
+      assert.include(refusal, "3.5 GB needed, 3.0 GB free");
+      assert.include(refusal, "The server was not stopped");
     }),
   );
 });
