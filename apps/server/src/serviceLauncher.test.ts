@@ -515,6 +515,7 @@ if (context.update?.status === "pending") {
         }
         yield* fs.writeFileString(databaseFile, original);
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
+        yield* fs.writeFileString(`${databasePath}-wal`, "committed wal");
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
 import { existsSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -568,7 +569,9 @@ if (context.update?.status === "pending") {
         assert.equal(state.update?.status, "rolled-back");
         assert.equal(
           yield* fs.readFileString(backupListingPath),
-          backup === "cloned" ? "database" : "database.zst (no plain dir)",
+          backup === "cloned"
+            ? "database,database-wal"
+            : "database-wal.zst,database.zst (no plain dir)",
         );
         assert.equal(yield* fs.readFileString(databaseFile), original);
         if (kind === "dangling symlink" && backup === "compressed") {
@@ -576,7 +579,7 @@ if (context.update?.status === "pending") {
         }
         if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), linkTarget);
         assert.isFalse(yield* fs.exists(path.join(root, "original.sqlite")));
-        assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
+        assert.equal(yield* fs.readFileString(`${databasePath}-wal`), "committed wal");
         assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
         const updateId = state.update?.id;
         assert.isDefined(updateId);
@@ -584,7 +587,7 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
+  const requestUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -644,15 +647,17 @@ if (context.update?.status === "pending") {
       );
 
       return {
-        reason: yield* fs.readFileString(replyPath),
+        reason: yield* fs.readFileString(replyPath).pipe(Effect.orElseSucceed(() => "")),
         trialStarted: yield* fs.exists(trialMarker),
         state: yield* Effect.promise(() => readServiceState(statePath)),
+        database: yield* fs.readFileString(databasePath),
+        backups: yield* fs.readDirectory(path.join(root, "runtime", "db-backup")),
       };
     });
 
   it.effect("refuses a backup that cannot fit and leaves the server running", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+      const { reason, trialStarted, state } = yield* requestUpdate({
         readFreeBytes: () => Promise.resolve(0),
         canClone: () => Promise.resolve(true),
       });
@@ -665,9 +670,29 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  it.effect("returns to the old version when the compressed backup leaves too little space", () =>
+    Effect.gen(function* () {
+      let freeChecks = 0;
+      const { trialStarted, state, database, backups } = yield* requestUpdate({
+        readFreeBytes: () => Promise.resolve(freeChecks++ === 0 ? 1024 ** 4 : 0),
+        canClone: () => Promise.resolve(false),
+      });
+
+      assert.isFalse(trialStarted);
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.equal(state.update?.status, "failed");
+      assert.equal(
+        state.update?.status === "failed" ? state.update.reason : "",
+        "db-backup-failed",
+      );
+      assert.equal(database, "database");
+      assert.deepEqual(backups, []);
+    }),
+  );
+
   it.effect("refuses the update when free space cannot be checked", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+      const { reason, trialStarted, state } = yield* requestUpdate({
         readFreeBytes: () => Promise.reject(new Error("statfs unavailable")),
       });
 
