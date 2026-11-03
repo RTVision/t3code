@@ -267,6 +267,11 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
+const fullCopyBytes = (databaseBytes: number) => databaseBytes * 1.05;
+
+const databaseBytes = async (dbPath: string) =>
+  (await statDatabaseFiles(dbPath)).reduce((total, file) => total + file.size, 0);
+
 const backupHeadroomBytes = (databaseBytes: number) =>
   Math.max(BACKUP_MIN_HEADROOM_BYTES, databaseBytes * BACKUP_HEADROOM_FRACTION);
 
@@ -279,14 +284,12 @@ export async function databaseBackupBlocker(
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
-  const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
-  const size = files.reduce((total, file) => total + file.size, 0);
-  const fullCopyBytes = size * 1.05;
-  if (free >= fullCopyBytes) return undefined;
+  const [size, free] = await Promise.all([databaseBytes(dbPath), readFreeBytes(backupRoot)]);
+  if (free >= fullCopyBytes(size)) return undefined;
   const headroomBytes = backupHeadroomBytes(size);
   const needed = (await canClone(dbPath, backupRoot))
     ? headroomBytes
-    : Math.min(fullCopyBytes, headroomBytes + size * COMPRESSED_BACKUP_SIZE_FRACTION);
+    : Math.min(fullCopyBytes(size), headroomBytes + size * COMPRESSED_BACKUP_SIZE_FRACTION);
   if (free >= needed) return undefined;
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
@@ -303,6 +306,9 @@ async function backupDatabaseOnce(
   const plainDir = databaseBackupDir(baseDir, pending.id);
   const backupRoot = NodePath.dirname(plainDir);
   const clone = await probe.canClone(pending.dbPath, backupRoot);
+  const size = await databaseBytes(pending.dbPath);
+  // Only budget-limited compressed backups recheck; a full copy would have fit otherwise.
+  const recheckSpace = !clone && (await probe.readFreeBytes(backupRoot)) < fullCopyBytes(size);
   const backupDir = clone ? plainDir : compressedBackupDir(baseDir, pending.id);
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
@@ -321,13 +327,9 @@ async function backupDatabaseOnce(
         await syncFile(destination);
       }
     }
-    if (!clone) {
-      // The pre-stop check guessed the compressed size; leave the trial room to migrate.
-      const files = await statDatabaseFiles(pending.dbPath);
-      const headroom = backupHeadroomBytes(files.reduce((total, file) => total + file.size, 0));
-      if ((await probe.readFreeBytes(backupRoot)) < headroom) {
-        throw new Error("The compressed database backup left too little free disk space.");
-      }
+    // The pre-stop check guessed the compressed size; leave the trial room to migrate.
+    if (recheckSpace && (await probe.readFreeBytes(backupRoot)) < backupHeadroomBytes(size)) {
+      throw new Error("The compressed database backup left too little free disk space.");
     }
     await NodeFSP.rename(stagingDir, backupDir);
     await syncDirectory(NodePath.dirname(backupDir));

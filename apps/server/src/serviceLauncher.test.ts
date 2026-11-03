@@ -670,20 +670,30 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect("returns to the old version when the compressed backup leaves too little space", () =>
+  it.effect.each([
+    {
+      case: "returns to the old version when the backup overruns its budget",
+      free: (check: number) => (check === 0 ? 1024 ** 4 : 0),
+      trialStarted: false,
+    },
+    {
+      case: "starts the trial when a full copy would have fit",
+      free: () => 500 * 1024 ** 2,
+      trialStarted: true,
+    },
+  ])("rechecks space after a compressed backup: $case", ({ free, trialStarted: expected }) =>
     Effect.gen(function* () {
       let freeChecks = 0;
       const { trialStarted, state, database, backups } = yield* requestUpdate({
-        readFreeBytes: () => Promise.resolve(freeChecks++ === 0 ? 1024 ** 4 : 0),
+        readFreeBytes: () => Promise.resolve(free(freeChecks++)),
         canClone: () => Promise.resolve(false),
       });
 
-      assert.isFalse(trialStarted);
+      assert.equal(trialStarted, expected);
       assert.equal(state.activeVersion, "1.0.0");
-      assert.equal(state.update?.status, "failed");
       assert.equal(
-        state.update?.status === "failed" ? state.update.reason : "",
-        "db-backup-failed",
+        state.update?.status === "failed" && state.update.reason === "db-backup-failed",
+        !expected,
       );
       assert.equal(database, "database");
       assert.deepEqual(backups, []);
