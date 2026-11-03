@@ -161,6 +161,95 @@ const REPLACE_FILE_COUNTS_CSS = `
 
 const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 
+// Query results outlive the panel's slices, so their parses survive closing and reopening
+// without retaining anything beyond the query cache's lifetime.
+const sliceParses = new WeakMap<PullRequestDiffResult, Map<string, RenderablePatch | null>>();
+
+function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolean) {
+  let parses = sliceParses.get(slice.source);
+  if (parses === undefined) {
+    parses = new Map();
+    sliceParses.set(slice.source, parses);
+  }
+  if (parses.has(cacheKey)) return parses.get(cacheKey) ?? null;
+  const parsed = getRenderablePatch(slice.patch, cacheKey, {
+    compactPartialHunkOffsets: true,
+    ignoreWhitespace,
+  });
+  parses.set(cacheKey, parsed);
+  return parsed;
+}
+
+type DiffModel = {
+  readonly parsedSlices: ReadonlyArray<RenderablePatch | null>;
+  readonly loadedFiles: ReadonlyArray<Extract<RenderablePatch, { kind: "files" }>["files"][number]>;
+  readonly sourceFileStats: ReadonlyMap<string, ReturnType<typeof getDiffLineStat>>;
+};
+const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
+const patchHashes = new WeakMap<DiffSlice, number>();
+
+// Hashing, ordering and counting every file of a huge pull request costs a second, and the tab
+// renders far more often than its slices change, so the model is kept per slice list.
+function diffModel(
+  slices: ReadonlyArray<DiffSlice>,
+  keyPrefix: string,
+  ignoreWhitespace: boolean,
+): DiffModel {
+  let models = diffModels.get(slices);
+  if (models === undefined) diffModels.set(slices, (models = new Map()));
+  const cached = models.get(keyPrefix);
+  if (cached !== undefined) return cached;
+  const parsedSlices = slices.map((slice) => {
+    let hash = patchHashes.get(slice);
+    if (hash === undefined) patchHashes.set(slice, (hash = fnv1a32(slice.patch)));
+    // The cache key carries the theme, which the tokenizer caches against, and the patch's
+    // hash: a refreshed page reuses its cursor, so position alone would return a stale parse.
+    return parseSlice(slice, `${keyPrefix}:${slice.cursor ?? "first"}:${hash}`, ignoreWhitespace);
+  });
+  const model: DiffModel = {
+    parsedSlices,
+    loadedFiles: orderDiffFilesLikeTree(
+      parsedSlices.flatMap((parsed) =>
+        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
+      ),
+    ),
+    sourceFileStats: new Map(
+      parsedSlices.flatMap((parsed) =>
+        parsed?.kind === "files"
+          ? parsed.files.map(
+              (file, index) =>
+                [
+                  buildFileDiffRenderKey(file),
+                  getDiffLineStat([parsed.sourceFiles[index] ?? file]),
+                ] as const,
+            )
+          : [],
+      ),
+    ),
+  };
+  models.set(keyPrefix, model);
+  return model;
+}
+
+const threadsByPathCache = new WeakMap<
+  ReadonlyArray<PullRequestReviewThread>,
+  ReadonlyMap<string, ReadonlyArray<PullRequestReviewThread>>
+>();
+
+function reviewThreadsByPath(threads: ReadonlyArray<PullRequestReviewThread>) {
+  let byPath = threadsByPathCache.get(threads);
+  if (byPath === undefined) {
+    const grouped = new Map<string, PullRequestReviewThread[]>();
+    for (const thread of threads) {
+      const list = grouped.get(thread.path);
+      if (list) list.push(thread);
+      else grouped.set(thread.path, [thread]);
+    }
+    threadsByPathCache.set(threads, (byPath = grouped));
+  }
+  return byPath;
+}
+
 interface FileViewedToggleState {
   readonly enabled: boolean;
   readonly writable: boolean;
@@ -329,7 +418,6 @@ function PullRequestCodeTab({
     slices: NO_SLICES,
     revalidating: false,
   });
-  const [parseCache] = useState(() => new Map<string, RenderablePatch>());
   const referenceKey = pullRequestReviewKey(reference);
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
@@ -351,7 +439,6 @@ function PullRequestCodeTab({
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
-    parseCache.clear();
   }
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
@@ -470,26 +557,10 @@ function PullRequestCodeTab({
     };
   })();
   const rangeComments = detail.capabilities.review.rangeComment === true;
-  // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
-  // rather than one per slice already on screen. Its cache key carries the theme, which is what
-  // the tokenizer caches against, so a theme change is still a fresh parse.
-  const parsedSlices = loadedSlices.map((slice) => {
-    // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
-    // key of position alone would keep handing back the parse of the patch it replaced.
-    const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
-    const cached = parseCache.get(cacheKey);
-    if (cached) return cached;
-    const parsed = getRenderablePatch(slice.patch, cacheKey, {
-      compactPartialHunkOffsets: true,
-      ignoreWhitespace,
-    });
-    if (parsed) parseCache.set(cacheKey, parsed);
-    return parsed;
-  });
-  const loadedFiles = orderDiffFilesLikeTree(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-    ),
+  const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
+    loadedSlices,
+    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
+    ignoreWhitespace,
   );
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
@@ -586,6 +657,7 @@ function PullRequestCodeTab({
   // Placing a conversation takes more than its file being in the diff: its line has to fall
   // inside a hunk that was rendered. One that does not is drawn nowhere, so it belongs in the
   // off-diff list rather than disappearing between the two.
+  const threadsByPath = reviewThreadsByPath(detail.reviewThreads);
   const placedThreadIds = (() => {
     const placed = new Set<string>();
     // A commit's diff counts lines within that commit; a review comment is anchored to the
@@ -594,13 +666,8 @@ function PullRequestCodeTab({
     // screen every conversation is listed rather than placed.
     if (commit !== null) return placed;
     for (const file of files) {
-      const path = resolveFileDiffPath(file);
-      for (const thread of detail.reviewThreads) {
-        if (
-          thread.path === path &&
-          thread.line !== null &&
-          isLineInFileDiff(file, thread.side, thread.line)
-        ) {
+      for (const thread of threadsByPath.get(resolveFileDiffPath(file)) ?? []) {
+        if (thread.line !== null && isLineInFileDiff(file, thread.side, thread.line)) {
           placed.add(thread.id);
         }
       }
@@ -641,8 +708,8 @@ function PullRequestCodeTab({
       groups.set(key, created);
       return created;
     };
-    for (const thread of detail.reviewThreads) {
-      if (thread.path !== path || thread.line === null) continue;
+    for (const thread of threadsByPath.get(path) ?? []) {
+      if (thread.line === null) continue;
       if (!placedThreadIds.has(thread.id)) continue;
       groupAt(thread.side, thread.line).threads.push(thread);
     }
@@ -717,19 +784,6 @@ function PullRequestCodeTab({
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
-    ),
-  );
-  const sourceFileStats = new Map(
-    parsedSlices.flatMap((parsed) =>
-      parsed?.kind === "files"
-        ? parsed.files.map(
-            (file, index) =>
-              [
-                buildFileDiffRenderKey(file),
-                getDiffLineStat([parsed.sourceFiles[index] ?? file]),
-              ] as const,
-          )
-        : [],
     ),
   );
   const fileKeys = items.map((item) => item.id);

@@ -1,5 +1,6 @@
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -74,11 +75,12 @@ export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string
 /** Names the remote state directory for a target: the first 16 hex chars of its SHA-256 key. */
 export const remoteStateKey = Effect.fn("ssh/command.remoteStateKey")(function* (
   target: DesktopSshEnvironmentTarget,
-): Effect.fn.Return<string, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
-  const digest = yield* crypto
-    .digest("SHA-256", encoder.encode(targetAddressKey(target)))
-    .pipe(Effect.orDie);
+): Effect.fn.Return<string, never, Digest.Digest> {
+  const digestService = yield* Digest.Digest;
+  const digest = yield* digestService.digest(
+    Digest.sha256,
+    encoder.encode(targetAddressKey(target)),
+  );
   return Hex.encode(digest).slice(0, 16);
 });
 
@@ -180,7 +182,11 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
 ): Effect.fn.Return<
   SshCommandResult,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
 > {
   const hostSpec = yield* buildSshHostSpecEffect(target);
   const environment = yield* buildSshChildEnvironment({
@@ -293,7 +299,11 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
 ): Effect.fn.Return<
   SshCommandResult,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
 > {
   return yield* Effect.scopedWith((commandScope) =>
     runSshCommandInScope(target, input, commandScope),
@@ -328,7 +338,11 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
 ): Effect.fn.Return<
   DesktopSshEnvironmentTarget,
   SshCommandError | SshInvalidTargetError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
 > {
   const trimmedAlias = alias.trim();
   if (trimmedAlias.length === 0) {
