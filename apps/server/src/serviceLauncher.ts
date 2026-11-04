@@ -275,6 +275,17 @@ const databaseBytes = async (dbPath: string) =>
 const backupHeadroomBytes = (databaseBytes: number) =>
   Math.max(BACKUP_MIN_HEADROOM_BYTES, databaseBytes * BACKUP_HEADROOM_FRACTION);
 
+// A killed launcher skips the backup's cleanup, and retries only clear their own update's copy.
+// Update requests are refused while one is pending, so no staging directory is still in use here.
+async function removeAbandonedBackupCopies(backupRoot: string): Promise<void> {
+  for (const entry of await NodeFSP.readdir(backupRoot)) {
+    if (!entry.endsWith(".staging")) continue;
+    await NodeFSP.rm(NodePath.join(backupRoot, entry), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+  }
+}
+
 /** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupAdmission(
   baseDir: string,
@@ -284,6 +295,7 @@ export async function databaseBackupAdmission(
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  await removeAbandonedBackupCopies(backupRoot);
   const [size, free] = await Promise.all([databaseBytes(dbPath), readFreeBytes(backupRoot)]);
   if (free >= fullCopyBytes(size)) return { fullCopyFits: true };
   const headroomBytes = backupHeadroomBytes(size);
