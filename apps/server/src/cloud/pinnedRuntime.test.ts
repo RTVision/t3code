@@ -18,6 +18,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  isUnpublishedRelease,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
@@ -42,7 +43,7 @@ const validChecksums = archiveHex(archiveBytes).pipe(
 const releaseHttpClient = (checksums: string, requests: string[] = []) =>
   HttpClient.make((request) => {
     requests.push(request.url);
-    const body = request.url.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
+    const body = new URL(request.url).pathname.endsWith("/SHA256SUMS") ? checksums : archiveBytes;
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body)));
   });
 const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: string[] = []) =>
@@ -228,93 +229,110 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect.each(["valid", "wrong-package", "wrong-version", "preflight-blocked"] as const)(
-    "validates a staged npm runtime before publication: %s",
-    (state) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
-        const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux", "npm");
-        const requests: string[] = [];
-        let validations = 0;
-        const result = yield* ensurePinnedRuntimeInstalled({
-          distribution: "npm",
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          linuxLibc: "gnu",
-          httpClient: releaseHttpClient("", requests),
-          runner: ProcessRunner.ProcessRunner.of({
-            run: (input) =>
-              Effect.gen(function* () {
-                assert.equal(input.command, "npm");
-                assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
-                assert.include(input.args, "https://npm-registry.rtvision.com/");
-                const staging = input.args[input.args.indexOf("--prefix") + 1]!;
-                const packageDir = path.join(staging, "node_modules/t3");
-                yield* fs
-                  .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(
-                    path.join(packageDir, "package.json"),
-                    state === "wrong-package"
-                      ? '{"name":"t3","version":"1.2.3"}'
-                      : state === "wrong-version"
-                        ? '{"name":"@rtvision/t3","version":"1.2.2"}'
-                        : '{"name":"@rtvision/t3","version":"1.2.3"}',
-                  )
-                  .pipe(Effect.orDie);
-                return {
-                  stdout: "",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-          validate: (staged) =>
+  it.effect.each([
+    "valid",
+    "wrong-package",
+    "wrong-version",
+    "preflight-blocked",
+    "withdrawn-mirror",
+    "listed-mirror",
+  ] as const)("validates a staged npm runtime before publication: %s", (state) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
+      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux", "npm");
+      yield* fs.makeDirectory(path.dirname(finalPaths.versionDir), { recursive: true });
+      const requests: string[] = [];
+      let validations = 0;
+      let installs = 0;
+      const mirror = state === "withdrawn-mirror" || state === "listed-mirror";
+      const succeeds = state === "valid" || state === "listed-mirror";
+      const result = yield* ensurePinnedRuntimeInstalled({
+        distribution: "npm",
+        requirePublishedRelease: mirror,
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        linuxLibc: "gnu",
+        httpClient: releaseHttpClient(
+          state === "listed-mirror" ? yield* validChecksums : "",
+          requests,
+        ),
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) =>
             Effect.gen(function* () {
-              validations++;
-              assert.isFalse(yield* fs.exists(finalPaths.versionDir).pipe(Effect.orDie));
-              assert.isFalse(yield* fs.exists(staged.sentinelPath).pipe(Effect.orDie));
-              assert.equal(
-                yield* fs.readFileString(staged.entryPath).pipe(Effect.orDie),
-                "runtime",
-              );
-              if (state === "preflight-blocked")
-                return yield* new PinnedRuntimeInstallError({ step: "preflight" });
+              installs++;
+              assert.equal(input.command, "npm");
+              assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
+              assert.include(input.args, "https://npm-registry.rtvision.com/");
+              const staging = input.args[input.args.indexOf("--prefix") + 1]!;
+              const packageDir = path.join(staging, "node_modules/t3");
+              yield* fs
+                .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
+                .pipe(Effect.orDie);
+              yield* fs
+                .writeFileString(
+                  path.join(packageDir, "package.json"),
+                  state === "wrong-package"
+                    ? '{"name":"t3","version":"1.2.3"}'
+                    : state === "wrong-version"
+                      ? '{"name":"@rtvision/t3","version":"1.2.2"}'
+                      : '{"name":"@rtvision/t3","version":"1.2.3"}',
+                )
+                .pipe(Effect.orDie);
+              return {
+                stdout: "",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
             }),
-        }).pipe(Effect.result);
-        assert.deepEqual(requests, []);
-        assert.equal(validations, state === "valid" || state === "preflight-blocked" ? 1 : 0);
-        assert.equal(result._tag, state === "valid" ? "Success" : "Failure");
-        assert.equal(yield* fs.exists(finalPaths.versionDir), state === "valid");
-        assert.deepEqual(
-          (yield* fs.readDirectory(path.dirname(finalPaths.versionDir))).filter((entry) =>
-            entry.startsWith(".staging-"),
-          ),
-          [],
-        );
-        if (state === "valid") {
-          assert.deepEqual(pinnedRuntimeCommand(finalPaths, "/usr/bin/node"), {
-            command: "/usr/bin/node",
-            args: [finalPaths.entryPath],
-          });
-          assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), `${version}\n`);
-        }
-      }),
+        }),
+        validate: (staged) =>
+          Effect.gen(function* () {
+            validations++;
+            assert.isFalse(yield* fs.exists(finalPaths.versionDir).pipe(Effect.orDie));
+            assert.isFalse(yield* fs.exists(staged.sentinelPath).pipe(Effect.orDie));
+            assert.equal(yield* fs.readFileString(staged.entryPath).pipe(Effect.orDie), "runtime");
+            if (state === "preflight-blocked")
+              return yield* new PinnedRuntimeInstallError({ step: "preflight" });
+          }),
+      }).pipe(Effect.result);
+      assert.equal(installs, state === "withdrawn-mirror" ? 0 : 1);
+      assert.deepEqual(
+        requests,
+        mirror
+          ? [`https://github.com/RTVision/t3code/releases/download/v${version}/SHA256SUMS`]
+          : [],
+      );
+      assert.equal(validations, succeeds || state === "preflight-blocked" ? 1 : 0);
+      assert.equal(result._tag, succeeds ? "Success" : "Failure");
+      assert.equal(yield* fs.exists(finalPaths.versionDir), succeeds);
+      assert.deepEqual(
+        (yield* fs.readDirectory(path.dirname(finalPaths.versionDir))).filter((entry) =>
+          entry.startsWith(".staging-"),
+        ),
+        [],
+      );
+      if (succeeds) {
+        assert.deepEqual(pinnedRuntimeCommand(finalPaths, "/usr/bin/node"), {
+          command: "/usr/bin/node",
+          args: [finalPaths.entryPath],
+        });
+        assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), `${version}\n`);
+      }
+    }),
   );
 
   // node-pty's Linux prebuilds are glibc-only and segfault on musl, so musl
@@ -931,6 +949,77 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.instanceOf(error, PinnedRuntimePreflightBlockedError);
       assert.deepEqual(requests, []);
       assert.equal(yield* fs.readFileString(finalPaths.entryPath), "installed\n");
+    }),
+  );
+  it.effect("reports a release that lists an archive it does not serve as unpublished", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
+      const checksums = yield* validChecksums;
+      const failsWith = (status: number) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          linuxLibc: "gnu",
+          httpClient: HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/SHA256SUMS")
+                  ? new Response(checksums)
+                  : new Response("", { status }),
+              ),
+            ),
+          ),
+          // "404" in the mirror's path must not read a server error as a missing release.
+          releaseBaseUrl: "https://updates.example.com/404/t3code",
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.die("must not validate a missing archive"),
+        }).pipe(Effect.flip);
+      assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
+      assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
+    }),
+  );
+
+  it.effect("reuses a cached runtime under a mirror only while the mirror lists it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-mirror-" });
+      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(path.dirname(cached.entryPath), { recursive: true });
+      yield* fs.writeFileString(cached.entryPath, "#!/bin/sh\n");
+      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
+      const install = (checksums: string, requests: string[]) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          linuxLibc: "gnu",
+          httpClient: releaseHttpClient(checksums, requests),
+          // A signed mirror URL keeps its query on every file it serves.
+          releaseBaseUrl: "https://updates.example.com/t3code/?token=abc",
+          requirePublishedRelease: true,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+        });
+
+      const withdrawn = yield* install("", []).pipe(Effect.flip);
+      assert.include(withdrawn.message, `finding ${archiveName} in the t3 release checksums`);
+      const requests: string[] = [];
+      assert.equal((yield* install(yield* validChecksums, requests)).entryPath, cached.entryPath);
+      // Listed, so the cached runtime is used without downloading it again.
+      assert.deepEqual(requests, [
+        `https://updates.example.com/t3code/v${version}/SHA256SUMS?token=abc`,
+      ]);
     }),
   );
 });
