@@ -288,9 +288,13 @@ jobs:
           fi
           # The runner's trace writer can crash on surrogate pairs in test output.
           vp run --parallel --concurrency-limit 4 "${filters[@]}" test 2>&1 | python3 -u -c '
-          import sys
-          for line in sys.stdin:
-              sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
+          import codecs, sys
+          decoder = codecs.getincrementaldecoder("utf-8")("backslashreplace")
+          def forward(text):
+              sys.stdout.write(text.encode("ascii", "backslashreplace").decode("ascii"))
+          while chunk := sys.stdin.buffer.read1(65536):
+              forward(decoder.decode(chunk))
+          forward(decoder.decode(b"", final=True))
           '
 
   # The web suite is the largest outside the server. In the shared Test job it
