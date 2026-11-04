@@ -137,7 +137,7 @@ interface PinnedRuntimeInstallInput {
   readonly linuxLibc: HostLinuxLibc;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
-  /** Reuse a cached runtime only while the release source still lists it, as a policy mirror does. */
+  /** Require the release source to list the version before installing or reusing it. */
   readonly requirePublishedRelease?: boolean;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
@@ -325,16 +325,16 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     Option.isSome(sentinel) &&
     sentinel.value.trim() === input.version &&
     (input.distribution !== "npm" || (yield* matchesNpmPackage(paths)));
-  if (alreadyPinned) {
-    if (input.requirePublishedRelease === true) {
-      const platformKey = cliArchivePlatformKey(input.platform, input.arch);
-      if (platformKey === undefined) {
-        return yield* new PinnedRuntimeInstallError({
-          step: `selecting a t3 release archive for ${input.platform}-${input.arch}`,
-        });
-      }
-      yield* publishedArchive(input, platformKey);
+  if (input.requirePublishedRelease === true && (alreadyPinned || input.distribution === "npm")) {
+    const platformKey = cliArchivePlatformKey(input.platform, input.arch);
+    if (platformKey === undefined) {
+      return yield* new PinnedRuntimeInstallError({
+        step: `selecting a t3 release archive for ${input.platform}-${input.arch}`,
+      });
     }
+    yield* publishedArchive(input, platformKey);
+  }
+  if (alreadyPinned) {
     // A completed install can still be unusable, e.g. a musl install that kept
     // node-pty's glibc prebuild. Reinstall it rather than fail every update;
     // the existing copy is replaced only after a fresh one validates.
