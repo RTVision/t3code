@@ -6,9 +6,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { SshRunner } from "@t3tools/ssh/runner";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import type { DesktopSettings } from "../settings/DesktopAppSettings.ts";
 import { DesktopWslEnvironment } from "../wsl/DesktopWslEnvironment.ts";
+
+const isSshCommandError = Schema.is(SshCommandError);
 
 export function selectSshRunner(
   platform: NodeJS.Platform,
@@ -85,7 +88,7 @@ export const preflightWslSsh = Effect.fn("desktop.ssh.preflightWsl")(function* (
         ),
     }),
     Effect.mapError((cause) =>
-      cause instanceof SshCommandError
+      isSshCommandError(cause)
         ? cause
         : new SshCommandError({
             command: ["wsl.exe"],

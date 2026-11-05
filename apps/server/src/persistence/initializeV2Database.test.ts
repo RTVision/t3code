@@ -17,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -519,7 +520,8 @@ it.effect("includes committed WAL data and does not publish a failed snapshot", 
   const destinationPath = NodePath.join(directory, "statev2.sqlite");
   return Effect.gen(function* () {
     NodeFS.writeFileSync(sourcePath, "invalid SQLite");
-    assert.isTrue((yield* Effect.result(initializeV2Database(destinationPath)))._tag === "Failure");
+    const failure = yield* Effect.flip(initializeV2Database(destinationPath));
+    assert.isFalse(Predicate.isTagged(failure.cause, "V2DatabaseImportError"));
     assert.isFalse(NodeFS.existsSync(destinationPath));
     NodeFS.unlinkSync(sourcePath);
     const source = new NodeSqlite.DatabaseSync(sourcePath);

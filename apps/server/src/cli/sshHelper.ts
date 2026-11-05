@@ -99,7 +99,7 @@ const runtimePort = Command.make("runtime-port", {
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
       try {
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - mirrors the shell snippet's loose parse.
         const runtime = resolveSshRuntimePort(JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")));
         if (runtime === undefined) process.exitCode = 1;
         else process.stdout.write(runtime);

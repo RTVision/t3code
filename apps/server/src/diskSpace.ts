@@ -10,6 +10,7 @@ import type { ServerLowDiskSpace } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -55,11 +56,19 @@ export class DiskSpace extends Context.Service<
   }
 >()("t3/diskSpace") {}
 
+class DiskSpaceReadError extends Schema.TaggedError<DiskSpaceReadError>()("DiskSpaceReadError", {
+  baseDir: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 const make = Effect.gen(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const report = yield* SubscriptionRef.make<ServerLowDiskSpace | null>(null);
 
-  const check = Effect.tryPromise(() => NodeFSP.statfs(baseDir)).pipe(
+  const check = Effect.tryPromise({
+    try: () => NodeFSP.statfs(baseDir),
+    catch: (cause) => new DiskSpaceReadError({ baseDir, cause }),
+  }).pipe(
     Effect.map((stats) =>
       classifyDiskSpace(baseDir, stats.bavail * stats.bsize, stats.blocks * stats.bsize),
     ),

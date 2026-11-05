@@ -109,7 +109,10 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
   yield* removeAbandonedCopies(directory).pipe(Effect.ignore({ log: true }));
   yield* Effect.gen(function* () {
     if (yield* fs.exists(destinationPath)) {
-      const trial = yield* Effect.try(() => withDatabase(destinationPath, true, readTrialImport));
+      const trial = yield* Effect.try({
+        try: () => withDatabase(destinationPath, true, readTrialImport),
+        catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+      });
       if (trial === undefined) return;
       if (rawContext !== undefined && context === undefined) {
         return yield* new V2DatabaseImportError({
@@ -132,11 +135,13 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
           ? context?.update
           : undefined;
       if (outcome?.status === "committed") {
-        yield* Effect.try(() =>
-          withDatabase(destinationPath, false, (database) =>
-            database.exec(`DROP TABLE ${trialTable}`),
-          ),
-        );
+        yield* Effect.try({
+          try: () =>
+            withDatabase(destinationPath, false, (database) =>
+              database.exec(`DROP TABLE ${trialTable}`),
+            ),
+          catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
+        });
         return;
       }
       if (pending !== undefined && matchesTrial(pending, trial)) return;
@@ -177,24 +182,27 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
       prefix: `.v2-import-${process.pid}-`,
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
-    yield* Effect.tryPromise(async () => {
-      const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
-      try {
-        await NodeSqlite.backup(database, snapshotPath);
-      } finally {
-        database.close();
-      }
-      if (pending !== undefined) {
-        withDatabase(snapshotPath, false, (snapshot) => {
-          // The published hard link must contain the marker without depending on scratch WAL files.
-          snapshot.exec(
-            `PRAGMA journal_mode = DELETE; CREATE TABLE ${trialTable} (update_id TEXT NOT NULL, from_version TEXT NOT NULL, target_version TEXT NOT NULL, phase TEXT NOT NULL);`,
-          );
-          snapshot
-            .prepare(`INSERT INTO ${trialTable} VALUES (?, ?, ?, 'imported')`)
-            .run(pending.id, pending.fromVersion, pending.targetVersion);
-        });
-      }
+    yield* Effect.tryPromise({
+      try: async () => {
+        const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+        try {
+          await NodeSqlite.backup(database, snapshotPath);
+        } finally {
+          database.close();
+        }
+        if (pending !== undefined) {
+          withDatabase(snapshotPath, false, (snapshot) => {
+            // The published hard link must contain the marker without depending on scratch WAL files.
+            snapshot.exec(
+              `PRAGMA journal_mode = DELETE; CREATE TABLE ${trialTable} (update_id TEXT NOT NULL, from_version TEXT NOT NULL, target_version TEXT NOT NULL, phase TEXT NOT NULL);`,
+            );
+            snapshot
+              .prepare(`INSERT INTO ${trialTable} VALUES (?, ?, ?, 'imported')`)
+              .run(pending.id, pending.fromVersion, pending.targetVersion);
+          });
+        }
+      },
+      catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
     });
     // Publish only a complete snapshot, without replacing an existing V2 database.
     yield* fs.link(snapshotPath, destinationPath).pipe(
