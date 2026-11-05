@@ -1565,7 +1565,7 @@ const runScript = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
+        env: { PATH: options?.path ?? (yield* HostProcess.Environment).PATH ?? "", HOME: home },
         extendEnv: false,
         ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
@@ -1649,7 +1649,7 @@ describe("archive runner script", () => {
           yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
           yield* fs.chmod(`${bin}/${name}`, 0o755);
         }
-        const path = `${bin}:${process.env.PATH ?? ""}`;
+        const path = `${bin}:${(yield* HostProcess.Environment).PATH ?? ""}`;
         const installing = yield* Deferred.make<void>();
         const contended = yield* Deferred.make<void>();
         // Hold the first extraction until another runner either waits for the lock
