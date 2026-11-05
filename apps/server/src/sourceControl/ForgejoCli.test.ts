@@ -65,11 +65,11 @@ printf '%s\\n' '__T3CODE_ENV_PATH_START__' '${binaries}' '__T3CODE_ENV_PATH_END_
   );
   yield* fs.chmod(shell, 0o755);
   vi.stubEnv("SHELL", shell);
-  vi.stubEnv("PATH", `${wrappers}:${process.env.PATH ?? ""}`);
+  vi.stubEnv("PATH", `${wrappers}:${(yield* HostProcess.Environment).PATH ?? ""}`);
   vi.stubEnv("XDG_CONFIG_HOME", personal);
   vi.stubEnv("T3CODE_TEA_CONFIG_HOME", managed);
   yield* fixPath();
-  expect(process.env.PATH?.split(":")[0]).toBe(binaries);
+  expect((yield* HostProcess.Environment).PATH?.split(":")[0]).toBe(binaries);
   return { root, personal };
 });
 
@@ -87,7 +87,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         });
         expect(result.stdout).toBe(command === "fj" ? "personal-login" : "managed-login");
       }
-      expect(process.env.XDG_CONFIG_HOME).toBe(personal);
+      expect((yield* HostProcess.Environment).XDG_CONFIG_HOME).toBe(personal);
     }).pipe(Effect.provide(layer), Effect.scoped),
 );
 

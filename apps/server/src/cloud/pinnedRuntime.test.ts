@@ -67,7 +67,7 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
           stdoutInvalidUtf8: false,
           stderrInvalidUtf8: false,
         };
-      }),
+      }).pipe(Effect.orDie),
   });
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
@@ -271,22 +271,16 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
               assert.include(input.args, "https://npm-registry.rtvision.com/");
               const staging = input.args[input.args.indexOf("--prefix") + 1]!;
               const packageDir = path.join(staging, "node_modules/t3");
-              yield* fs
-                .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(
-                  path.join(packageDir, "package.json"),
-                  state === "wrong-package"
-                    ? '{"name":"t3","version":"1.2.3"}'
-                    : state === "wrong-version"
-                      ? '{"name":"@rtvision/t3","version":"1.2.2"}'
-                      : '{"name":"@rtvision/t3","version":"1.2.3"}',
-                )
-                .pipe(Effect.orDie);
+              yield* fs.makeDirectory(path.join(packageDir, "dist"), { recursive: true });
+              yield* fs.writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime");
+              yield* fs.writeFileString(
+                path.join(packageDir, "package.json"),
+                state === "wrong-package"
+                  ? '{"name":"t3","version":"1.2.3"}'
+                  : state === "wrong-version"
+                    ? '{"name":"@rtvision/t3","version":"1.2.2"}'
+                    : '{"name":"@rtvision/t3","version":"1.2.3"}',
+              );
               return {
                 stdout: "",
                 stderr: "",
@@ -297,7 +291,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
                 stdoutInvalidUtf8: false,
                 stderrInvalidUtf8: false,
               };
-            }),
+            }).pipe(Effect.orDie),
         }),
         validate: (staged) =>
           Effect.gen(function* () {
@@ -366,18 +360,12 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
                 envs.push(input.env);
                 const staging = input.args[input.args.indexOf("--prefix") + 1]!;
                 const packageDir = path.join(staging, "node_modules/t3");
-                yield* fs
-                  .makeDirectory(path.join(packageDir, "dist"), { recursive: true })
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime")
-                  .pipe(Effect.orDie);
-                yield* fs
-                  .writeFileString(
-                    path.join(packageDir, "package.json"),
-                    '{"name":"@rtvision/t3","version":"1.2.3"}',
-                  )
-                  .pipe(Effect.orDie);
+                yield* fs.makeDirectory(path.join(packageDir, "dist"), { recursive: true });
+                yield* fs.writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime");
+                yield* fs.writeFileString(
+                  path.join(packageDir, "package.json"),
+                  '{"name":"@rtvision/t3","version":"1.2.3"}',
+                );
                 return {
                   stdout: "",
                   stderr: "",
@@ -388,7 +376,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
                   stdoutInvalidUtf8: false,
                   stderrInvalidUtf8: false,
                 };
-              }),
+              }).pipe(Effect.orDie),
           }),
           validate: () => Effect.void,
         });
@@ -673,18 +661,12 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             Effect.gen(function* () {
               const staging = input.args[input.args.indexOf("--prefix") + 1]!;
               const pkg = path.join(staging, "node_modules/t3");
-              yield* fs
-                .makeDirectory(path.join(pkg, "dist"), { recursive: true })
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(path.join(pkg, "dist/bin.mjs"), "broken replacement")
-                .pipe(Effect.orDie);
-              yield* fs
-                .writeFileString(
-                  path.join(pkg, "package.json"),
-                  '{"name":"@rtvision/t3","version":"1.2.3"}',
-                )
-                .pipe(Effect.orDie);
+              yield* fs.makeDirectory(path.join(pkg, "dist"), { recursive: true });
+              yield* fs.writeFileString(path.join(pkg, "dist/bin.mjs"), "broken replacement");
+              yield* fs.writeFileString(
+                path.join(pkg, "package.json"),
+                '{"name":"@rtvision/t3","version":"1.2.3"}',
+              );
               return {
                 stdout: "",
                 stderr: "",
@@ -695,7 +677,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
                 stdoutInvalidUtf8: false,
                 stderrInvalidUtf8: false,
               };
-            }),
+            }).pipe(Effect.orDie),
         }),
         validate: () =>
           Effect.fail(new PinnedRuntimeInstallError({ step: "replacement preflight" })),

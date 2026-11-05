@@ -8,6 +8,13 @@ const state = vi.hoisted(() => ({
   reconcile: vi.fn(),
   query: vi.fn(),
   updateAtom: Symbol("update"),
+  environment: {
+    environmentId: "primary",
+    label: "Primary",
+    entry: { enabled: true, target: { _tag: "PrimaryConnectionTarget" } },
+    connection: { phase: "connected", error: null, traceId: null },
+    serverConfig: null,
+  },
 }));
 vi.hoisted(() => {
   Object.assign(globalThis, {
@@ -53,18 +60,15 @@ vi.mock("../../state/entities", async (original) => ({
 }));
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
-  useEnvironments: () => ({ environments: [] }),
-  usePrimaryEnvironment: () => ({
-    environmentId: "primary",
-    label: "Primary",
-    connection: { phase: "connected", error: null, traceId: null },
-    serverConfig: null,
-  }),
+  useEnvironments: () => ({ environments: [state.environment] }),
+  useEnvironment: () => state.environment,
+  usePrimaryEnvironment: () => state.environment,
   usePrimaryEnvironmentId: () => "primary",
   useRelayEnvironmentDiscovery: () => ({ environments: new Map() }),
 }));
 vi.mock("../../state/session", async (original) => ({
   ...(await original<typeof import("../../state/session")>()),
+  useEnvironmentSessionState: () => ({ data: null }),
   readEnvironmentScope: (_id: unknown, grant: string) => state.grants.has(grant),
   useEnvironmentScope: (_id: unknown, grant: string) => state.grants.has(grant),
 }));
@@ -76,7 +80,6 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("../../environments/primary", async (original) => ({
   ...(await original<typeof import("../../environments/primary")>()),
-  usePrimarySessionState: () => ({ data: null }),
   isLoopbackHostname: () => true,
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
@@ -110,7 +113,7 @@ function callComponent(element: ReactElement<Record<string, unknown>>) {
 }
 function renderPanel() {
   hooks.beginRender();
-  return ConnectionsSettings({ view: "access" });
+  return callComponent(callComponent(ConnectionsSettings({ view: "access" })));
 }
 function relayControl() {
   const row = visitElements(

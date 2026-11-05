@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -25,6 +26,8 @@ import * as SshAuth from "./auth.ts";
 import { SshCommandError, SshReadinessError, SshPasswordPromptError } from "./errors.ts";
 import { SshRunner } from "./runner.ts";
 import * as SshTunnel from "./tunnel.ts";
+
+const isSshCommandError = Schema.is(SshCommandError);
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -1139,7 +1142,7 @@ describe("ssh tunnel scripts", () => {
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result)) {
           assert.instanceOf(result.failure, SshCommandError);
-          if (result.failure instanceof SshCommandError) {
+          if (isSshCommandError(result.failure)) {
             assert.equal(result.failure.exitCode, 1);
             assert.equal(result.failure.stderr.length, 16_384);
             assert.isTrue(result.failure.stderr.endsWith(diagnostic));
@@ -1197,7 +1200,7 @@ describe("ssh tunnel scripts", () => {
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result)) {
           assert.instanceOf(result.failure, SshCommandError);
-          if (result.failure instanceof SshCommandError) {
+          if (isSshCommandError(result.failure)) {
             assert.equal(result.failure.exitCode, 255);
             assert.equal(result.failure.stderr, diagnostic);
           }
@@ -1274,7 +1277,7 @@ describe("ssh tunnel scripts", () => {
         if (Result.isFailure(result)) {
           if (expectedPromptAttempts.length === 0) {
             assert.instanceOf(result.failure, SshCommandError);
-            if (result.failure instanceof SshCommandError) {
+            if (isSshCommandError(result.failure)) {
               assert.equal(result.failure.stderr, stderr);
             }
           } else {
@@ -1562,7 +1565,7 @@ const runScript = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
+        env: { PATH: options?.path ?? (yield* HostProcess.Environment).PATH ?? "", HOME: home },
         extendEnv: false,
         ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
@@ -1646,7 +1649,7 @@ describe("archive runner script", () => {
           yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
           yield* fs.chmod(`${bin}/${name}`, 0o755);
         }
-        const path = `${bin}:${process.env.PATH ?? ""}`;
+        const path = `${bin}:${(yield* HostProcess.Environment).PATH ?? ""}`;
         const installing = yield* Deferred.make<void>();
         const contended = yield* Deferred.make<void>();
         // Hold the first extraction until another runner either waits for the lock
