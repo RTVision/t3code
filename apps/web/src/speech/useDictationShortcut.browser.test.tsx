@@ -1,9 +1,13 @@
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { useDictationShortcut } from "./useDictationShortcut";
 
-vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
+vi.mock("../hooks/useSettings", () => ({
+  useClientSettings: () => "hold",
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
+}));
 
 function Probe({ speech }: { speech: Parameters<typeof useDictationShortcut>[0]["speech"] }) {
   useDictationShortcut({
