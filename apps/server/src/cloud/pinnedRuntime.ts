@@ -21,7 +21,6 @@ import {
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
 
-import type { HostLinuxLibc } from "@t3tools/shared/HostProcess";
 import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -134,7 +133,7 @@ interface PinnedRuntimeInstallInput {
   ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
   readonly platform: NodeJS.Platform;
   readonly arch: string;
-  readonly linuxLibc: HostLinuxLibc;
+  readonly linuxLibc: typeof HostProcess.LinuxLibc.Service;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
   /** Require the release source to list the version before installing or reusing it. */

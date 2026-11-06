@@ -44,7 +44,11 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
-import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
+import {
+  pullRequestFindingKey,
+  type PullRequestChatSubject,
+  type PullRequestFinding,
+} from "./pullRequestDetail.logic";
 import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
@@ -105,6 +109,7 @@ import {
   ReviewThreadCard,
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
+import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import {
   getFileViewedRange,
   isFileDiffCollapsed,
@@ -353,6 +358,7 @@ function PullRequestCodeTab({
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
+  onAddToChat,
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
@@ -368,6 +374,8 @@ function PullRequestCodeTab({
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /** Absent where there is no composer beside the panel to add a conversation to. */
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
   refreshToken?: number;
@@ -547,16 +555,14 @@ function PullRequestCodeTab({
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });
-  const review = (() => {
-    const hostReview = detail.capabilities.review;
-    const viewer = detail.viewerPermissions;
-    return {
-      inlineComment: hostReview.inlineComment && viewer.comment,
-      reply: hostReview.reply && viewer.comment,
-      resolve: hostReview.resolve && viewer.resolve,
-    };
-  })();
-  const rangeComments = detail.capabilities.review.rangeComment === true;
+  const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
+  const hostReview = detail.capabilities.review;
+  const review = {
+    inlineComment: hostReview.inlineComment && detail.viewerPermissions.comment,
+    reply: hostReview.reply && detail.viewerPermissions.comment,
+    resolve: hostReview.resolve && detail.viewerPermissions.resolve,
+  };
+  const rangeComments = hostReview.rangeComment === true;
   const { parsedSlices, loadedFiles, sourceFileStats } = diffModel(
     loadedSlices,
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
@@ -1056,10 +1062,14 @@ function PullRequestCodeTab({
       canReact={pullRequestCanReact(detail.capabilities, "review-comment")}
       environmentId={environmentId}
       reference={reference}
+      completionScope={completionScope}
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
       fixLabel={fixFindingLabel}
       {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
+      {...(onAddToChat
+        ? { onAddToChat: (loaded) => onAddToChat({ kind: "thread", thread: loaded }) }
+        : {})}
       onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
         const result = await loadThreadComments({
           environmentId,
@@ -1110,6 +1120,7 @@ function PullRequestCodeTab({
   );
   const renderPendingCard = (comment: PendingReviewComment) => (
     <PendingReviewCommentCard
+      completionScope={completionScope}
       key={comment.id}
       comment={comment}
       workspaceRoot={detail.workspaceRoot}
@@ -1124,9 +1135,13 @@ function PullRequestCodeTab({
       {annotation.metadata.pending.map(renderPendingCard)}
       {annotation.metadata.draft && draft ? (
         <DiffCommentAnnotation
+          environmentId={environmentId}
+          projectId={reference.projectId}
+          ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
+          completionScope={canCommentOnLines ? completionScope : null}
           submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
           {...(canCommentOnLines && onAddToAgentSelection
             ? {
