@@ -1151,6 +1151,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     createdAt: "2026-07-01T00:00:00Z",
                     updatedAt: "2026-07-02T00:00:00Z",
                     sourceBranch: "feat/page",
+                    sourceProject: { fullPath: "contributor/web" },
                     targetBranch: "main",
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
@@ -1180,6 +1181,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
     expect(page.items).toEqual([
       expect.objectContaining({
         number: 7,
+        headRepositoryNameWithOwner: "contributor/web",
         state: "open",
         isDraft: true,
         mergeability: "conflicting",

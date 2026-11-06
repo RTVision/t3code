@@ -84,8 +84,8 @@ const RawMergeRequestSchema = Schema.Struct({
   source_branch: Schema.String,
   target_branch: Schema.String,
   /** Present on REST list and detail responses; absent on older or redacted installations. */
-  source_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
-  target_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
+  source_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
+  target_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   source_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   target_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   /** The source branch's head commit. */
@@ -113,8 +113,6 @@ const RawMergeRequestSchema = Schema.Struct({
   squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /** Only detail reads with include_diverged_commits_count return this expensive count. */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
-  source_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
-  target_project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   /** Null on merge requests from the same project, where it means nothing. */
   allow_collaboration: Schema.optional(Schema.NullOr(Schema.Boolean)),
   diff_refs: Schema.optional(Schema.NullOr(RawMergeRequestDiffRefs)),
@@ -1674,6 +1672,7 @@ export function decodeListStatesJson(
 /** The fields a listed merge request needs, so one GraphQL read stands in for REST and states. */
 export const LIST_ITEM_GRAPHQL_FIELDS = `${LIST_STATE_GRAPHQL_FIELDS}
   title webUrl state draft createdAt updatedAt mergedAt sourceBranch targetBranch
+  sourceProject { fullPath }
   conflicts mergeStatusEnum author { username name avatarUrl } labels(first: 100) { nodes { title } }`;
 
 const RawGraphqlListNodeSchema = Schema.Struct({
@@ -1686,6 +1685,7 @@ const RawGraphqlListNodeSchema = Schema.Struct({
   updatedAt: Schema.String,
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   sourceBranch: Schema.String,
+  sourceProject: Schema.optional(Schema.NullOr(Schema.Struct({ fullPath: Schema.String }))),
   targetBranch: Schema.String,
   conflicts: Schema.optional(Schema.NullOr(Schema.Boolean)),
   mergeStatusEnum: Schema.optional(Schema.NullOr(Schema.String)),
@@ -1768,6 +1768,7 @@ export function decodeMergeRequestGraphqlListJson(
             },
       ),
       headBranch: node.sourceBranch,
+      headRepositoryNameWithOwner: trimmed(node.sourceProject?.fullPath),
       baseBranch: node.targetBranch,
       state: toState({ state: node.state, merged_at: node.mergedAt }),
       isDraft: node.draft ?? false,
