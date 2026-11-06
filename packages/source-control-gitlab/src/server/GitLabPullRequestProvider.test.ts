@@ -528,6 +528,7 @@ describe("optional activity reads", () => {
         url: webUrl,
         author: null,
         headBranch: "feat/page",
+        headRepositoryNameWithOwner: null,
         baseBranch: "main",
         state: "open" as const,
         isDraft: false,
