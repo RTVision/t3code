@@ -76,6 +76,10 @@ Download the Windows x64 or Linux x64 installer from
 [RTVision GitHub Releases](https://github.com/RTVision/t3code/releases).
 Desktop installers are unsigned.
 
+The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
+in-app updater.
+
 ### Nix (nixpkgs)
 
 T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).

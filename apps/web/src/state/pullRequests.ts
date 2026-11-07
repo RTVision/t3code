@@ -590,18 +590,6 @@ const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
 
 type PullRequestListRefreshScope = Pick<PullRequestListInput, "projectId" | "projectIds" | "host">;
 
-export function usePullRequestFilterOptions(
-  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestFilterOptionsInput>>,
-) {
-  const query = usePullRequestFilterOptionsQuery(targets);
-  return {
-    labels: query.values.flatMap(([, options]) => options.labels),
-    authors: query.values.flatMap(([, options]) => options.authors),
-    error: query.error,
-    isPending: query.isPending,
-  };
-}
-
 const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
   "web-pull-requests:turn-refreshes",
   ({ environmentId, input }: EnvironmentQueryTarget<PullRequestListRefreshScope>) =>
@@ -667,4 +655,17 @@ export function usePullRequestListStats(
           result.stats.map((stat) => ({ ...stat, environmentId })),
         );
   return { stats, isPending: query.isPending, refresh: query.refresh };
+}
+
+export function usePullRequestFilterOptions(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestFilterOptionsInput>>,
+) {
+  const query = usePullRequestFilterOptionsQuery(targets);
+  return {
+    labels: query.values.flatMap(([, options]) => options.labels),
+    authors: query.values.flatMap(([, options]) => options.authors),
+    references: query.values.flatMap(([, options]) => options.references),
+    error: query.error,
+    isPending: query.isPending,
+  };
 }

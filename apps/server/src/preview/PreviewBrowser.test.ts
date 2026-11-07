@@ -3,7 +3,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { HostLinuxLibc } from "@t3tools/shared/HostProcess";
 import * as Digest from "effect/crypto/Digest";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
@@ -83,7 +82,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     readonly wait?: Duration.Input;
     readonly unsupported?: boolean;
     readonly platform?: NodeJS.Platform;
-    readonly linuxLibc?: HostLinuxLibc;
+    readonly linuxLibc?: typeof HostProcess.LinuxLibc.Service;
     readonly executable?: string;
   } = {},
 ) {

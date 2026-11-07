@@ -78,7 +78,7 @@ function resourceMonitorPlatformKey(
 function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
-  linuxLibc?: HostProcess.HostLinuxLibc,
+  linuxLibc?: typeof HostProcess.LinuxLibc.Service,
 ): string | undefined {
   if (platform === "darwin") {
     return architecture === "arm64"

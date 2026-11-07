@@ -109,6 +109,8 @@ vi.mock("~/composerDraftStore", () => ({
     }),
 }));
 
+vi.mock("./PreviewAnnotationSpeech", () => ({ PreviewAnnotationSpeech: () => null }));
+
 vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(),
 }));
