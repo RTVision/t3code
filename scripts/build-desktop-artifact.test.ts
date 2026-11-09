@@ -914,6 +914,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
+        for (let count = result.fileCount; count < 87; count++) {
+          yield* fs.writeFileString(
+            path.join(fixture.packagedAppDir, `runtime-${count}.dll`),
+            "native",
+          );
+        }
+        const speechPayload = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
+        });
+        assert.equal(speechPayload.fileCount, 87);
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
