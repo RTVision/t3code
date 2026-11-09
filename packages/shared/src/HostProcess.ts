@@ -16,6 +16,22 @@ export const Architecture = Context.Reference<NodeJS.Architecture>(
   },
 );
 
+export const LinuxLibc = Context.Reference<"gnu" | "musl">(
+  "@t3tools/shared/HostProcess/LinuxLibc",
+  {
+    defaultValue: () => {
+      try {
+        const report = process.report?.getReport() as
+          | { header?: { glibcVersionRuntime?: unknown } }
+          | undefined;
+        return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+      } catch {
+        return "musl";
+      }
+    },
+  },
+);
+
 export const Hostname = Context.Reference<string>("@t3tools/shared/HostProcess/Hostname", {
   defaultValue: () => NodeOS.hostname(),
 });
@@ -110,24 +126,3 @@ export const UserId = Context.Reference<number | undefined>("@t3tools/shared/Hos
 });
 
 export const isWindows = Effect.map(Platform, (platform) => platform === "win32");
-
-export type HostLinuxLibc = "gnu" | "musl";
-
-function detectLinuxLibc(): HostLinuxLibc {
-  try {
-    const report = process.report?.getReport() as
-      | { readonly header?: { readonly glibcVersionRuntime?: unknown } }
-      | undefined;
-    return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
-  } catch {
-    return "musl";
-  }
-}
-
-/**
- * The C library this Node links against. Only meaningful on Linux: every
- * non-glibc host reports "musl", so read it behind a platform check.
- */
-export const LinuxLibc = Context.Reference<HostLinuxLibc>("@t3tools/shared/HostProcess/LinuxLibc", {
-  defaultValue: detectLinuxLibc,
-});

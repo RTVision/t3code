@@ -30,6 +30,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { T3_NPM_PACKAGE, T3_NPM_REGISTRY } from "@t3tools/shared/releasePackage";
 import serverPackageJson from "../package.json" with { type: "json" };
 import {
+  ServerCliBootstrapTooLargeError,
   ServerCliBuildAssetMissingError,
   ServerCliExecutableImportError,
   ServerCliCommandExitError,
@@ -210,32 +211,48 @@ const buildExeCmd = Command.make(
         (yield* HostProcess.Platform) === "linux" &&
         (yield* HostProcess.Architecture) === "arm64";
       const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
-      yield* runCommand(
-        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          cwd: serverDir,
-          env: {
-            ...process.env,
-            T3CODE_PACK_EXE: linuxArm64 ? "bundle" : "1",
-            T3CODE_PACK_EXE_TARGET: target ?? "",
-          },
-          stdout: config.verbose ? "inherit" : "ignore",
-          stderr: "inherit",
-          shell: spawnCommand.shell,
-        }),
-      );
+      const cliAssetDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-asset-" });
+      const pack = (packMode: "bundle" | "bootstrap" | "1") =>
+        runCommand(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: serverDir,
+            env: {
+              ...process.env,
+              T3CODE_PACK_EXE: packMode,
+              T3CODE_CLI_ASSET_DIR: cliAssetDir,
+              T3CODE_PACK_EXE_TARGET: target ?? "",
+            },
+            stdout: config.verbose ? "inherit" : "ignore",
+            stderr: "inherit",
+            shell: spawnCommand.shell,
+          }),
+        );
 
-      // The executable can only `import` built-ins. A file-backed import
-      // passes the bundler and `node dist/bin.mjs`, then throws inside the
-      // binary, so read the emitted module graph rather than trusting config.
-      const bundlePath = path.join(serverDir, "dist-exe/bin.mjs");
-      const specifiers = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath));
-      if (specifiers.length > 0) {
-        return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
+      yield* pack("bundle");
+      const cliMainPath = path.join(cliAssetDir, "binMain.mjs");
+      yield* pack(linuxArm64 ? "bootstrap" : "1");
+
+      // Executables reject non-builtin imports even when bundling succeeds; inspect the emitted graph.
+      const bootstrapPath = path.join(serverDir, "dist-exe/bin.mjs");
+      for (const bundlePath of [bootstrapPath, cliMainPath]) {
+        const specifiers = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath));
+        if (specifiers.length > 0) {
+          return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
+        }
+      }
+      // The service launcher's memory win depends on the CLI staying out of the bootstrap.
+      const bootstrapBytes = (yield* fs.stat(bootstrapPath)).size;
+      if (bootstrapBytes > 1024 * 1024) {
+        return yield* new ServerCliBootstrapTooLargeError({
+          bootstrapPath,
+          bytes: Number(bootstrapBytes),
+        });
       }
       // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
       if (linuxArm64) {
         yield* injectLinuxArm64Sea({
-          bundlePath,
+          bundlePath: bootstrapPath,
+          cliAssetPath: cliMainPath,
           outputPath: path.join(serverDir, "dist-exe/t3"),
           nodeVersion: rootPackageJson.engines.node,
           verbose: config.verbose,
