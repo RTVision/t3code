@@ -58,6 +58,16 @@ const CHROME_LAYER_Z_INDEX = 10;
 /** How long a restored draft keeps looking for elements the reloaded page renders late. */
 const DRAFT_RESTORE_TIMEOUT_MS = 5_000;
 const DRAFT_RESTORE_INTERVAL_MS = 200;
+// Page dialogs (Radix, react-remove-scroll) dismiss, refocus or block scrolling on document events
+// that shadow retargeting attributes to the overlay host.
+const PAGE_ISOLATED_EVENTS = [
+  "pointerdown",
+  "focusin",
+  "focusout",
+  "wheel",
+  "touchstart",
+  "touchmove",
+] as const;
 
 let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
 ipcRenderer.on(
@@ -1647,6 +1657,13 @@ function startAnnotation(
     event.stopPropagation();
   };
 
+  const stopAtOverlay = (event: Event): void => event.stopPropagation();
+  // Focus moving from the page into the overlay targets the page element, so the host never sees it.
+  const onFocusOutToOverlay = (event: FocusEvent): void => {
+    if (event.relatedTarget instanceof Element && isAnnotationNode(event.relatedTarget))
+      event.stopPropagation();
+  };
+
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
   };
@@ -1690,6 +1707,8 @@ function startAnnotation(
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
+    for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     if (restoreTimer !== null) window.clearTimeout(restoreTimer);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
@@ -1843,6 +1862,10 @@ function startAnnotation(
   window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
+  // Bubble phase, so the overlay's own handlers still see these events.
+  for (const type of PAGE_ISOLATED_EVENTS)
+    host.addEventListener(type, stopAtOverlay, { passive: true });
+  document.documentElement.addEventListener("focusout", onFocusOutToOverlay);
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);

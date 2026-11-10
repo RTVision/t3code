@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.copyFile cannot request an exclusive copy.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -48,6 +50,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -67,7 +70,6 @@ import {
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
-import { copyDownload } from "./DownloadFiles.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_DRAFT_CHANNEL,
@@ -2023,8 +2025,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
+    let unloadPrevented = false;
+    const onPreventUnload = () => {
+      unloadPrevented = true;
+    };
+    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
+      wc.on("will-prevent-unload", onPreventUnload);
+      return wc.loadURL(url);
+    }).pipe(
+      // Blocked unloads and superseding navigations both reject with ERR_ABORTED.
+      Effect.catchIf(
+        (error) =>
+          !unloadPrevented &&
+          Predicate.hasProperty(error.cause, "errno") &&
+          error.cause.errno === -3,
+        () => Effect.void,
+      ),
+      Effect.ensuring(Effect.sync(() => wc.off("will-prevent-unload", onPreventUnload))),
     );
   });
 
@@ -3715,13 +3732,37 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
   const downloadSessions = new WeakSet<Electron.Session>();
-  const runForkDownload = Effect.runForkWith(yield* Effect.context<Path.Path>());
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runForkDownload = Effect.runForkWith(yield* Effect.context<never>());
   const copyToDownloads = Effect.fn("PreviewManager.copyToDownloads")(function* (
     source: string,
     fileName: string,
   ) {
-    const target = yield* copyDownload(source, app.getPath("downloads"), fileName);
-    shell.showItemInFolder(target);
+    const directory = app.getPath("downloads");
+    const extension = path.extname(fileName);
+    const stem = path.basename(fileName, extension) || "download";
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const target = path.join(
+        directory,
+        attempt === 0 ? `${stem}${extension}` : `${stem} (${attempt})${extension}`,
+      );
+      if (yield* fileSystem.exists(target)) continue;
+      const copied = yield* Effect.tryPromise({
+        try: () => NodeFSP.copyFile(source, target, NodeFSP.constants.COPYFILE_EXCL),
+        catch: (cause) => new PreviewOperationError({ operation: "copyToDownloads", cause }),
+      }).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) =>
+            error.cause instanceof Error && "code" in error.cause && error.cause.code === "EEXIST",
+          () => Effect.succeed(false),
+        ),
+      );
+      if (!copied) continue;
+      shell.showItemInFolder(target);
+      return;
+    }
   });
   const placeServerDownloads = (session: Electron.Session) => {
     if (downloadSessions.has(session)) return;

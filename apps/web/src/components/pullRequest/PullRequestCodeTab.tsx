@@ -1031,6 +1031,11 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
+    // Find may repeat requests before render; only unfold, never toggle.
+    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
+      setToggledFiles((current) =>
+        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+      ),
   };
   const runThreadCommand = async (
     label: string,
@@ -1704,12 +1709,6 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
-              onRevealSearchMatch={(item) => {
-                if (item.type === "diff") {
-                  setFileFolded(resolveFileDiffPath(item.fileDiff), false);
-                }
-              }}
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>
