@@ -2,6 +2,12 @@ import * as NodeNet from "node:net";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+// @effect-diagnostics nodeBuiltinImport:off - Runs the generated runner in a real shell.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,7 +25,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
@@ -81,7 +87,7 @@ const hangingHttpClient = HttpClient.make(() => Effect.never);
 const testNetService = NetService.NetService.of({
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
-  hasListenerOnHost: () => Effect.succeed(false),
+  hasListenerOnHost: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(41_773),
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
@@ -365,7 +371,7 @@ describe("ssh tunnel scripts", () => {
       "T3_RELEASE_BASE_URL='https://github.com/RTVision/t3code/releases/download'",
     );
     assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
-    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
+    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
     assert.notInclude(script, "npx");
@@ -561,6 +567,46 @@ describe("ssh tunnel scripts", () => {
       launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+  it.each([
+    { host: "Darwin x86_64", system: "Darwin", machine: "x86_64", downloads: false },
+    { host: "Linux x86_64", system: "Linux", machine: "x86_64", downloads: true },
+  ])(
+    "only downloads a release archive the host can run: $host",
+    ({ system, machine, downloads }) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+      try {
+        const bin = NodePath.join(root, "bin");
+        NodeFS.mkdirSync(bin);
+        NodeFS.mkdirSync(NodePath.join(root, "home"));
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "uname"),
+          `#!/bin/sh\ncase "$1" in -s) echo ${system} ;; -m) echo ${machine} ;; esac\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "curl"),
+          "#!/bin/sh\necho 'download attempt' >&2\nexit 22\n",
+          { mode: 0o755 },
+        );
+        const runner = NodePath.join(root, "run-t3.sh");
+        NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+        NodeFS.writeFileSync(NodePath.join(bin, "npm"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+        const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
+          encoding: "utf8",
+          env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
+        });
+        assert.notEqual(result.status, 0);
+        if (downloads) {
+          assert.include(result.stderr, "download attempt");
+        } else {
+          assert.notInclude(result.stderr, "download attempt");
+          assert.include(result.stderr, "has no t3 release archive.");
+        }
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
@@ -1205,6 +1251,135 @@ describe("ssh tunnel scripts", () => {
             assert.equal(result.failure.stderr, diagnostic);
           }
         }
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("waits for a tunnel whose ssh connection outlasts the readiness timeout", () =>
+    Effect.gen(function* () {
+      const LOCAL_PORT = 41_773;
+      // ssh spends ConnectTimeout on each unreachable address before the forward listens.
+      const SSH_CONNECT_MS = 25_000;
+      let forwardListensAt = Number.POSITIVE_INFINITY;
+      const tunnelSpawned = yield* Deferred.make<void>();
+      const forwardListening = (port: number) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.map((now) => port === LOCAL_PORT && now >= forwardListensAt),
+        );
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Effect.gen(function* () {
+              forwardListensAt = (yield* Clock.currentTimeMillis) + SSH_CONNECT_MS;
+              yield* Deferred.succeed(tunnelSpawned, undefined);
+              return makeRunningProcess(() => undefined);
+            })
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const httpClient = HttpClient.make((request) =>
+        forwardListening(LOCAL_PORT).pipe(
+          Effect.flatMap((listening) =>
+            listening
+              ? Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 200 })),
+                )
+              : Effect.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.TransportError({
+                      request,
+                      description: `connect ECONNREFUSED 127.0.0.1:${LOCAL_PORT}`,
+                    }),
+                  }),
+                ),
+          ),
+        ),
+      );
+      const net = NetService.NetService.of({
+        ...testNetService,
+        reserveLoopbackPort: () => Effect.succeed(LOCAL_PORT),
+        canListenOnHost: (port) =>
+          forwardListening(port).pipe(Effect.map((listening) => !listening)),
+        isPortAvailableOnLoopback: (port) =>
+          forwardListening(port).pipe(Effect.map((listening) => !listening)),
+        hasListenerOnHost: (port) => forwardListening(port),
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, net),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          }),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.seconds(60));
+        const environment = yield* Fiber.join(ensure);
+        assert.equal(environment.httpBaseUrl, `http://127.0.0.1:${LOCAL_PORT}/`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("fails with a readiness error when ssh never connects", () =>
+    Effect.gen(function* () {
+      const tunnelSpawned = yield* Deferred.make<void>();
+      let tunnelKilled = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+              Effect.as(
+                makeRunningProcess(() => {
+                  tunnelKilled = true;
+                }),
+              ),
+            )
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+        Layer.succeed(
+          NetService.NetService,
+          NetService.NetService.of({
+            ...testNetService,
+            hasListenerOnHost: () => Effect.succeed(false),
+          }),
+        ),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          ),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.minutes(2));
+        const result = yield* Fiber.join(ensure);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshReadinessError);
+          assert.include(result.failure.message, "SSH connection to devbox did not come up");
+        }
+        assert.isTrue(tunnelKilled);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );

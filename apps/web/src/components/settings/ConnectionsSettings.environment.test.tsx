@@ -43,6 +43,10 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("react/compiler-runtime", async () => ({
   c: (await import("../../test/reactHookHarness")).reactHookHarness.useMemoCache,
 }));
+vi.mock("@tanstack/react-router", async (original) => ({
+  ...(await original<typeof import("@tanstack/react-router")>()),
+  useSearch: () => undefined,
+}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) => (atom === state.updateAtom ? { status: "idle" } : []),
 }));
