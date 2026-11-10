@@ -84,4 +84,16 @@ it("finds and reveals matches in folded files and collapsed context, then hands 
   );
   expect(view.isSearchOpen()).toBe(false);
   expect(document.activeElement).toBe(root);
+
+  view.navigateSearch("next");
+  await vi.waitFor(() => expect(currentMatchText()).toEqual(["NEEDLE"]));
+  view.navigateSearch("next");
+  await vi.waitFor(() => expect(currentMatchText()).toEqual(["needle"]));
+  view.navigateSearch("previous");
+  await vi.waitFor(() => expect(currentMatchText()).toEqual(["NEEDLE"]));
+  expect(view.isSearchOpen()).toBe(false);
+
+  view.setItems([]);
+  view.navigateSearch("next");
+  await vi.waitFor(() => expect(currentMatchText()).toEqual([]));
 });

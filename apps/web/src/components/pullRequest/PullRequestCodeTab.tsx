@@ -1032,10 +1032,9 @@ function PullRequestCodeTab({
     onLineSelectionEnd: beginComment,
     onPostRender: codeViewReveal.flush,
     // Find may repeat requests before render; only unfold, never toggle.
-    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
-      setToggledFiles((current) =>
-        toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-      ),
+    onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) => {
+      if (item.type === "diff") setFileFolded(resolveFileDiffPath(item.fileDiff), false);
+    },
   };
   const runThreadCommand = async (
     label: string,

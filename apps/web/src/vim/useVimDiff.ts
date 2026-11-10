@@ -44,7 +44,9 @@ export function useVimDiff({
       return true;
     }
     if (command === "search.next" || command === "search.previous") {
-      viewer?.getInstance()?.navigateSearch(command === "search.next" ? count : -count);
+      const instance = viewer?.getInstance();
+      for (let step = 0; step < count; step++)
+        instance?.navigateSearch(command === "search.next" ? "next" : "previous");
       return true;
     }
     if (command === "hunk.next" || command === "hunk.previous") {

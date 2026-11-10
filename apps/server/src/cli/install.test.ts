@@ -232,7 +232,11 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.equal(asked, 1);
       assert.isFalse(yield* fs.exists(link));
 
-      yield* fs.writeFileString(path.join(runtimeDir, "install-prompt-declined"), "0.0\n");
+      const [major, minor] = VERSION.split(".");
+      yield* fs.writeFileString(
+        path.join(runtimeDir, "install-prompt-declined"),
+        `${major}.${Number(minor) + 1}\n`,
+      );
       yield* offer(true);
       assert.equal(asked, 2);
       assert.equal(yield* fs.readLink(link), executable);
