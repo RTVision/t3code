@@ -279,6 +279,8 @@ export class PullRequestService extends Context.Service<
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
+    /** Emits when the host reports a change; empty where the host has no event feed. */
+    readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -633,6 +635,10 @@ function withRateLimitBackoff(
             api.getChangeRequestWatchFingerprint,
           ),
         }),
+    // A long-lived feed, not a read: the quota guard would hold its lease for hours.
+    ...(api.changeRequestEvents === undefined
+      ? {}
+      : { changeRequestEvents: api.changeRequestEvents }),
     getChangeRequestActivity: wrap("getChangeRequestActivity", api.getChangeRequestActivity),
     ...(api.getReviewThreadComments === undefined
       ? {}
@@ -1167,12 +1173,24 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  /**
-   * Every write goes through it: the page hides what a viewer may not do, and a request that
-   * arrived without passing through the page — or after the access behind it was withdrawn — must
-   * not be handed to a provider on the client's word. Read freshly for that reason, rather than
-   * taken from whatever the detail said when the page loaded.
-   */
+  const changes: PullRequestService["Service"]["changes"] = (input) =>
+    Stream.unwrap(
+      requireProject(input).pipe(
+        Effect.map((project) =>
+          project.api.changeRequestEvents === undefined
+            ? Stream.empty
+            : project.api.changeRequestEvents({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                number: input.number,
+              }),
+        ),
+        Effect.orElseSucceed(() => Stream.empty),
+      ),
+    );
+
+  // Access can change after page load; recheck every write.
   const viewerPermissionsOf = (
     project: SupportedProject,
     ref: PullRequestRef,
@@ -4359,6 +4377,7 @@ export const make = Effect.gen(function* () {
     ),
     activity: credentialCached(activity),
     dependencyContext,
+    changes,
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),
