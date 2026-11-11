@@ -421,6 +421,8 @@ jobs:
         # Standard fork runners have fewer cores than upstream's Blacksmith runner.
         # Keep unit work from competing with the Chromium process and heavy browser fixtures.
         working-directory: apps/web
+        env:
+          DEBUG: pw:browser,vitest:browser:*,vite:deps
         run: |
           vp test run --passWithNoTests --project unit --no-file-parallelism
           vp test run --passWithNoTests --project browser --no-file-parallelism
