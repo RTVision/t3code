@@ -631,7 +631,10 @@ function useChatMarkdownState({
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
-  const { open: openInPreferredEditor } = useEditorDispatch(environmentId, availableEditors);
+  const { open: openInPreferredEditor, canOpen: canOpenPreferredEditor } = useEditorDispatch(
+    environmentId,
+    availableEditors,
+  );
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -865,7 +868,7 @@ function useChatMarkdownState({
                   environmentId,
                   input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
                 })
-            : canUseShellActions
+            : canUseShellActions && canOpenPreferredEditor
               ? async () =>
                   openInPreferredEditor(
                     markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
