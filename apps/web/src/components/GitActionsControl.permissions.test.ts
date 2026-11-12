@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
+  DEFAULT_SERVER_SETTINGS,
   type EditorChoice,
   EnvironmentId,
   ThreadId,
@@ -37,7 +38,7 @@ vi.mock("@effect/atom-react", () => ({
       ? state.scopes.has(AuthOrchestrationOperateScope)
       : atom === "vcs-state"
         ? { isRunning: false }
-        : { availableEditors: ["vscode"] },
+        : { availableEditors: ["vscode"], settings: DEFAULT_SERVER_SETTINGS },
 }));
 vi.mock("~/state/entities", () => ({
   useThreadProjection: (ref: unknown) =>
@@ -52,12 +53,17 @@ vi.mock("~/state/session", () => ({
   readEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
 }));
+vi.mock("~/state/filesystem", () => ({
+  useFilesystemReadAccess: () => ({ canReadFiles: true }),
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
-vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));
+vi.mock("~/state/sourceControl", () => ({
+  sourceControlEnvironment: { discovery: () => "discovery" },
+}));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
 vi.mock("~/state/vcs", () => ({
-  vcsEnvironment: { status: () => null },
+  vcsEnvironment: { status: () => "status" },
   vcsActionManager: { stateAtom: () => "vcs-state" },
   vcsStatusRevalidation: () => "vcs-revalidation",
 }));
@@ -80,19 +86,23 @@ vi.mock("~/state/threads", () => ({
   },
 }));
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({
-    data: {
-      sourceControlProviders: [],
-      isRepo: true,
-      refName: state.branch,
-      isDefaultRef: false,
-      hasPrimaryRemote: true,
-      hasWorkingTreeChanges: true,
-      workingTree: {
-        rootPath: "/repo",
-        files: [{ path: "file.ts", status: "modified", insertions: 1, deletions: 0 }],
-      },
-    },
+  useEnvironmentQuery: (query: unknown) => ({
+    data:
+      query === "status"
+        ? {
+            isRepo: true,
+            refName: state.branch,
+            isDefaultRef: false,
+            hasPrimaryRemote: true,
+            hasWorkingTreeChanges: true,
+            workingTree: {
+              rootPath: "/repo",
+              files: [{ path: "file.ts", status: "modified", insertions: 1, deletions: 0 }],
+            },
+          }
+        : query === "discovery"
+          ? { sourceControlProviders: [] }
+          : null,
     error: null,
   }),
 }));
