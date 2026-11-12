@@ -160,8 +160,14 @@ server.listen(0, "127.0.0.1", () => {
   process.stdout.write(JSON.stringify({ pid: process.pid, port: server.address().port, args: [] }) + "\\n");
 });
 `,
+                "--",
                 mode,
                 signalPath,
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
               ],
               { cwd: fixture, detached: false },
             ),
