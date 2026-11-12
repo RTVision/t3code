@@ -111,7 +111,7 @@ const writeServiceOutcome = (directory: string, update: ServiceUpdateRecord) => 
 it.effect(
   "records prepared before launcher IPC and retires ownership only after its matching commit receipt",
   () =>
-    withTrialDatabase(({ sourcePath, destinationPath }) =>
+    withTrialDatabase(({ directory, sourcePath, destinationPath }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const pending = trialUpdate(sourcePath, "ipc-commit");
@@ -148,7 +148,7 @@ it.effect(
             }),
           );
           const completion = yield* duringTrial(
-            completeV2DatabaseTrial(destinationPath, client.prepareTrial),
+            completeV2DatabaseTrial(destinationPath, client.prepareTrial({ baseDir: directory })),
             pending,
           ).pipe(Effect.forkScoped);
           yield* Deferred.await(sent);

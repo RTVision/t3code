@@ -59,6 +59,7 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
+import { fileDiffRows } from "@t3tools/client-runtime/review-guide-tour";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
@@ -110,6 +111,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getReviewPositionAnchor,
+  InlineReviewThreads,
   PendingReviewCommentCard,
   ReviewThreadCard,
   toViewerSide,
@@ -720,7 +722,19 @@ function PullRequestCodeTab({
     const fileKey = buildFileDiffRenderKey(fileDiff);
     const path = resolveFileDiffPath(fileDiff);
     const groups = new Map<string, MutableAnnotationGroup>();
-    const groupAt = (side: PullRequestDiffSide, line: number) => {
+    // Stacked view draws a context row once, so its old side shares the new side's annotation.
+    const contextNewLines = new Map<number, number>();
+    const groupAt = (anchorSide: PullRequestDiffSide, anchorLine: number) => {
+      if (anchorSide === "left" && diffLayout !== "split" && contextNewLines.size === 0) {
+        for (const row of fileDiffRows(fileDiff)) {
+          if (row.oldLine !== null && row.newLine !== null) {
+            contextNewLines.set(row.oldLine, row.newLine);
+          }
+        }
+      }
+      const contextLine = anchorSide === "left" ? contextNewLines.get(anchorLine) : undefined;
+      const side = contextLine === undefined ? anchorSide : "right";
+      const line = contextLine ?? anchorLine;
       const key = `${side}:${line}`;
       const existing = groups.get(key);
       if (existing) return existing;
@@ -1080,8 +1094,10 @@ function PullRequestCodeTab({
     onRefresh();
     return true;
   };
-  const renderThreadCard = (thread: PullRequestReviewThread) => (
+
+  const renderThreadCard = (thread: PullRequestReviewThread, hidden?: boolean) => (
     <ReviewThreadCard
+      {...(hidden === undefined ? {} : { hidden })}
       // Named with the pull request too: a thread's id is the host's own, and two pull requests
       // can hand out the same one — which would leave one card's open editor standing over the
       // other's conversation.
@@ -1147,6 +1163,7 @@ function PullRequestCodeTab({
         )
       }
       onReacted={onRefresh}
+      {...(hidden === undefined ? {} : { hidden })}
     />
   );
   const renderPendingCard = (comment: PendingReviewComment) => (
@@ -1161,10 +1178,11 @@ function PullRequestCodeTab({
     />
   );
   const renderAnnotation = (...[annotation]: CodeViewAnnotationArgs<ReviewAnnotationGroup>) => (
-    <div className="py-1 font-sans text-foreground">
-      {annotation.metadata.threads.map(renderThreadCard)}
+    // Folded resolved conversations alone add no row, so the code reads straight through.
+    <div className="relative font-sans text-foreground has-[>:not([data-resolved-threads])]:py-1">
+      <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
       {annotation.metadata.pending.map(renderPendingCard)}
-      {annotation.metadata.draft && draft ? (
+      {annotation.metadata.draft && draft && canSelectLines ? (
         <DiffCommentAnnotation
           environmentId={environmentId}
           projectId={reference.projectId}

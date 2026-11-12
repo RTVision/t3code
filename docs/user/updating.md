@@ -119,10 +119,13 @@ For the built-in systemd or launchd service, run the matching CLI's `service ins
 command to repair it. For an externally packaged service, use its package upgrade
 instructions.
 
-For a foreground server, the copied command is `npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version>`. Add
-`serve` if you normally run without a browser, and preserve options such as
-`--host` or `--tailscale-serve`. See
-[background services](./background-service.md) for service management.
+If you decline the restart for a background service installed by an older
+release, the service can stay down after a crash or reboot until you run
+`t3 service restart`.
+
+If you run the server with `npx` rather than an installed `t3`, there is
+nothing to update on the host: stop the server and relaunch it as
+`npx --registry=https://npm-registry.rtvision.com/ @rtvision/t3@<client-version>` with the same subcommand and options.
 
 ## If an update fails
 
