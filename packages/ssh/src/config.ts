@@ -18,7 +18,9 @@ const NO_HOSTS: ReadonlyArray<string> = [] as const;
 // escapes \\ \" \' and unquoted "\ ", and "#" starting a comment only at
 // the start of a token. Invalid quoting leaves hostname resolution uncertain.
 function parseSshConfigLine(line: string) {
-  const match = /^\s*([^\s=]+)\s*=?\s*(.*)$/u.exec(line);
+  const match = /^[ \t\r]*([^ \t\r=]+)[ \t\r]*=?[ \t\r]*(.*)$/su.exec(
+    line.replace(/[ \t\r\f]+$/u, ""),
+  );
   if (!match) {
     return null;
   }
@@ -46,7 +48,7 @@ function parseSshConfigLine(line: string) {
     } else if (char === '"' || char === "'") {
       quote = char;
       token ??= "";
-    } else if (/\s/u.test(char)) {
+    } else if (/[ \t]/u.test(char)) {
       if (token !== null) {
         args.push(token);
         token = null;

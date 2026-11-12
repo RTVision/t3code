@@ -288,6 +288,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   const toolbarLabel = isPanel
     ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
     : "Open";
+  const unavailableReason =
+    remote.mode === "remote-unavailable"
+      ? `No SSH route to ${environmentLabel}`
+      : remote.mode === "remote-links" && options.length === 0
+        ? `Open from a computer to edit on ${environmentLabel}`
+        : null;
   const editorItems = (
     <>
       {terminalVisible && (
@@ -317,9 +323,9 @@ export const OpenInPicker = memo(function OpenInPicker({
           Rescan Neovim
         </MenuItem>
       )}
-      {remote.mode === "remote-unavailable" ? (
+      {unavailableReason !== null ? (
         <MenuItem density={density} disabled>
-          No SSH route to {environmentLabel}
+          {unavailableReason}
         </MenuItem>
       ) : (
         <>

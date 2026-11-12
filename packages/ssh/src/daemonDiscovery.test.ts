@@ -30,6 +30,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
       process.send(this.address().port);
     });
   `,
+          "--",
+          "serve",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
         ],
         { stdio: ["ignore", "ignore", "inherit", "ipc"] },
       );

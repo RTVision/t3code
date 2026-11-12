@@ -2,6 +2,7 @@ import { act } from "../../../test/act";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
@@ -10,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { createElement, Profiler, useEffect, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
@@ -40,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   serverEpoch: null as string | null,
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
+  profileId: undefined as string | undefined,
   recordVisitForThread: vi.fn(),
   useRealPreviewState: false,
   clearCookies: vi.fn(async (_environmentId: string, _profileId: string) => undefined),
@@ -141,6 +143,7 @@ vi.mock("~/previewStateStore", async (importOriginal) => {
                 controller: "none",
               },
             },
+            desktopProfileByTabId: { "tab-1": mocks.profileId },
             recentlySeenUrls: [],
             sessions: mocks.showEmptyState
               ? {}
@@ -501,6 +504,9 @@ class TestNode {
     return new TestNode(name, this);
   }
 
+  querySelector() {
+    return null;
+  }
   addEventListener() {}
   removeEventListener() {}
   setAttribute() {}
@@ -518,6 +524,7 @@ function installTestDom() {
     addEventListener() {},
     removeEventListener() {},
   };
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", window);
   vi.stubGlobal("HTMLIFrameElement", window.HTMLIFrameElement);
@@ -526,7 +533,10 @@ function installTestDom() {
 }
 
 describe("PreviewView navigation", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
+    installTestDom();
+    mocks.profileId = DEFAULT_BROWSER_PROFILE_ID;
     mocks.navigate.mockClear();
     mocks.rememberPreviewUrl.mockClear();
     mocks.readPreparedConnection.mockClear();
@@ -645,26 +655,48 @@ describe("PreviewView navigation", () => {
     );
   });
 
-  it("records a history visit with the normalized requested url on submit", async () => {
-    renderToStaticMarkup(
-      <PreviewView
-        threadRef={{
-          environmentId: EnvironmentId.make("environment-1"),
-          threadId: ThreadId.make("thread-1"),
-        }}
-        tabId="tab-1"
-        visible
-      />,
-    );
+  it.each([
+    { profileId: DEFAULT_BROWSER_PROFILE_ID, records: true },
+    { profileId: INCOGNITO_BROWSER_PROFILE_ID, records: false },
+    { profileId: undefined, records: false },
+  ])(
+    "records a normalized history visit only for a known regular profile: $profileId",
+    async ({ profileId, records }) => {
+      mocks.profileId = profileId;
+      renderToStaticMarkup(
+        <PreviewView
+          threadRef={{
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId: ThreadId.make("thread-1"),
+          }}
+          tabId="tab-1"
+          visible
+        />,
+      );
 
-    mocks.submittedUrl?.("localhost:3000/admin");
-    await vi.waitFor(() => {
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: expect.anything() }),
+      await mocks.submittedUrl?.("localhost:3000/admin");
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        TEST_RUNTIME_TAB_ID,
         "http://localhost:3000/admin",
       );
-    });
-  });
+      await vi.waitFor(() =>
+        expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
+          expect.objectContaining({ threadId: expect.anything() }),
+          "http://localhost:3000/admin",
+        ),
+      );
+      if (records) {
+        await vi.waitFor(() =>
+          expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+            expect.objectContaining({ threadId: expect.anything() }),
+            "http://localhost:3000/admin",
+          ),
+        );
+      } else {
+        expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("maps an empty-state localhost server onto the WSL host", async () => {
     mocks.showEmptyState = true;

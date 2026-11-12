@@ -12,9 +12,9 @@ import {
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
-import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
@@ -268,4 +268,17 @@ export const readPersistedServerRuntimeState = Effect.fn(
         Effect.as(Option.none<PersistedServerRuntimeState>()),
       ),
   }),
+);
+
+/**
+ * The runtime record, only while its server process is alive. Read this before sending
+ * credentials to the recorded origin: a killed server leaves its record behind, and
+ * another process may own its port by now.
+ */
+export const readLiveServerRuntimeState = Effect.fn(
+  "serverRuntimeState.readLiveServerRuntimeState",
+)((path: string) =>
+  readPersistedServerRuntimeState(path).pipe(
+    Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
+  ),
 );
