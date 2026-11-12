@@ -222,6 +222,7 @@ describe("remote editor links", () => {
     await vi.waitFor(() =>
       expect(menuItems().map((item) => item.textContent)).toEqual([
         "Open from a computer to edit on Test host",
+        "Editor settings…",
       ]),
     );
     expect(menuItems()[0]!.getAttribute("aria-disabled")).toBe("true");
