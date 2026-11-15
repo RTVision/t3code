@@ -53,7 +53,7 @@ it("finds and reveals matches in folded files and collapsed context, then hands 
       search.matchCount = state?.matchCount ?? 0;
       search.currentMatchIndex = state?.currentMatchIndex;
     },
-    onRevealSearchMatch: (item) => {
+    onItemCollapsedChange: (_previous, item) => {
       items = items.map((candidate) =>
         candidate.id === item.id ? { ...candidate, collapsed: false, version: 1 } : candidate,
       );

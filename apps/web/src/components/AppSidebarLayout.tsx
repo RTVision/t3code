@@ -360,12 +360,17 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // available everywhere else, including the plain-text composer.
         return;
       }
-      if (
-        (requestedCommand ??
-          resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } })) !==
-        "sidebar.toggle"
-      )
-        return;
+      const command =
+        requestedCommand ??
+        resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            previewFocus: isPreviewFocused(),
+            ...readRoutePanelsOpen(router),
+            usagePageOpen,
+          },
+        });
+      if (command !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -383,7 +388,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       unsubscribe?.();
       unsubscribeCommand();
     };
-  }, [keybindings, showSidebar, toggleSidebar, usagePageOpen]);
+  }, [keybindings, router, showSidebar, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.

@@ -20,7 +20,7 @@ const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
-  it("updates only the proven npm prefix and safely quotes its path", () => {
+  it("updates only the proven install and safely quotes its paths", () => {
     expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
       "npm install --global --registry=https://npm-registry.rtvision.com/ --prefix '/opt/node' @rtvision/t3@0.0.45",
     );
@@ -29,6 +29,20 @@ describe("versionSkew", () => {
     ).toBe(
       "npm install --global --registry=https://npm-registry.rtvision.com/ --prefix '/opt/maria'\\''s node' @rtvision/t3@0.0.45",
     );
+    expect(
+      manualServerUpdateCommand("0.0.45", {
+        kind: "t3-launcher",
+        launcher: "t3",
+        baseDir: "/home/u/.t3",
+      }),
+    ).toBe("'t3' update --base-dir '/home/u/.t3' 0.0.45");
+    expect(
+      manualServerUpdateCommand("0.0.45", {
+        kind: "t3-launcher",
+        launcher: "/opt/maria's bin/t3",
+        baseDir: "/data/t3 home",
+      }),
+    ).toBe("'/opt/maria'\\''s bin/t3' update --base-dir '/data/t3 home' 0.0.45");
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";

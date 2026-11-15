@@ -24,6 +24,13 @@ type ChatShortcutHandler = (context: {
 
 export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcutHandler>>;
 
+/** Window-level commands the main chat still runs while focus is in its side chat pane. */
+const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
+  "rightPanel.toggle",
+  "rightPanel.close",
+  "rightPanel.toggleMaximized",
+]);
+
 export interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
@@ -68,19 +75,20 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
         return;
       }
       if (!input.enabled || isCommandPaletteOpen()) return;
+      const inSideChatPane = isInSideChatPane(event.target);
       const terminalFocusOwner = requestedCommand
         ? (document.activeElement
             ?.closest("[data-terminal-owner]")
             ?.getAttribute("data-terminal-owner") as TerminalFocusOwner | null)
         : getTerminalFocusOwner();
-      if (isInSideChatPane(event.target) && !requestedCommand) return;
       if (event.defaultPrevented && !requestedCommand && terminalFocusOwner === null) return;
       const shortcutContext = input.getShortcutContext(event.target);
 
       if (
-        !shortcutContext.terminalFocus &&
-        !vimEnabled() &&
         !requestedCommand &&
+        !vimEnabled() &&
+        !inSideChatPane &&
+        !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event) &&
         input.composerRef.current?.insertTextAtEnd(event.key) === true
@@ -95,7 +103,11 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
         resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
           context: shortcutContext,
         });
-      if (!command) return;
+      if (
+        !command ||
+        (!requestedCommand && inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))
+      )
+        return;
       const run =
         input.commands[command] ??
         composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
