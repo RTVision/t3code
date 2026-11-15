@@ -168,3 +168,24 @@ it("does not apply file-manager reveal semantics to a code editor", async () => 
     input: { cwd: "/work/readme.md", editor: "vscode" },
   });
 });
+
+it.each(["read", "write"] as const)(
+  "opens an available editor when its preference %s fails",
+  async (operation) => {
+    state.allowed.add(secondary);
+    const preference = operation === "read" ? state.getPreference : state.setPreference;
+    preference.mockImplementationOnce(() => {
+      throw new Error("Preference storage unavailable");
+    });
+    using _warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const open = useOpenInPreferredEditor(secondary, ["vscode"]);
+    await expect(open("/work/readme.md:5")).resolves.toMatchObject({
+      _tag: "Success",
+      value: "vscode",
+    });
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: secondary,
+      input: { cwd: "/work/readme.md:5", editor: "vscode" },
+    });
+  },
+);

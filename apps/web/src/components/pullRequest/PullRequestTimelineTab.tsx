@@ -17,7 +17,6 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { pullRequestCanReact } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CircleCheckIcon,
@@ -57,6 +56,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import {
   PullRequestActorAvatar,
@@ -246,6 +246,7 @@ function ConversationCard({
   /** A reply goes with its conversation, from the card that heads it. */
   reply?: boolean;
 }) {
+  const canReact = reactions.canReact(event);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -305,11 +306,11 @@ function ConversationCard({
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
-          {reactions.canReact(event) || event.reactions.length > 0 ? (
+          {canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
-              canReact={reactions.canReact(event)}
+              canReact={canReact}
               subjectId={event.id}
               environmentId={reactions.environmentId}
               reference={reactions.reference}
@@ -657,6 +658,7 @@ function ReviewVerdictEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const canReact = reactions.canReact(event);
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
@@ -704,11 +706,11 @@ function ReviewVerdictEvent({
         {event.body && event.comment ? (
           <AddToChatButton comment={event.comment} reactions={reactions} />
         ) : null}
-        {reactions.canReact(event) || event.reactions.length > 0 ? (
+        {canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
             reactions={event.reactions}
-            canReact={reactions.canReact(event)}
+            canReact={canReact}
             subjectId={event.id}
             environmentId={reactions.environmentId}
             reference={reactions.reference}
@@ -781,14 +783,7 @@ export function PullRequestTimelineTab({
   const reactions: ReactionSurface = {
     revealAnchor: anchor,
     canReact: (event) =>
-      pullRequestCanReact(
-        detail.capabilities,
-        event.kind === "review"
-          ? "review"
-          : event.id.startsWith("review-comment:")
-            ? "review-comment"
-            : "issue-comment",
-      ),
+      event.comment !== undefined && canReactPullRequestComment(detail, event.comment),
     onAddToChat: onAddToChat && ((comment) => onAddToChat({ kind: "comment", comment })),
     environmentId,
     threadRef,

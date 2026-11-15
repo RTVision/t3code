@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { buildSshChildEnvironment } from "./auth.ts";
-import { collectProcessOutput, remoteStateKey, targetConnectionKey } from "./command.ts";
+import { remoteStateKey, targetConnectionKey } from "./command.ts";
 import {
   buildWslSshEnvironment,
   SshRunner,
@@ -86,7 +86,13 @@ describe("WSL SSH runner", () => {
               stdin: Stream.make(new TextEncoder().encode("input payload\n")),
             },
           );
-          const result = yield* collectProcessOutput(child.stdout);
+          const result = yield* child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (text, chunk) => text + chunk,
+            ),
+          );
           assert.equal(Number(yield* child.exitCode), 0);
           return result;
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, harness.spawner)),

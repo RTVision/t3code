@@ -97,6 +97,7 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
       ChildProcess.make(command, args, {
         env: options.env,
         extendEnv: true,
+        forceKillAfter: "1 second",
         stdin: { stream: options.stdin, endOnDone: true },
       }),
     );

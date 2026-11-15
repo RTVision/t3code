@@ -27,6 +27,7 @@ const dependencies = Layer.mergeAll(
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({
     launch: () => Effect.die("synthetic dispatch failure"),
     checkWorktreeBase: () => Effect.void,
+    isNonGitProject: () => Effect.succeed(false),
   }),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
     namedProjectsRoot: "/projects",

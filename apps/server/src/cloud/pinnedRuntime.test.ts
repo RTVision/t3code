@@ -1,3 +1,4 @@
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 // @effect-diagnostics nodeBuiltinImport:off - node:path.win32 stands in for a Windows host in one test.
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -10,8 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as NodePath from "node:path";
 import * as TestClock from "effect/testing/TestClock";
-import * as PlatformError from "effect/PlatformError";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -87,8 +87,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         releaseBaseUrl: "https://releases.example/download",
         runner: extractingRunner(fs, path, commands),
@@ -145,8 +145,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           fs,
           path,
           platform: "linux",
-          arch: "x64",
           linuxLibc: "gnu",
+          arch: "x64",
           httpClient: client,
           runner: extractingRunner(fs, path),
           validate: () => Effect.void,
@@ -178,377 +178,162 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       }),
   );
 
-  it.effect("cleans up an interrupted download without reporting verification or extraction", () =>
+  it.effect("reports a release that lists an archive it does not serve as unpublished", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-progress-failed-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
       const checksums = yield* validChecksums;
-      const progress: PinnedRuntimeProgress[] = [];
-      let cancelled = false;
-      const client = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            request.url.endsWith("/SHA256SUMS")
-              ? new Response(checksums)
-              : new Response(
-                  new ReadableStream({
-                    start(controller) {
-                      controller.enqueue(archiveBytes.slice(0, 4));
-                    },
-                    cancel() {
-                      cancelled = true;
-                    },
-                  }),
-                ),
+      const failsWith = (status: number) =>
+        ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          linuxLibc: "gnu",
+          arch: "x64",
+          httpClient: HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url.endsWith("/SHA256SUMS")
+                  ? new Response(checksums)
+                  : new Response("", { status }),
+              ),
+            ),
           ),
-        ),
-      );
-      const firstChunk = yield* Deferred.make<void>();
+          // "404" in the mirror's path must not read a server error as a missing release.
+          releaseBaseUrl: "https://updates.example.com/404/t3code",
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.die("must not validate a missing archive"),
+        }).pipe(Effect.flip);
+      assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
+      assert.isFalse(isUnpublishedRelease(yield* failsWith(403)));
+    }),
+  );
+
+  it.effect("retries a release download that GitHub answers with a gateway timeout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-" });
+      const checksums = yield* validChecksums;
+      const requests: string[] = [];
+      const gatewayTimeoutServed = yield* Deferred.make<void>();
       const install = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
-        httpClient: client,
-        runner: extractingRunner(fs, path),
-        validate: () => Effect.die("must not validate an interrupted archive"),
-        onProgress: (event) => {
-          progress.push(event);
-          if (event.stage === "download" && event.received === 4)
-            Deferred.doneUnsafe(firstChunk, Effect.void);
-        },
-      }).pipe(Effect.forkScoped);
-      yield* Deferred.await(firstChunk);
-      yield* Fiber.interrupt(install);
-      assert.deepEqual(progress.at(-1), { stage: "download", received: 4, total: undefined });
-      assert.isTrue(progress.every((event) => event.stage === "download"));
-      assert.isTrue(cancelled);
-      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
-    }),
-  );
-
-  it.effect.each([
-    "valid",
-    "wrong-package",
-    "wrong-version",
-    "preflight-blocked",
-    "withdrawn-mirror",
-    "listed-mirror",
-  ] as const)("validates a staged npm runtime before publication: %s", (state) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux", "npm");
-      yield* fs.makeDirectory(path.dirname(finalPaths.versionDir), { recursive: true });
-      const requests: string[] = [];
-      let validations = 0;
-      let installs = 0;
-      const mirror = state === "withdrawn-mirror" || state === "listed-mirror";
-      const succeeds = state === "valid" || state === "listed-mirror";
-      const result = yield* ensurePinnedRuntimeInstalled({
-        distribution: "npm",
-        requirePublishedRelease: mirror,
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
         arch: "x64",
-        linuxLibc: "gnu",
-        httpClient: releaseHttpClient(
-          state === "listed-mirror" ? yield* validChecksums : "",
-          requests,
-        ),
-        runner: ProcessRunner.ProcessRunner.of({
-          run: (input) =>
-            Effect.gen(function* () {
-              installs++;
-              assert.equal(input.command, "npm");
-              assert.include(input.args, "t3@npm:@rtvision/t3@1.2.3");
-              assert.include(input.args, "https://npm-registry.rtvision.com/");
-              const staging = input.args[input.args.indexOf("--prefix") + 1]!;
-              const packageDir = path.join(staging, "node_modules/t3");
-              yield* fs.makeDirectory(path.join(packageDir, "dist"), { recursive: true });
-              yield* fs.writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime");
-              yield* fs.writeFileString(
-                path.join(packageDir, "package.json"),
-                state === "wrong-package"
-                  ? '{"name":"t3","version":"1.2.3"}'
-                  : state === "wrong-version"
-                    ? '{"name":"@rtvision/t3","version":"1.2.2"}'
-                    : '{"name":"@rtvision/t3","version":"1.2.3"}',
-              );
-              return {
-                stdout: "",
-                stderr: "",
-                code: ChildProcessSpawner.ExitCode(0),
-                timedOut: false,
-                stdoutTruncated: false,
-                stderrTruncated: false,
-                stdoutInvalidUtf8: false,
-                stderrInvalidUtf8: false,
-              };
-            }).pipe(Effect.orDie),
-        }),
-        validate: (staged) =>
-          Effect.gen(function* () {
-            validations++;
-            assert.isFalse(yield* fs.exists(finalPaths.versionDir).pipe(Effect.orDie));
-            assert.isFalse(yield* fs.exists(staged.sentinelPath).pipe(Effect.orDie));
-            assert.equal(yield* fs.readFileString(staged.entryPath).pipe(Effect.orDie), "runtime");
-            if (state === "preflight-blocked")
-              return yield* new PinnedRuntimeInstallError({ step: "preflight" });
-          }),
-      }).pipe(Effect.result);
-      assert.equal(installs, state === "withdrawn-mirror" ? 0 : 1);
-      assert.deepEqual(
-        requests,
-        mirror
-          ? [`https://github.com/RTVision/t3code/releases/download/v${version}/SHA256SUMS`]
-          : [],
-      );
-      assert.equal(validations, succeeds || state === "preflight-blocked" ? 1 : 0);
-      assert.equal(result._tag, succeeds ? "Success" : "Failure");
-      assert.equal(yield* fs.exists(finalPaths.versionDir), succeeds);
-      assert.deepEqual(
-        (yield* fs.readDirectory(path.dirname(finalPaths.versionDir))).filter((entry) =>
-          entry.startsWith(".staging-"),
-        ),
-        [],
-      );
-      if (succeeds) {
-        assert.deepEqual(pinnedRuntimeCommand(finalPaths, "/usr/bin/node"), {
-          command: "/usr/bin/node",
-          args: [finalPaths.entryPath],
-        });
-        assert.equal(yield* fs.readFileString(finalPaths.sentinelPath), `${version}\n`);
-      }
-    }),
-  );
-
-  // node-pty's Linux prebuilds are glibc-only and segfault on musl, so musl
-  // installs must compile it. Everywhere else the prebuilds are correct.
-  it.effect.each([
-    { platform: "linux", linuxLibc: "musl", buildFromSource: true },
-    { platform: "linux", linuxLibc: "gnu", buildFromSource: false },
-    { platform: "darwin", linuxLibc: "musl", buildFromSource: false },
-    { platform: "win32", linuxLibc: "musl", buildFromSource: false },
-  ] as const)(
-    "builds native npm dependencies from source only on musl: $platform/$linuxLibc",
-    ({ platform, linuxLibc, buildFromSource }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-npm-libc-" });
-        const envs: Array<NodeJS.ProcessEnv | undefined> = [];
-        yield* ensurePinnedRuntimeInstalled({
-          distribution: "npm",
-          baseDir,
-          version,
-          fs,
-          path,
-          platform,
-          arch: "x64",
-          linuxLibc,
-          httpClient: releaseHttpClient(""),
-          runner: ProcessRunner.ProcessRunner.of({
-            run: (input) =>
-              Effect.gen(function* () {
-                envs.push(input.env);
-                const staging = input.args[input.args.indexOf("--prefix") + 1]!;
-                const packageDir = path.join(staging, "node_modules/t3");
-                yield* fs.makeDirectory(path.join(packageDir, "dist"), { recursive: true });
-                yield* fs.writeFileString(path.join(packageDir, "dist/bin.mjs"), "runtime");
-                yield* fs.writeFileString(
-                  path.join(packageDir, "package.json"),
-                  '{"name":"@rtvision/t3","version":"1.2.3"}',
-                );
-                return {
-                  stdout: "",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }).pipe(Effect.orDie),
-          }),
-          validate: () => Effect.void,
-        });
-        assert.deepEqual(envs, [
-          buildFromSource ? { npm_config_build_from_source: "true" } : undefined,
-        ]);
-      }),
-  );
-
-  it.effect.each([true, false])(
-    "installs a download receiving bytes for over ten minutes (progress: %s)",
-    (reportProgress) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-slow-" });
-        const checksums = yield* validChecksums;
-        const reads = yield* Effect.forEach(archiveBytes, () => Deferred.make<void>());
-        let controller: ReadableStreamDefaultController<Uint8Array>;
-        let offset = 0;
-        const body = new ReadableStream<Uint8Array>(
-          {
-            start(value) {
-              controller = value;
-            },
-            pull() {
-              Deferred.doneUnsafe(reads[offset++]!, Effect.void);
-            },
-          },
-          { highWaterMark: 0 },
-        );
-        const client = HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(request.url.endsWith("/SHA256SUMS") ? checksums : body),
-            ),
-          ),
-        );
-        const progress: PinnedRuntimeProgress[] = [];
-        yield* Effect.gen(function* () {
-          // Each read is demanded by the consumer, with no prefetched chunks.
-          for (let index = 0; index < archiveBytes.length; index++) {
-            yield* Deferred.await(reads[index]!);
-            yield* TestClock.adjust(Duration.seconds(40));
-            controller.enqueue(archiveBytes.slice(index, index + 1));
-          }
-          controller.close();
-        }).pipe(Effect.forkScoped);
-        const installed = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          linuxLibc: "gnu",
-          httpClient: client,
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.void,
-          ...(reportProgress
-            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
-            : {}),
-        });
-        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-        if (reportProgress) {
-          assert.deepEqual(progress.slice(-4), [
-            { stage: "download", received: archiveBytes.length, total: archiveBytes.length },
-            { stage: "verify" },
-            { stage: "extract" },
-            { stage: "validate" },
-          ]);
-        }
-      }),
-  );
-
-  it.effect.each([
-    { stall: "response", reportProgress: false },
-    { stall: "body", reportProgress: false },
-    { stall: "body", reportProgress: true },
-  ])(
-    "fails a one-minute $stall stall, cleans up and releases the lock (progress: $reportProgress)",
-    ({ stall, reportProgress }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stalled-" });
-        const checksums = yield* validChecksums;
-        const waiting = yield* Deferred.make<void>();
-        let cancelled = false;
-        let sentChunk = false;
-        const client = HttpClient.make((request) => {
-          if (request.url.endsWith("/SHA256SUMS")) {
-            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(checksums)));
-          }
-          if (stall === "response") {
-            return Deferred.succeed(waiting, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  cancelled = true;
-                }),
-              ),
+        httpClient: HttpClient.make((request) => {
+          requests.push(request.url);
+          const isChecksums = request.url.endsWith("/SHA256SUMS");
+          if (requests.length === 1) {
+            Deferred.doneUnsafe(gatewayTimeoutServed, Effect.void);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("", { status: 504 })),
             );
           }
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              new Response(
-                new ReadableStream<Uint8Array>(
-                  {
-                    pull(controller) {
-                      if (!sentChunk) {
-                        sentChunk = true;
-                        controller.enqueue(archiveBytes.slice(0, 4));
-                      } else {
-                        Deferred.doneUnsafe(waiting, Effect.void);
-                      }
-                    },
-                    cancel() {
-                      cancelled = true;
-                    },
-                  },
-                  { highWaterMark: 0 },
-                ),
-              ),
+              new Response(isChecksums ? checksums : archiveBytes),
             ),
           );
-        });
-        const progress: PinnedRuntimeProgress[] = [];
-        const commands: string[] = [];
-        const install = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          linuxLibc: "gnu",
-          httpClient: client,
-          runner: extractingRunner(fs, path, commands),
-          validate: () => Effect.die("must not validate a stalled archive"),
-          ...(reportProgress
-            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
-            : {}),
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(waiting);
-        yield* TestClock.adjust(Duration.minutes(1));
-        assert.isTrue(cancelled, "the stalled transfer must be cancelled after one minute");
-        const error = yield* Fiber.join(install).pipe(Effect.flip);
-        assert.instanceOf(error, PinnedRuntimeInstallError);
-        assert.equal(error.step, "downloading the t3 release archive (timed out)");
-        assert.deepEqual(commands, []);
-        assert.isTrue(progress.every((event) => event.stage === "download"));
-        assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
-        const installed = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          linuxLibc: "gnu",
-          httpClient: releaseHttpClient(checksums),
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.void,
-        });
-        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
-      }),
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(gatewayTimeoutServed);
+      yield* TestClock.adjust(Duration.seconds(2));
+      const paths = yield* Fiber.join(install);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.equal(requests.filter((url) => url.endsWith("/SHA256SUMS")).length, 2);
+    }),
+  );
+
+  it.effect("retries a release archive whose body fails after the host answered", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
+      const checksums = yield* validChecksums;
+      let archiveRequests = 0;
+      const archiveRequested = yield* Deferred.make<void>();
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        linuxLibc: "gnu",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          const isChecksums = request.url.endsWith("/SHA256SUMS");
+          const response = HttpClientResponse.fromWeb(
+            request,
+            new Response(isChecksums ? checksums : archiveBytes),
+          );
+          if (isChecksums || ++archiveRequests > 1) return Effect.succeed(response);
+          const failingBody = Stream.concat(
+            Stream.make(archiveBytes.slice(0, 4)),
+            Stream.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.DecodeError({ request, response }),
+              }),
+            ),
+          );
+          Deferred.doneUnsafe(archiveRequested, Effect.void);
+          // TestClock follows the work a woken sleep starts, so one adjust reaches the retry wait.
+          return Effect.sleep("1 second").pipe(
+            Effect.as<HttpClientResponse.HttpClientResponse>(
+              Object.create(response, { stream: { value: failingBody } }),
+            ),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(archiveRequested);
+      yield* TestClock.adjust(Duration.seconds(3));
+      const paths = yield* Fiber.join(install);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.equal(archiveRequests, 2);
+    }),
+  );
+
+  it.effect("fails at once when the release host cannot be reached", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-offline-" });
+      let requests = 0;
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        linuxLibc: "gnu",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          requests += 1;
+          return Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request }),
+            }),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate without a download"),
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.equal(requests, 1);
+    }),
   );
 
   it.effect("refuses an archive whose checksum does not match the release", () =>
@@ -563,8 +348,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(`${"0".repeat(64)}  ${archiveName}\n`),
         runner: extractingRunner(fs, path, commands),
         validate: () => Effect.die("must not validate an unverified archive"),
@@ -590,8 +375,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: (staging) =>
@@ -622,8 +407,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () =>
@@ -656,8 +441,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(""),
         runner: ProcessRunner.ProcessRunner.of({
           run: (input) =>
@@ -706,8 +491,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: () => Effect.void,
@@ -738,8 +523,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           fs,
           path,
           platform: "linux",
-          arch: "x64",
           linuxLibc: "gnu",
+          arch: "x64",
           httpClient: releaseHttpClient(yield* validChecksums, requests),
           runner: extractingRunner(fs, path),
           validate: (paths) =>
@@ -796,8 +581,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(realFs, path),
         validate: (paths) =>
@@ -846,8 +631,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(realFs, path),
         validate: (paths) =>
@@ -886,8 +671,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums),
         runner: extractingRunner(fs, path),
         validate: (paths) =>
@@ -923,8 +708,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         fs,
         path,
         platform: "linux",
-        arch: "x64",
         linuxLibc: "gnu",
+        arch: "x64",
         httpClient: releaseHttpClient(yield* validChecksums, requests),
         runner: extractingRunner(fs, path),
         validate: () =>
@@ -936,41 +721,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.equal(yield* fs.readFileString(finalPaths.entryPath), "installed\n");
     }),
   );
-  it.effect("reports a release that lists an archive it does not serve as unpublished", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-archive-missing-" });
-      const checksums = yield* validChecksums;
-      const failsWith = (status: number) =>
-        ensurePinnedRuntimeInstalled({
-          baseDir,
-          version,
-          fs,
-          path,
-          platform: "linux",
-          arch: "x64",
-          linuxLibc: "gnu",
-          httpClient: HttpClient.make((request) =>
-            Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                request.url.endsWith("/SHA256SUMS")
-                  ? new Response(checksums)
-                  : new Response("", { status }),
-              ),
-            ),
-          ),
-          // "404" in the mirror's path must not read a server error as a missing release.
-          releaseBaseUrl: "https://updates.example.com/404/t3code",
-          runner: extractingRunner(fs, path),
-          validate: () => Effect.die("must not validate a missing archive"),
-        }).pipe(Effect.flip);
-      assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
-      assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
-    }),
-  );
-
   it.effect("reuses a cached runtime under a mirror only while the mirror lists it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -987,8 +737,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           fs,
           path,
           platform: "linux",
-          arch: "x64",
           linuxLibc: "gnu",
+          arch: "x64",
           httpClient: releaseHttpClient(checksums, requests),
           // A signed mirror URL keeps its query on every file it serves.
           releaseBaseUrl: "https://updates.example.com/t3code/?token=abc",

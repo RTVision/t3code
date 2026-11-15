@@ -100,9 +100,13 @@ export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
 ): string {
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   if (installation?.kind === "npm-global") {
-    const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --registry=${T3_NPM_REGISTRY} --prefix ${prefix} ${T3_NPM_PACKAGE}@${targetVersion}`;
+    return `npm install --global --registry=${T3_NPM_REGISTRY} --prefix ${quote(installation.prefix)} ${T3_NPM_PACKAGE}@${targetVersion}`;
+  }
+  if (installation?.kind === "t3-launcher") {
+    // An inherited T3CODE_HOME would otherwise send the update to a home the launcher is not in.
+    return `${quote(installation.launcher)} update --base-dir ${quote(installation.baseDir)} ${targetVersion}`;
   }
   // bunx ignores its registry flag, so use npx for the fork's registry.
   return installation?.kind === "pnpm-dlx"

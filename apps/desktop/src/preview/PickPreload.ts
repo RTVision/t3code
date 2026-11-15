@@ -20,17 +20,18 @@ import type {
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
-import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
-  isPreviewAnnotationDraft,
-  type PreviewAnnotationDraft,
-  type PreviewAnnotationTool,
-} from "./PickedElementPayload.ts";
+  addStrokePoint,
+  openStrokePath,
+  startStroke,
+  strokeBounds,
+  type StrokeGeometry,
+} from "./AnnotationStroke.ts";
+import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
-  ANNOTATION_DRAFT_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   ANNOTATION_VOICE_EVENT_CHANNEL,
@@ -38,7 +39,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
+  POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
@@ -46,6 +47,7 @@ import {
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
@@ -56,9 +58,6 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
-/** How long a restored draft keeps looking for elements the reloaded page renders late. */
-const DRAFT_RESTORE_TIMEOUT_MS = 5_000;
-const DRAFT_RESTORE_INTERVAL_MS = 200;
 // Page dialogs (Radix, react-remove-scroll) dismiss, refocus or block scrolling on document events
 // that shadow retargeting attributes to the overlay host.
 const PAGE_ISOLATED_EVENTS = [
@@ -144,6 +143,8 @@ ipcRenderer.on(RECORDING_POINTER_CHANNEL, (_event, point: unknown) => {
     );
 });
 
+type AnnotationTool = "select" | "marquee" | "draw" | "erase";
+
 interface SelectedElement {
   id: string;
   element: Element;
@@ -155,8 +156,8 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
-  syncDraft: () => void;
   setSendEnabled: (enabled: boolean) => void;
+  handleOverlayKey: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -193,6 +194,9 @@ const applyAnnotationTheme = (
 
 const reportHumanPointerInput = (event: PointerEvent): void => {
   if (!event.isTrusted) return;
+  // The guest does not always take focus on a click, so the host's webview
+  // `focus` event can't be relied on to dismiss open menus and popovers.
+  ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "pointer",
     x: event.clientX,
@@ -233,34 +237,40 @@ const reportUnhandledShortcut = (event: KeyboardEvent): void => {
 
 window.addEventListener("keydown", reportUnhandledShortcut, true);
 
-const MOUSE_BUTTON_BACK = 3;
-const MOUSE_BUTTON_FORWARD = 4;
-
-const navigationDirectionForButton = (button: number): "back" | "forward" | null => {
-  if (button === MOUSE_BUTTON_BACK) return "back";
-  if (button === MOUSE_BUTTON_FORWARD) return "forward";
-  return null;
-};
-
-// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
-const suppressNavigationButton = (event: MouseEvent): void => {
-  if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
-  event.preventDefault();
+// Registered before page scripts so their capture listeners never see keys typed into the
+// overlay; the closed shadow root retargets those to the host, hiding that they edit text.
+const isolateOverlayKey = (event: KeyboardEvent): void => {
+  if (!activeSession || !(event.target instanceof Element) || !isAnnotationNode(event.target))
+    return;
+  activeSession.handleOverlayKey(event);
   event.stopImmediatePropagation();
 };
 
-const requestNavigationForButton = (event: MouseEvent): void => {
-  if (!event.isTrusted) return;
-  const direction = navigationDirectionForButton(event.button);
-  if (direction === null) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  ipcRenderer.send(MOUSE_NAVIGATE_CHANNEL, { direction });
-};
+for (const type of ["keydown", "keypress", "keyup"] as const)
+  window.addEventListener(type, isolateOverlayKey, true);
 
-window.addEventListener("mousedown", suppressNavigationButton, true);
-window.addEventListener("mouseup", requestNavigationForButton, true);
-window.addEventListener("auxclick", suppressNavigationButton, true);
+let replayedThumbPress: { readonly x: number; readonly y: number } | null = null;
+ipcRenderer.on(
+  THUMB_PRESS_CHANNEL,
+  (_event, phase: unknown, x: unknown, y: unknown, button: unknown) => {
+    if (phase !== "down" && phase !== "up") return;
+    if (typeof x !== "number" || typeof y !== "number" || typeof button !== "number") return;
+    // Main reports presses inside a frame in that frame's coordinates.
+    const inFrame = document.querySelector("iframe:hover, frame:hover, object:hover, embed:hover");
+    if (phase === "up") {
+      const pressed = replayedThumbPress;
+      replayedThumbPress = null;
+      // A replayed press is always released, at its own point if the release lands in a frame.
+      if (pressed) recordingCursor?.press(inFrame ? pressed : { x, y }, "up");
+      return;
+    }
+    if (inFrame) return;
+    replayedThumbPress = { x, y };
+    ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
+    ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
+    recordingCursor?.press({ x, y }, "down");
+  },
+);
 
 const nextId = createAnnotationIdSource();
 
@@ -315,36 +325,6 @@ function pickFromPoint(clientX: number, clientY: number): Element | null {
     return candidate;
   }
   return null;
-}
-
-/** A CSS path that finds `element` again in a reloaded copy of the page. */
-function cssPathFor(element: Element): string {
-  const parts: string[] = [];
-  let current: Element | null = element;
-  while (current && current !== document.documentElement) {
-    if (current.id) {
-      const idSelector = `#${CSS.escape(current.id)}`;
-      if (document.querySelectorAll(idSelector).length === 1) {
-        parts.unshift(idSelector);
-        return parts.join(" > ");
-      }
-    }
-    const node: Element = current;
-    const siblings = node.parentElement ? Array.from(node.parentElement.children) : [node];
-    const index = siblings.filter((sibling) => sibling.localName === node.localName).indexOf(node);
-    parts.unshift(`${CSS.escape(node.localName)}:nth-of-type(${index + 1})`);
-    current = node.parentElement;
-  }
-  return [":root", ...parts].join(" > ");
-}
-
-function findBySelector(selector: string): Element | null {
-  try {
-    const element = document.querySelector(selector);
-    return element && !isAnnotationNode(element) ? element : null;
-  } catch {
-    return null;
-  }
 }
 
 function describeRawElement(element: Element): string {
@@ -571,37 +551,8 @@ function createUnitInput(unit: string, placeholder = "0"): HTMLInputElement {
   return input;
 }
 
-function pathFromPoints(points: ReadonlyArray<PreviewAnnotationPoint>): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0]!.x} ${points[0]!.y} l 0.01 0.01`;
-  let path = `M ${points[0]!.x} ${points[0]!.y}`;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index]!;
-    const next = points[index + 1]!;
-    path += ` Q ${current.x} ${current.y} ${(current.x + next.x) / 2} ${(current.y + next.y) / 2}`;
-  }
-  const last = points[points.length - 1]!;
-  path += ` L ${last.x} ${last.y}`;
-  return path;
-}
-
-function strokeBounds(
-  points: ReadonlyArray<PreviewAnnotationPoint>,
-  width: number,
-): PreviewAnnotationRect {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const padding = width + 3;
-  const left = Math.min(...xs) - padding;
-  const top = Math.min(...ys) - padding;
-  const right = Math.max(...xs) + padding;
-  const bottom = Math.max(...ys) + padding;
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
 function startAnnotation(
   sendEnabled: boolean,
-  draft: PreviewAnnotationDraft | null,
   voice: DesktopPreviewAnnotationVoiceConfig | undefined,
 ): void {
   activeSession?.teardown(false);
@@ -922,7 +873,7 @@ function startAnnotation(
   const regions: PreviewAnnotationRegionTarget[] = [];
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
-  const toolButtons = new Map<PreviewAnnotationTool, HTMLButtonElement>();
+  const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
   // Chromium draws a PDF in its own viewer frame, so pointer and key input over it
   // never reaches this document. A transparent layer above the viewer catches the
   // pointer and takes focus for Escape and the tool keys. A PDF has no elements to
@@ -934,49 +885,20 @@ function startAnnotation(
     inputLayer.tabIndex = -1;
     inputLayer.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY - 1};cursor:crosshair;outline:none`;
   }
-  let tool: PreviewAnnotationTool = isPdf ? "marquee" : "select";
+  let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
-  let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
+  let activeStroke: {
+    target: PreviewAnnotationStrokeTarget;
+    geometry: StrokeGeometry;
+    group: SVGGElement;
+    path: SVGPathElement;
+  } | null = null;
   let pendingCapture = false;
   let editorExpanded = false;
   let editorWasShown = false;
   let editorPosition: { left: number; top: number } | null = null;
   let editorDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null;
   let editorLayoutFrame: number | null = null;
-  let restoreTimer: number | null = null;
-  // Restored elements the reloaded page has not rendered yet. Each one holds
-  // its old spot as a placeholder region until it turns up.
-  const unresolved: Array<
-    PreviewAnnotationDraft["elements"][number] & {
-      placeholderId: string;
-      styleChanges: ReadonlyArray<PreviewAnnotationStyleChange>;
-    }
-  > = [];
-
-  // Main keeps the latest copy so a reload of the page can hand it back.
-  const syncDraft = (): void => {
-    if (pendingCapture) return;
-    const placeholderIds = new Set(unresolved.map((element) => element.placeholderId));
-    const snapshot: PreviewAnnotationDraft = {
-      comment: comment.value,
-      tool,
-      elements: [
-        ...Array.from(selected.values(), (target) => ({
-          id: target.id,
-          selector: cssPathFor(target.element),
-          rect: rectFromDomRect(target.element.getBoundingClientRect()),
-        })),
-        ...unresolved.map(({ id, selector, rect }) => ({ id, selector, rect })),
-      ],
-      regions: regions.filter((region) => !placeholderIds.has(region.id)),
-      strokes,
-      styleChanges: [
-        ...styleChanges.values(),
-        ...unresolved.flatMap((element) => element.styleChanges),
-      ],
-    };
-    ipcRenderer.send(ANNOTATION_DRAFT_CHANNEL, snapshot);
-  };
 
   const resizeComment = (): void => {
     const maxHeight = 96;
@@ -988,7 +910,6 @@ function startAnnotation(
   };
   comment.addEventListener("input", () => {
     resizeComment();
-    syncDraft();
     sendVoice("sync");
   });
 
@@ -1008,7 +929,6 @@ function startAnnotation(
       editorWasShown = true;
       window.setTimeout(() => comment.focus({ preventScroll: true }), 0);
     }
-    syncDraft();
   };
 
   const refreshToolButtons = (): void => {
@@ -1021,7 +941,6 @@ function startAnnotation(
     if (tool !== "select") hoverOutline.style.display = "none";
     if (tool !== "marquee") marqueeBox.style.display = "none";
     document.documentElement.setAttribute("data-t3code-annotation-tool", tool);
-    syncDraft();
   };
 
   const removeSelected = (target: SelectedElement): void => {
@@ -1039,10 +958,10 @@ function startAnnotation(
     }
   };
 
-  const addSelected = (element: Element, id = nextId("element")): SelectedElement | null => {
-    if (selected.has(element)) return null;
+  const addSelected = (element: Element): void => {
+    if (selected.has(element)) return;
     const target: SelectedElement = {
-      id,
+      id: nextId("element"),
       element,
       outline: createBox(PRIMARY, PRIMARY_FILL),
       label: createLabel(),
@@ -1055,7 +974,6 @@ function startAnnotation(
       stylePanel.style.display = "grid";
       syncStyleControls();
     }
-    return target;
   };
 
   const toggleSelected = (element: Element, additive: boolean): void => {
@@ -1071,38 +989,27 @@ function startAnnotation(
     updateStatus();
   };
 
-  const applyStyleChange = (
-    target: SelectedElement,
-    change: PreviewAnnotationStyleChange,
-  ): void => {
-    if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement)) return;
-    if (!target.baselineStyles.has(change.property)) {
-      target.baselineStyles.set(
-        change.property,
-        target.element.style.getPropertyValue(change.property),
-      );
-    }
-    target.element.style.setProperty(change.property, change.value, "important");
-    styleChanges.set(`${target.id}:${change.property}`, change);
-    updateSelectedVisual(target);
-  };
-
   const setStyleForSelected = (property: string, value: string): void => {
     for (const target of selected.values()) {
       if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
         continue;
+      if (!target.baselineStyles.has(property)) {
+        target.baselineStyles.set(property, target.element.style.getPropertyValue(property));
+      }
+      const key = `${target.id}:${property}`;
       const previousValue =
-        styleChanges.get(`${target.id}:${property}`)?.previousValue ??
+        styleChanges.get(key)?.previousValue ??
         getComputedStyle(target.element).getPropertyValue(property).trim();
-      applyStyleChange(target, {
+      target.element.style.setProperty(property, value, "important");
+      styleChanges.set(key, {
         targetId: target.id,
         selector: null,
         property,
         previousValue,
         value,
       });
+      updateSelectedVisual(target);
     }
-    syncDraft();
   };
 
   const textSection = createStyleSection();
@@ -1328,7 +1235,7 @@ function startAnnotation(
     gap.value = computed.gap === "normal" ? "0px" : computed.gap;
   };
 
-  const tools: ReadonlyArray<[PreviewAnnotationTool, string, string]> = [
+  const tools: ReadonlyArray<[AnnotationTool, string, string]> = [
     ["select", "Select", "Select elements (V)"],
     ["marquee", "Region", "Draw a region or marquee-select elements (R)"],
     ["draw", "Draw", "Draw freehand (D)"],
@@ -1505,7 +1412,8 @@ function startAnnotation(
         y <= region.rect.y + region.rect.height,
     );
     if (regionIndex >= 0) {
-      removeRegion(regions[regionIndex]!.id);
+      const [removed] = regions.splice(regionIndex, 1);
+      root.querySelector(`[data-region-id="${removed?.id}"]`)?.remove();
       updateStatus();
       return true;
     }
@@ -1560,36 +1468,6 @@ function startAnnotation(
     return candidates.length;
   };
 
-  const addRegion = (region: PreviewAnnotationRegionTarget): void => {
-    regions.push(region);
-    const regionBox = createBox(PRIMARY, "color-mix(in srgb, var(--t3-primary) 6%, transparent)");
-    regionBox.setAttribute("data-region-id", region.id);
-    positionBox(regionBox, region.rect);
-    root.appendChild(regionBox);
-  };
-
-  const removeRegion = (regionId: string): void => {
-    const index = regions.findIndex((region) => region.id === regionId);
-    if (index >= 0) regions.splice(index, 1);
-    root.querySelector(`[data-region-id="${regionId}"]`)?.remove();
-    const unresolvedIndex = unresolved.findIndex((element) => element.placeholderId === regionId);
-    if (unresolvedIndex >= 0) unresolved.splice(unresolvedIndex, 1);
-  };
-
-  const createStrokePath = (stroke: PreviewAnnotationStrokeTarget): SVGPathElement => {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute(OVERLAY_ATTRIBUTE, "");
-    path.setAttribute("data-stroke-id", stroke.id);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", stroke.color);
-    path.setAttribute("stroke-width", String(stroke.width));
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    path.setAttribute("d", pathFromPoints(stroke.points));
-    svg.appendChild(path);
-    return path;
-  };
-
   const clearHoverOutline = (): void => {
     hoverOutline.style.display = "none";
   };
@@ -1614,15 +1492,18 @@ function startAnnotation(
       return;
     }
     if (tool === "draw" && activeStroke) {
-      activeStroke.target.points = [
-        ...activeStroke.target.points,
-        { x: event.clientX, y: event.clientY },
-      ];
-      activeStroke.target.bounds = strokeBounds(
-        activeStroke.target.points,
-        activeStroke.target.width,
-      );
-      activeStroke.path.setAttribute("d", pathFromPoints(activeStroke.target.points));
+      const closedPath = addStrokePoint(activeStroke.geometry, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+      activeStroke.target.bounds = strokeBounds(activeStroke.geometry, activeStroke.target.width);
+      if (closedPath !== null) {
+        activeStroke.path.setAttribute("d", closedPath);
+        activeStroke.path = activeStroke.group.appendChild(
+          document.createElementNS("http://www.w3.org/2000/svg", "path"),
+        );
+      }
+      activeStroke.path.setAttribute("d", openStrokePath(activeStroke.geometry));
     }
   };
 
@@ -1641,14 +1522,27 @@ function startAnnotation(
     }
     dragStart = { x: event.clientX, y: event.clientY };
     if (tool === "draw") {
+      const geometry = startStroke(dragStart);
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
         color: annotationTheme?.primary ?? "#2563eb",
         width: 4,
-        points: [dragStart],
+        points: geometry.points,
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },
       };
-      activeStroke = { target: stroke, path: createStrokePath(stroke) };
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute(OVERLAY_ATTRIBUTE, "");
+      group.setAttribute("data-stroke-id", stroke.id);
+      group.setAttribute("fill", "none");
+      group.setAttribute("stroke", stroke.color);
+      group.setAttribute("stroke-width", String(stroke.width));
+      group.setAttribute("stroke-linecap", "round");
+      group.setAttribute("stroke-linejoin", "round");
+      const path = group.appendChild(
+        document.createElementNS("http://www.w3.org/2000/svg", "path"),
+      );
+      svg.appendChild(group);
+      activeStroke = { target: stroke, geometry, group, path };
     }
   };
 
@@ -1661,11 +1555,21 @@ function startAnnotation(
       marqueeBox.style.display = "none";
       if (isUsableRect(rect)) {
         const found = selectElementsInRect(rect);
-        if (found === 0) addRegion({ id: nextId("region"), rect });
+        if (found === 0) {
+          const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
+          regions.push(region);
+          const regionBox = createBox(
+            PRIMARY,
+            "color-mix(in srgb, var(--t3-primary) 6%, transparent)",
+          );
+          regionBox.setAttribute("data-region-id", region.id);
+          positionBox(regionBox, rect);
+          root.appendChild(regionBox);
+        }
       }
     } else if (tool === "draw" && activeStroke) {
       if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
-      else activeStroke.path.remove();
+      else activeStroke.group.remove();
       activeStroke = null;
     }
     dragStart = null;
@@ -1731,7 +1635,6 @@ function startAnnotation(
     for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
     document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
-    if (restoreTimer !== null) window.clearTimeout(restoreTimer);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
@@ -1772,7 +1675,7 @@ function startAnnotation(
         return;
       }
     }
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
@@ -1801,7 +1704,6 @@ function startAnnotation(
     }
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
-    syncDraft();
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
@@ -1862,15 +1764,17 @@ function startAnnotation(
       });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
+  const handleOverlayKey = (event: KeyboardEvent): void => {
+    if (event.type === "keyup") onVoiceKeyUp(event);
+    if (event.type !== "keydown") return;
+    onKeyDown(event);
+    if (event.cancelBubble) return;
     const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Bubble phase lets editor inputs handle events before hiding them from the page.
-    event.stopImmediatePropagation();
+      shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     if (!submission) return;
     event.preventDefault();
     submitAnnotation(submission);
-  });
+  };
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1895,7 +1799,6 @@ function startAnnotation(
     inputLayer.focus({ preventScroll: true });
   }
   document.documentElement.appendChild(host);
-  if (draft) restoreDraft(draft);
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
@@ -1903,61 +1806,12 @@ function startAnnotation(
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
-    syncDraft,
     setSendEnabled: (enabled) => {
       sendEnabled = enabled;
       updateSendHint();
     },
+    handleOverlayKey,
   };
-
-  /**
-   * Rebuilds the markup a reload interrupted. Apps often render after
-   * DOMContentLoaded, so an element that is not there yet holds its old spot
-   * as a region and is swapped back in if it shows up before the timeout.
-   */
-  function restoreDraft(restored: PreviewAnnotationDraft): void {
-    comment.value = restored.comment;
-    resizeComment();
-    tool = restored.tool;
-    for (const region of restored.regions) addRegion(region);
-    for (const stroke of restored.strokes) {
-      strokes.push(stroke);
-      createStrokePath(stroke);
-    }
-    for (const element of restored.elements) {
-      const placeholderId = nextId("region");
-      unresolved.push({
-        ...element,
-        placeholderId,
-        styleChanges: restored.styleChanges.filter((change) => change.targetId === element.id),
-      });
-      addRegion({ id: placeholderId, rect: element.rect });
-    }
-    const deadline = Date.now() + DRAFT_RESTORE_TIMEOUT_MS;
-    const resolveElements = (): void => {
-      restoreTimer = null;
-      if (finished || pendingCapture) return;
-      // removeRegion drops each match from `unresolved`, so collect first.
-      const matches = unresolved.flatMap((element) => {
-        const found = findBySelector(element.selector);
-        return found ? [{ element, found }] : [];
-      });
-      for (const { element, found } of matches) {
-        removeRegion(element.placeholderId);
-        // The user may have selected it again by hand while it was missing.
-        const target = selected.get(found) ?? addSelected(found, element.id);
-        if (!target) continue;
-        for (const change of element.styleChanges) {
-          applyStyleChange(target, { ...change, targetId: target.id });
-        }
-      }
-      updateStatus();
-      if (unresolved.length > 0 && Date.now() < deadline) {
-        restoreTimer = window.setTimeout(resolveElements, DRAFT_RESTORE_INTERVAL_MS);
-      }
-    };
-    resolveElements();
-  }
 }
 
 ipcRenderer.on(
@@ -1966,14 +1820,12 @@ ipcRenderer.on(
     _event,
     theme: DesktopPreviewAnnotationTheme | undefined,
     sendEnabled?: boolean,
-    draft?: unknown,
     voice?: DesktopPreviewAnnotationVoiceConfig,
   ) => {
     if (theme) annotationTheme = theme;
-    startAnnotation(sendEnabled === true, isPreviewAnnotationDraft(draft) ? draft : null, voice);
+    startAnnotation(sendEnabled === true, voice);
   },
 );
-window.addEventListener("pagehide", () => activeSession?.syncDraft());
 ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
   activeSession?.setSendEnabled(enabled === true);
 });

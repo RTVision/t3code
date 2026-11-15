@@ -132,6 +132,7 @@ vi.mock("~/previewStateStore", async (importOriginal) => {
             desktopByTabId: {
               "tab-1": {
                 hasWebContents: true,
+                navStatus: { _tag: "Idle" },
                 canGoBack: false,
                 canGoForward: false,
                 loading: mocks.loading,

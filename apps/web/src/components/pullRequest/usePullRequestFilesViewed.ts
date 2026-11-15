@@ -19,8 +19,7 @@ export interface PullRequestFilesViewedView {
   readonly writable: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  /** False when the press was refused for lack of the grant. */
-  readonly setViewed: (path: string, viewed: boolean) => boolean;
+  readonly setViewed: (path: string, viewed: boolean, revision?: string) => boolean;
   readonly viewedCount: number;
   readonly truncated: boolean;
   readonly error: string | null;
@@ -39,9 +38,9 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
-  readonly paths: ReadonlyArray<string>;
+  readonly paths?: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
-  const { environmentId, reference, enabled, paths } = options;
+  const { environmentId, reference, enabled, paths = [] } = options;
   const canWrite = useAtomValue(
     pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
   );
@@ -59,9 +58,9 @@ export function usePullRequestFilesViewed(options: {
     writable,
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
-    setViewed: (path: string, viewed: boolean) => {
+    setViewed: (path: string, viewed: boolean, revision?: string) => {
       if (!writable) return false;
-      scope.setViewed(path, viewed);
+      scope.setViewed(path, viewed, revision);
       return true;
     },
     viewedCount: countViewedFiles(paths, states, overlay),

@@ -1,12 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
+import type { PullRequestDiffSide } from "@t3tools/contracts";
 
-/**
- * A thread naming a file is not the same as a thread the diff can show: its line may have moved
- * out of the change, or sit in a hunk the host withheld. Pinning it anyway would put the remark
- * against whatever code now occupies that line number, and silently dropping it would lose the
- * conversation, so the answer decides which of the two lists it belongs in.
- */
+/** Only rendered hunks can anchor comments; list others off-diff. */
 export function isLineInFileDiff(
   file: FileDiffMetadata,
   side: PullRequestDiffSide,
@@ -19,80 +14,31 @@ export function isLineInFileDiff(
   );
 }
 
-/**
- * What the toolbar last asked of every file at once. Null is the reader asking nothing yet, which
- * opens what is left to review and keeps what has been ticked off out of the way.
- */
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/**
- * Files the reader folded or opened by hand, and which way, since the toolbar last spoke. Keyed by
- * path, like viewed state: a file's render key carries its slice's patch hash, so a push to any
- * file in the slice would otherwise drop the choice and fold a viewed file the reader had opened.
- */
-export type DiffFoldChoices = ReadonlyMap<string, boolean>;
+/** The reader's own fold choice per file. It is absolute, so a Viewed mark loading later keeps it. */
+export type FileDiffFoldChoices = ReadonlyMap<string, boolean>;
 
-/** Whether a file is drawn folded.
- *
- * Keep reader choices separate from the toolbar default so late slices follow the toolbar until
- * explicitly chosen, and a changed diff cannot invert an existing choice.
+/**
+ * A reader's own choice wins. Otherwise the toolbar decides, and a file still marked Viewed
+ * starts folded. Fold all and Expand all clear the choices, so later pages follow the toolbar.
  */
 export function isFileDiffCollapsed(
-  path: string,
+  fileKey: string,
   foldOverride: DiffFoldOverride,
-  foldChoices: DiffFoldChoices,
-  viewed: boolean,
+  choices: FileDiffFoldChoices,
+  viewed = false,
 ): boolean {
-  return foldChoices.get(path) ?? (foldOverride === "folded" || (foldOverride === null && viewed));
+  return choices.get(fileKey) ?? (foldOverride === "folded" || viewed);
 }
 
-/**
- * The reader's fold choices after a file was ticked off, or put back.
- *
- * Clearing a file puts it away and un-clearing brings it back. Where the default already does that,
- * the file's choice is dropped instead of recorded, so the default keeps following the file's
- * viewed state afterwards, and a push that leaves it stale opens it again.
- */
-export function foldChoicesAfterViewed(
-  path: string,
-  viewed: boolean,
-  foldOverride: DiffFoldOverride,
-  foldChoices: DiffFoldChoices,
-): DiffFoldChoices {
-  const followsDefault = isFileDiffCollapsed(path, foldOverride, new Map(), viewed) === viewed;
-  if (followsDefault ? !foldChoices.has(path) : foldChoices.get(path) === viewed)
-    return foldChoices;
-  const next = new Map(foldChoices);
-  if (followsDefault) next.delete(path);
-  else next.set(path, viewed);
-  return next;
-}
-
-/** One answer from the host: a whole number of files, and where the next one carries on. */
-export interface DiffSlice {
-  /** What was asked for, null being the first slice. Identifies the slice among the loaded ones. */
-  readonly cursor: string | null;
-  readonly patch: string;
-  readonly truncated: boolean;
-  readonly nextCursor: string | null;
-  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
-}
-
-/**
- * The slices on screen, the scope they belong to, and the one being read. Which pull request the
- * slices belong to travels with them, so a render taken before a reset cannot read the previous
- * one's slices — or send its cursor to the host.
- */
-export interface DiffSliceState {
-  readonly key: string;
-  readonly cursor: string | null;
-  readonly slices: ReadonlyArray<DiffSlice>;
-  /**
-   * The loaded slices are being read again, from the first, after the pull request reported a
-   * new revision. Held until the last of them is confirmed, so a failed read along the way —
-   * the last slice's included — is still owed a retry.
-   */
-  readonly revalidating: boolean;
+export function withFileDiffFold(
+  choices: FileDiffFoldChoices,
+  fileKey: string,
+  collapsed: boolean,
+): FileDiffFoldChoices {
+  if (choices.get(fileKey) === collapsed) return choices;
+  return new Map(choices).set(fileKey, collapsed);
 }
 
 export function getFileViewedRange<T extends { readonly fileKey: string }>(
