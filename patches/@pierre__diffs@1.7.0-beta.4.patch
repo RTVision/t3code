@@ -1,3 +1,78 @@
+diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
+index b10df4452e4b2e3dbbb7e949f59939e66d5326f1..c0a1bd28abb64ce573f3ec1785d0cd2b0f7895ef 100644
+--- a/dist/components/CodeView.d.ts
++++ b/dist/components/CodeView.d.ts
+@@ -383,7 +383,7 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
+   closeSearch(): void;
+   private returnSearchPanelFocus;
+   isSearchOpen(): boolean;
+-  /** Steps the open panel to the next or previous match, like find-again. */
++  /** Steps the current or last search to the next or previous match. */
+   navigateSearch(direction: 'next' | 'previous'): void;
+   getItem(itemId: string): CodeViewItem<LAnnotation> | undefined;
+   /**
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index 0b14f541214c7319e259bc88b9747c543f295d5d..389f512bfc82d92830f01bbbfaef80dc179d7536 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -210,6 +210,9 @@ var CodeView = class CodeView {
+ 	root;
+ 	resizeObserver;
+ 	searchPanel;
++	lastSearchParams;
++	lastSearchScope;
++	lastSearchMatch;
+ 	searchState = {
+ 		scope: void 0,
+ 		matches: [],
+@@ -1116,11 +1119,12 @@ var CodeView = class CodeView {
+ 		searchPanel = new SearchPanelWidget({
+ 			containerElement: this.header.element ?? container,
+ 			unsafeCSS: this.options.unsafeCSS,
+-			defaultQuery: query ?? this.getSearchQueryFromScope(),
++			defaultQuery: query ?? this.lastSearchParams?.text ?? this.getSearchQueryFromScope(),
+ 			defaults: this.options.searchOptions?.defaults,
+ 			mode,
+ 			replace: this.getSearchReplaceHandlers(),
+ 			onStateChange: (state) => {
++				this.lastSearchParams = state.text === "" ? void 0 : state;
+ 				if (this.searchMatchesDirty) return;
+ 				const { onSearchStateChange } = this.options;
+ 				onSearchStateChange?.(state);
+@@ -1161,6 +1165,10 @@ var CodeView = class CodeView {
+ 	/** Closes the find/replace panel and clears its match highlights. */
+ 	closeSearch() {
+ 		const { searchPanel } = this;
++		if (searchPanel != null) {
++			this.lastSearchScope = this.searchState.scope;
++			this.lastSearchMatch = this.searchState.current;
++		}
+ 		const panelHadFocus = this.isSearchPanelFocused();
+ 		const { scope } = this.searchState;
+ 		this.removeSearchFocusListeners();
+@@ -1183,8 +1191,21 @@ var CodeView = class CodeView {
+ 	isSearchOpen() {
+ 		return this.searchPanel != null;
+ 	}
+-	/** Steps the open panel to the next or previous match, like find-again. */
++	/** Steps the current or last search to the next or previous match. */
+ 	navigateSearch(direction) {
++		// Vim find-again uses the last query after the panel closes, with fresh items.
++		if (this.searchPanel == null) {
++			if (this.root == null || this.lastSearchParams == null) return;
++			this.searchState.scope = this.lastSearchScope;
++			const { matches } = this.searchCodeView(this.lastSearchParams);
++			const current = matches.findIndex((match) => areOptionalCodeViewSearchMatchesEqual(match, this.lastSearchMatch));
++			const index = direction === "previous" ? (current <= 0 ? matches.length - 1 : current - 1) : (current + 1) % matches.length;
++			const match = matches[index];
++			this.lastSearchMatch = match;
++			this.setSearchResults(matches, match);
++			if (match != null) this.scrollToSearchMatch(match);
++			return;
++		}
+ 		this.flushSearchMatches();
+ 		this.searchPanel?.navigate(direction === "previous");
+ 	}
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
 index b4c280390b52434f63fbe7916d81b150d9006fb4..8564980bdfe2ef8e17e8ab0a87627709091101ee 100644
 --- a/dist/editor/editor.js

@@ -1232,6 +1232,7 @@ it.effect.each([true, false])(
     const harness = scratchHarness({ scratch });
     return Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      assert.deepEqual(yield* tasks.defaultWorkspaceStrategy(projectId), { type: "root" });
       const plain = yield* tasks.upsert(
         scheduledTaskInput("scheduled-task:plain-upsert", projectId),
       );

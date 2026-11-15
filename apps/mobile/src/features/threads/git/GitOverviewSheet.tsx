@@ -1,3 +1,4 @@
+import { View } from "react-native";
 import * as Dialog from "../../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {

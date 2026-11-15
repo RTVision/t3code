@@ -1462,11 +1462,18 @@ export const layer = Layer.effect(
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
+      // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
+      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
+        input.workspaceStrategy.type === "worktree" &&
+        ((yield* managedFolders.isScratchProject(input.projectId)) ||
+          (yield* threadLaunch.isNonGitProject(input.projectId)))
+          ? { type: "root" }
+          : input.workspaceStrategy;
       // Runs launch unattended, so a new or changed worktree base must name
       // a real branch now rather than fail at its first run. An unchanged
       // one is left alone so a task whose branch was deleted can still be
       // edited or paused.
-      const strategy = input.workspaceStrategy;
+      const strategy = workspaceStrategy;
       const existingStrategy = existingTask?.workspaceStrategy;
       if (
         threadId === null &&
@@ -1547,13 +1554,6 @@ export const layer = Layer.effect(
               return { token, secret, secretChanged };
             })
           : { token: null, secret: null, secretChanged: true };
-      // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
-      const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
-        input.workspaceStrategy.type === "worktree" &&
-        ((yield* managedFolders.isScratchProject(input.projectId)) ||
-          (yield* threadLaunch.isNonGitProject(input.projectId)))
-          ? { type: "root" }
-          : input.workspaceStrategy;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
@@ -1595,13 +1595,14 @@ export const layer = Layer.effect(
       return { task: (yield* findTask(id)) ?? task };
     });
 
-    const defaultWorkspaceStrategy: ScheduledTaskService["Service"]["defaultWorkspaceStrategy"] = (
-      projectId,
-    ) =>
-      threadLaunch.resolveDefaultWorktreeBase(projectId).pipe(
-        Effect.map((baseRef) => ({ type: "worktree" as const, baseRef, startFromOrigin: true })),
-        Effect.mapError((cause) => taskError(cause.message, { cause })),
-      );
+    const defaultWorkspaceStrategy: ScheduledTaskService["Service"]["defaultWorkspaceStrategy"] =
+      Effect.fn("ScheduledTaskService.defaultWorkspaceStrategy")(function* (projectId) {
+        if (yield* threadLaunch.isNonGitProject(projectId)) return { type: "root" };
+        return yield* threadLaunch.resolveDefaultWorktreeBase(projectId).pipe(
+          Effect.map((baseRef) => ({ type: "worktree" as const, baseRef, startFromOrigin: true })),
+          Effect.mapError((cause) => taskError(cause.message, { cause })),
+        );
+      });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",

@@ -189,6 +189,7 @@ it.effect("checks a new or changed worktree base branch, but not an unchanged on
       Scheduler.layer,
       ManagedPolicy.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        isNonGitProject: () => Effect.succeed(false),
         checkWorktreeBase: ({ projectId, workspaceStrategy }) => {
           const baseRef = workspaceStrategy.type === "worktree" ? workspaceStrategy.baseRef : "";
           checked.push(baseRef);

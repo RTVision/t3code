@@ -76,6 +76,7 @@ it.effect.each([
           Effect.provide(Path.layer),
         )),
         baseDir: "/bootstrap-project",
+        dbPath: ":memory:",
         logLevel: "Error",
         traceMinLevel: "Info",
         traceTimingEnabled: false,

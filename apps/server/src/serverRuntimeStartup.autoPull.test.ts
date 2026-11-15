@@ -75,6 +75,7 @@ it.effect("parks automatic pull until activation without delaying command readin
       Layer.mock(ServerConfig.ServerConfig)({
         ...(yield* ServerConfig.deriveServerPaths(cwd, undefined).pipe(Effect.provide(Path.layer))),
         baseDir: cwd,
+        dbPath: ":memory:",
         logLevel: "Error",
         traceMinLevel: "Info",
         traceTimingEnabled: false,
@@ -175,7 +176,10 @@ it.effect("parks automatic pull until activation without delaying command readin
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       yield* startup.markHttpListening;
 
-      yield* Effect.raceFirst(Deferred.await(prepared), Deferred.await(statusCalled));
+      yield* Effect.raceFirst(
+        Effect.raceFirst(Deferred.await(prepared), Deferred.await(statusCalled)),
+        startup.awaitCommandReady,
+      );
       expect(yield* Deferred.isDone(activation)).toBe(false);
       expect(yield* Deferred.isDone(statusCalled)).toBe(false);
       expect(yield* Deferred.isDone(prepared)).toBe(true);

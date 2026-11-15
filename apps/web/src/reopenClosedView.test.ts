@@ -202,7 +202,7 @@ describe("reopenClosedView", () => {
     using _runtime = vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
     const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new-tab" }));
     const result = await reopenClosedView(
-      { kind: "browser", threadRef, snapshot },
+      { kind: "browser", threadRef, snapshot: { ...snapshot, runtime: "server" } },
       { openPreview, workspaceAvailable: false },
     );
     expect(result).toBe(true);
@@ -283,7 +283,13 @@ describe("reopenClosedView", () => {
           url: closedSnapshot.navStatus.url,
           viewport: snapshot.viewport,
           profileId: "work",
-          ...(restoredRuntime === undefined ? {} : { runtime: restoredRuntime }),
+          ...(restoredRuntime === undefined
+            ? {}
+            : {
+                runtime: restoredRuntime,
+                zoomFactor: snapshot.zoomFactor,
+                colorScheme: snapshot.colorScheme,
+              }),
         },
       });
       expect(readThreadPreviewState(remoteRef).snapshot).toMatchObject({

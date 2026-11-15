@@ -32,9 +32,10 @@ function Highlights(props: Parameters<typeof useThreadFindHighlights>[0]) {
 it("paints every match when one row has more matches than a call can take as arguments", async () => {
   const count = 200_000;
   const onActiveRange = vi.fn<(range: Range | null) => void>();
+  const container = row("e x".repeat(count));
   await using _screen = await render(
     <Highlights
-      container={row("e x".repeat(count))}
+      container={container}
       query="e"
       activeRowId="row"
       activeOccurrence={count - 1}
@@ -43,5 +44,10 @@ it("paints every match when one row has more matches than a call can take as arg
   );
   expect(CSS.highlights.get("t3-thread-find")?.size).toBe(count - 1);
   expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
-  expect(onActiveRange.mock.lastCall?.[0]?.startOffset).toBe((count - 1) * 3);
+  const active = onActiveRange.mock.lastCall?.[0];
+  expect(active?.toString()).toBe("e");
+  const before = document.createRange();
+  before.selectNodeContents(container);
+  before.setEnd(active!.startContainer, active!.startOffset);
+  expect(before.toString().length).toBe((count - 1) * 3);
 });
