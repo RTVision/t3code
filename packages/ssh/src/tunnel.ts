@@ -855,6 +855,11 @@ SERVICE_RUNTIME_INFO=""
 if [ -f "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" ]; then
   SERVICE_RUNTIME_INFO="$(resolve_default_runtime_port "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" 2>/dev/null || true)"
 fi
+# Service configuration outlives its child record while the daemon restarts.
+if [ -z "$SERVICE_RUNTIME_INFO" ] && { [ -e "$DEFAULT_SERVER_HOME/runtime/service-state.json" ] || [ -e "$DEFAULT_SERVER_HOME/runtime/server-runtime.json" ]; }; then
+  printf 'The T3 daemon is configured for %s but is unavailable. Start or repair the service on the remote host, then reconnect. If the service was removed and stopped, delete runtime/service-state.json and runtime/server-runtime.json from that T3 home.\\n' "$DEFAULT_SERVER_HOME" >&2
+  exit 1
+fi
 DEFAULT_RUNTIME_INFO="$SERVICE_RUNTIME_INFO"
 if [ -z "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
@@ -896,6 +901,10 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
     fi
     return 0
   else
+    if [ -n "$SERVICE_RUNTIME_INFO" ]; then
+      printf 'The T3 daemon is unavailable on 127.0.0.1:%s. Wait for it to restart, or bind it to loopback or a wildcard host.\\n' "$REMOTE_PORT" >&2
+      exit 1
+    fi
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
