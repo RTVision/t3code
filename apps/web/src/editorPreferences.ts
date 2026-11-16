@@ -144,7 +144,8 @@ export function useEditorDispatch(
   ) => {
     const uri =
       typeof input === "string" && /^file:\/\//iu.test(input) ? parseFileUrlHref(input) : null;
-    const position = uri ? splitFilePathPosition("", uri.hash) : null;
+    const { line, column } = uri ? splitFilePathPosition("", uri.hash) : {};
+    const position = uri ? { line, column } : null;
     const target = uri
       ? {
           kind: "file" as const,
