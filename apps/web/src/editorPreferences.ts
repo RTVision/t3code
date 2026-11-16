@@ -16,6 +16,8 @@ import {
   resolveEditorChoice,
 } from "@t3tools/client-runtime/editor-choice";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -140,7 +142,19 @@ export function useEditorDispatch(
     selected: EditorChoice | null = choice,
     { reveal = false } = {},
   ) => {
-    const target = typeof input === "string" ? editorTargetFromLegacy(input) : input;
+    const uri =
+      typeof input === "string" && /^file:\/\//iu.test(input) ? parseFileUrlHref(input) : null;
+    const position = uri ? splitFilePathPosition("", uri.hash) : null;
+    const target = uri
+      ? {
+          kind: "file" as const,
+          path: safeDecodeURIComponent(uri.path),
+          ...position,
+          columnEncoding: "utf-16" as const,
+        }
+      : typeof input === "string"
+        ? editorTargetFromLegacy(input)
+        : input;
     if (!environmentId)
       return AsyncResult.failure(
         Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: target.path })),
@@ -216,7 +230,8 @@ export function useEditorDispatch(
         await openGui({
           environmentId,
           input: {
-            cwd: guiEditorTarget(target),
+            cwd: uri ? target.path : guiEditorTarget(target),
+            ...(position ? { position: { line: position.line, column: position.column } } : {}),
             editor: selected.editor,
             ...(reveal && selected.editor === "file-manager" ? { reveal: true } : {}),
           },
