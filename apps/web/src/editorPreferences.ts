@@ -145,7 +145,9 @@ export function useEditorDispatch(
     const uri =
       typeof input === "string" && /^file:\/\//iu.test(input) ? parseFileUrlHref(input) : null;
     const { line, column } = uri ? splitFilePathPosition("", uri.hash) : {};
-    const position = uri ? { line, column } : null;
+    const position = uri
+      ? { ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }) }
+      : null;
     const target = uri
       ? {
           kind: "file" as const,
@@ -232,7 +234,7 @@ export function useEditorDispatch(
           environmentId,
           input: {
             cwd: uri ? target.path : guiEditorTarget(target),
-            ...(position ? { position: { line: position.line, column: position.column } } : {}),
+            ...(position ? { position } : {}),
             editor: selected.editor,
             ...(reveal && selected.editor === "file-manager" ? { reveal: true } : {}),
           },
