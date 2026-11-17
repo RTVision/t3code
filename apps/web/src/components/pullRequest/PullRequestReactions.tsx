@@ -6,8 +6,8 @@ import type {
   PullRequestRef,
 } from "@t3tools/contracts";
 import { SmilePlusIcon } from "lucide-react";
-import { useState } from "react";
-import { useAtomValue } from "@effect/atom-react";
+import { useContext, useLayoutEffect, useRef, useState } from "react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -35,11 +35,13 @@ const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestR
 export function ReactionBar({
   reactions,
   canReact,
+  canReactNow,
   onReact,
   className,
 }: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
+  readonly canReactNow?: () => boolean;
   readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
   readonly className?: string | undefined;
 }) {
@@ -53,10 +55,21 @@ export function ReactionBar({
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(reactions, values);
 
+  const current = { canReact, canReactNow, onReact, signature, values };
+  const latest = useRef(current);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retained click callbacks must use the current target and grant.
+  useLayoutEffect(() => {
+    latest.current = current;
+  });
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
+    const target = latest.current;
+    if (!target.canReact || target.canReactNow?.() === false) return;
     const entry: PendingPullRequestReaction = { reacted };
-    setPending({ signature, values: new Map([...values, [content, entry]]) });
-    if (await onReact(content, reacted)) return;
+    setPending({
+      signature: target.signature,
+      values: new Map([...target.values, [content, entry]]),
+    });
+    if (await target.onReact(content, reacted)) return;
     setPending((current) => {
       if (current.values.get(content) !== entry) return current;
       const next = new Map(current.values);
@@ -163,7 +176,9 @@ export function PullRequestReactionBar({
   readonly onRefresh: () => void;
   readonly className?: string | undefined;
 }) {
-  const canWrite = useAtomValue(pullRequestEnvironment.setReaction.permissionAtom(environmentId));
+  const registry = useContext(RegistryContext);
+  const permission = pullRequestEnvironment.setReaction.permissionAtom(environmentId);
+  const canWrite = useAtomValue(permission);
   const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
     reportFailure: false,
   });
@@ -171,6 +186,7 @@ export function PullRequestReactionBar({
     <ReactionBar
       reactions={reactions}
       canReact={canReact && canWrite}
+      canReactNow={() => registry.get(permission)}
       className={className}
       onReact={async (content, reacted) => {
         const result = await setReaction({

@@ -8,6 +8,7 @@ import {
   EnvironmentId,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -234,6 +235,10 @@ vi.mock("~/components/ui/spinner", () => ({ Spinner: "Spinner" }));
 vi.mock("~/components/ui/textarea", () => ({ Textarea: "Textarea" }));
 vi.mock("~/components/ui/toggle", () => ({ Toggle: "Toggle", toggleVariants: () => "" }));
 vi.mock("./AnimatedHeight", () => ({ AnimatedHeight: "AnimatedHeight" }));
+vi.mock("~/hooks/useSettings", () => ({
+  useClientSettings: (select: (settings: ClientSettings) => unknown) =>
+    select(DEFAULT_CLIENT_SETTINGS),
+}));
 
 import GitActionsControl from "./GitActionsControl";
 
