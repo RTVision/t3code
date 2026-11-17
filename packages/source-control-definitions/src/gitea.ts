@@ -34,5 +34,7 @@ export const definition = {
   checkoutCommand: () => null,
   parseChangeRequestUrl: (url: URL) =>
     isGiteaHostname(url.hostname) ? Forgejo.definition.parseChangeRequestUrl(url) : null,
+  // The fork Gitea driver has no issue backend; Forgejo owns its supported issue URLs.
+  parseIssueUrl: () => null,
   recognizeRemote,
 };

@@ -22,6 +22,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "../cloud/serviceProtocol.ts";
 import {
   pinnedRuntimePaths,
   posixLauncherScript,
@@ -136,6 +137,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
     runUpdate({
       baseDir: "/unused",
       logsDir: "/unused",
+      databasePath: "/unused",
       serverRuntimeStatePath: "/unused",
       channel: input.channel,
       requestedVersion: input.requestedVersion,
@@ -532,7 +534,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
         const targetVersion = "999.0.0";
         const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux", "npm");
         yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
-        yield* fs.writeFileString(runtime.entryPath, `console.log("t3 v${targetVersion}");\n`);
+        yield* fs.writeFileString(
+          runtime.entryPath,
+          `console.log(${JSON.stringify(JSON.stringify({ status: "ready", version: targetVersion, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL }))});\n`,
+        );
         yield* fs.writeFileString(
           path.join(runtime.versionDir, "node_modules/t3/package.json"),
           JSON.stringify({ name: "@rtvision/t3", version: targetVersion }),
@@ -569,14 +574,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           }),
         );
         const runner = yield* ProcessRunner.make();
-        let versionChecks = 0;
+        let preflightChecks = 0;
         vi.spyOn(ProcessRunner, "layer", "get").mockReturnValue(
           Layer.succeed(ProcessRunner.ProcessRunner, {
             run: (input) => {
               // Reject installs before spawning so a stale fixture cannot contact the registry.
               assert.equal(input.command, process.execPath);
-              assert.deepStrictEqual(input.args, [runtime.entryPath, "--version"]);
-              versionChecks++;
+              assert.deepStrictEqual(input.args, [
+                runtime.entryPath,
+                "__service-preflight",
+                "--database-path",
+                path.join(baseDir, "userdata", "statev2.sqlite"),
+                "--launcher-protocol",
+                String(SERVICE_LAUNCHER_PROTOCOL),
+              ]);
+              preflightChecks++;
               return runner.run(input);
             },
           }),
@@ -600,7 +612,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
         );
 
-        expect(versionChecks).toBe(1);
+        expect(preflightChecks).toBe(1);
         expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
         const output = lines.join("\n");
         expect(output).not.toContain("Background service restarted");
@@ -659,16 +671,24 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       vi.spyOn(BootService, "layer").mockReturnValue(service);
       const runner = ProcessRunner.ProcessRunner.of({
         run: (input) =>
-          input.args?.includes("--version") === true
-            ? unrelatedLsof
-                .run(input)
-                .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` })))
+          input.args?.includes("__service-preflight") === true
+            ? unrelatedLsof.run(input).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  stdout: JSON.stringify({
+                    status: "ready",
+                    version,
+                    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                  }),
+                })),
+              )
             : unrelatedLsof.run(input),
       });
 
       const output = yield* runUpdate({
         baseDir,
         logsDir: baseDir,
+        databasePath: path.join(baseDir, "statev2.sqlite"),
         serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
         channel: undefined,
         requestedVersion: version,
@@ -698,6 +718,139 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
+  );
+});
+
+it.layer(NodeServices.layer)("t3 update checks the database before switching", (it) => {
+  const preflightOutput = (stdout: string, code = 0) => ({
+    stdout,
+    stderr: code === 0 ? "" : "Unknown command: __service-preflight",
+    code: ChildProcessSpawner.ExitCode(code),
+    timedOut: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    stdoutInvalidUtf8: false,
+    stderrInvalidUtf8: false,
+  });
+  const blockedReason = "This database has migrations that t3@0.0.110 does not know: 79_example.";
+
+  it.effect.each([
+    {
+      name: "installs an older target that accepts this database",
+      targetVersion: "0.0.110",
+      launcherProtocol: 3,
+      preflight: preflightOutput(
+        JSON.stringify({ status: "ready", version: "0.0.110", launcherProtocol: 3 }),
+      ),
+      failure: undefined,
+    },
+    {
+      name: "refuses an older target the database is too new for",
+      targetVersion: "0.0.110",
+      launcherProtocol: 3,
+      preflight: preflightOutput(
+        JSON.stringify({ status: "blocked", version: "0.0.110", reason: blockedReason }),
+      ),
+      failure: blockedReason,
+    },
+    {
+      name: "refuses an older target too old to check the database",
+      targetVersion: "0.0.110",
+      launcherProtocol: 3,
+      preflight: preflightOutput("", 1),
+      failure:
+        "t3@0.0.110 could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.",
+    },
+    {
+      // Newer builds keep accepting the current launcher protocol, which may drop 3.
+      name: "checks a newer target with the current launcher protocol",
+      targetVersion: "99.0.0",
+      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      preflight: preflightOutput(
+        JSON.stringify({
+          status: "ready",
+          version: "99.0.0",
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+        }),
+      ),
+      failure: undefined,
+    },
+  ])("$name", ({ targetVersion, launcherProtocol, preflight, failure }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+      const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux");
+      yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+      yield* fs.writeFileString(runtime.entryPath, "");
+      yield* fs.writeFileString(runtime.sentinelPath, `${targetVersion}\n`);
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: false,
+          current: false,
+          unitPath: path.join(baseDir, "t3code.service"),
+          logPath: path.join(baseDir, "boot-service.log"),
+        }),
+      });
+      const preflightArgs: Array<ReadonlyArray<string>> = [];
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          if (input.args?.includes("__service-preflight") === true) {
+            preflightArgs.push(input.args);
+            return Effect.succeed(preflight);
+          }
+          // A target's --version always answers, whatever its database support.
+          return input.args?.includes("--version") === true
+            ? Effect.succeed(preflightOutput(`t3 v${targetVersion}\n`))
+            : unrelatedLsof.run(input);
+        },
+      });
+
+      const exit = yield* runUpdate({
+        baseDir,
+        logsDir: baseDir,
+        databasePath,
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: targetVersion,
+        allowDowngrade: true,
+        assumeYes: true,
+      }).pipe(
+        Effect.exit,
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, runner),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      const error = Option.getOrUndefined(Exit.findErrorOption(exit));
+      assert.equal(error?.message, failure);
+      assert.equal(Exit.isSuccess(exit), failure === undefined);
+      assert.deepEqual(preflightArgs, [
+        [
+          "__service-preflight",
+          "--database-path",
+          databasePath,
+          "--launcher-protocol",
+          String(launcherProtocol),
+        ],
+      ]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.LinuxLibc, "glibc"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
     ),
   );

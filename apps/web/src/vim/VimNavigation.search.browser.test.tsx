@@ -47,6 +47,8 @@ function ThreadFindHarness() {
           matchCount={1}
           status={null}
           activeIndex={0}
+          navigationId={0}
+          settled
           focusRequestId={0}
           onRetry={() => {}}
           onQueryChange={() => {}}

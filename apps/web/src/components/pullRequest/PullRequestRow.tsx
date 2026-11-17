@@ -14,6 +14,7 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
@@ -163,21 +164,14 @@ function PullRequestRowImpl({
           title={entry.title}
           signals={
             <>
-              {/* Always offered: a host whose listing carries no rollup (Gitea) still has
-                checks and CI runs the popover can read lazily from the detail. */}
               <PullRequestChecksPopover
                 checksState={entry.checksState ?? null}
                 environmentId={entry.environmentId}
                 reference={{
-                  projectId: entry.projectId,
-                  repository: entry.repository,
-                  number: entry.number,
+                  ...pullRequestPanelReference({ ...entry, host: entry.host.toLowerCase() }),
+                  allowStale: false,
                 }}
               />
-              {/* Only a verdict the host actually reports: an approval, a request for changes,
-                or a review the branch rules still require. No glyph on the common case of a
-                pull request nobody has reviewed, so a row only wears a person when the person
-                has said something. */}
               {entry.reviewDecision === undefined ? null : (
                 <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
               )}

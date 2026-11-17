@@ -378,7 +378,12 @@ describe.each([
     if (action === "Add to agent") {
       expect(draft?.prompt).toContain("Fix this line");
       expect(draft?.reviewComments).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: "note-1", diff: "+broken()" })]),
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "pull-request-selection:https://github.com/owner/repo/pull/1:note-1",
+            diff: "+broken()",
+          }),
+        ]),
       );
     }
     if (target) {
