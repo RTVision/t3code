@@ -339,6 +339,11 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+const isGitHubApiResponseError = Schema.is(GitHubRequestPolicy.GitHubApiResponseError);
+
+const isGitHubServerError = (error: unknown): boolean =>
+  isGitHubApiResponseError(error) && error.status >= 500;
+
 const isMissingPullRef = ({ path, type }: GraphQLClientError.GraphQLError): boolean =>
   type === "NOT_FOUND" && path?.join(".") === "repository.pullRequest.baseRef.compare";
 
@@ -446,7 +451,8 @@ const collect = Effect.fn("GitHubPullRequestApi.collect")(function* <Item, E>(
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
 const RELATIONSHIP_ONLY_MAX_ROWS = 201;
 
-const DIFF_FILES_PAGE_SIZE = 100;
+// Larger pages make GitHub drop patches and report those files as 0/0.
+const DIFF_FILES_PAGE_SIZE = 30;
 const FILES_VIEWED_MAX_PAGES = 5;
 /** Files cleared or restored per request; a reader rarely ticks more than a page of them at once. */
 const FILES_VIEWED_PER_REQUEST = 100;
@@ -2052,18 +2058,19 @@ export const make = Effect.gen(function* () {
             });
           }),
         );
-      // Search can omit unindexed repositories, so an empty unfiltered first page falls back to
-      // the repository listing. Preserve local filters there; free-text queries cannot use that
-      // fallback, and relationship discovery always needs the repository collection.
       if (input.relationshipOnly === true) {
         return read(false, Math.min(input.limit + 1, RELATIONSHIP_ONLY_MAX_ROWS));
       }
-      const hasQuery = (input.query?.trim().length ?? 0) > 0;
+      // Unindexed repositories silently return no search rows, and search can fail while the
+      // listing answers. The listing cannot apply a text query or an `updated:<=` cursor.
+      const listingServes = input.cursor === undefined && (input.query?.trim().length ?? 0) === 0;
       const listed = read(true).pipe(
-        Effect.filterOrElse(
-          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
-          () => read(false),
-        ),
+        Effect.matchEffect({
+          onSuccess: (batch) =>
+            batch.items.length > 0 || !listingServes ? Effect.succeed(batch) : read(false),
+          onFailure: (error) =>
+            listingServes && isGitHubServerError(error) ? read(false) : Effect.fail(error),
+        }),
         Effect.filterOrElse(
           (batch) => !stacks || batch.items.length === 0,
           (batch) =>
