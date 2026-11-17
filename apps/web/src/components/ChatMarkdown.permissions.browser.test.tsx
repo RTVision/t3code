@@ -196,6 +196,8 @@ vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original)
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { MarkdownFileLink } from "./chat/MarkdownFileLink";
+import { userEvent } from "vite-plus/test/browser";
 
 const threadRef = {
   environmentId: EnvironmentId.make("selected"),

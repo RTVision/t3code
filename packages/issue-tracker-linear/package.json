@@ -9,7 +9,7 @@
     }
   },
   "scripts": {
-    "typecheck": "effect-tsgo tsrs --noEmit",
+    "typecheck": "node ../../scripts/typecheck.mjs",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "graphqlgen"
   },

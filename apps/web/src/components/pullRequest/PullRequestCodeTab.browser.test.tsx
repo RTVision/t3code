@@ -94,6 +94,7 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
           if (viewed) next.add(path);
           else next.delete(path);
           deliverViewedPaths(next);
+          return true;
         },
         truncated: false,
         error: null,

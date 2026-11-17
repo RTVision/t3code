@@ -534,7 +534,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
         const targetVersion = "999.0.0";
         const runtime = pinnedRuntimePaths(path, baseDir, targetVersion, "linux", "npm");
         yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
-        yield* fs.writeFileString(runtime.entryPath, `console.log("t3 v${targetVersion}");\n`);
+        yield* fs.writeFileString(
+          runtime.entryPath,
+          `console.log(${JSON.stringify(JSON.stringify({ status: "ready", version: targetVersion, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL }))});\n`,
+        );
         yield* fs.writeFileString(
           path.join(runtime.versionDir, "node_modules/t3/package.json"),
           JSON.stringify({ name: "@rtvision/t3", version: targetVersion }),
@@ -571,14 +574,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           }),
         );
         const runner = yield* ProcessRunner.make();
-        let versionChecks = 0;
+        let preflightChecks = 0;
         vi.spyOn(ProcessRunner, "layer", "get").mockReturnValue(
           Layer.succeed(ProcessRunner.ProcessRunner, {
             run: (input) => {
               // Reject installs before spawning so a stale fixture cannot contact the registry.
               assert.equal(input.command, process.execPath);
-              assert.deepStrictEqual(input.args, [runtime.entryPath, "--version"]);
-              versionChecks++;
+              assert.deepStrictEqual(input.args, [
+                runtime.entryPath,
+                "__service-preflight",
+                "--database-path",
+                path.join(baseDir, "userdata", "statev2.sqlite"),
+                "--launcher-protocol",
+                String(SERVICE_LAUNCHER_PROTOCOL),
+              ]);
+              preflightChecks++;
               return runner.run(input);
             },
           }),
@@ -602,7 +612,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
         );
 
-        expect(versionChecks).toBe(1);
+        expect(preflightChecks).toBe(1);
         expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
         const output = lines.join("\n");
         expect(output).not.toContain("Background service restarted");
@@ -724,34 +734,34 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
     stdoutInvalidUtf8: false,
     stderrInvalidUtf8: false,
   });
-  const blockedReason = "This database has migrations that t3@0.1.8 does not know: 79_example.";
+  const blockedReason = "This database has migrations that t3@0.0.110 does not know: 79_example.";
 
   it.effect.each([
     {
       name: "installs an older target that accepts this database",
-      targetVersion: "0.1.8",
+      targetVersion: "0.0.110",
       launcherProtocol: 3,
       preflight: preflightOutput(
-        JSON.stringify({ status: "ready", version: "0.1.8", launcherProtocol: 3 }),
+        JSON.stringify({ status: "ready", version: "0.0.110", launcherProtocol: 3 }),
       ),
       failure: undefined,
     },
     {
       name: "refuses an older target the database is too new for",
-      targetVersion: "0.1.8",
+      targetVersion: "0.0.110",
       launcherProtocol: 3,
       preflight: preflightOutput(
-        JSON.stringify({ status: "blocked", version: "0.1.8", reason: blockedReason }),
+        JSON.stringify({ status: "blocked", version: "0.0.110", reason: blockedReason }),
       ),
       failure: blockedReason,
     },
     {
       name: "refuses an older target too old to check the database",
-      targetVersion: "0.1.8",
+      targetVersion: "0.0.110",
       launcherProtocol: 3,
       preflight: preflightOutput("", 1),
       failure:
-        "t3@0.1.8 could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.",
+        "t3@0.0.110 could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.",
     },
     {
       // Newer builds keep accepting the current launcher protocol, which may drop 3.
@@ -839,6 +849,8 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
       ]);
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.LinuxLibc, "glibc"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
     ),
   );

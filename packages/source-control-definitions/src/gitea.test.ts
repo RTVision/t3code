@@ -19,6 +19,10 @@ describe("Gitea source-control ownership", () => {
 
   it("keeps pull-request URLs owned by the matching host", () => {
     expect(
+      builtInSourceControlDefinitions.parseIssueUrl("https://gitea.example.test/team/repo/issues/7")
+        ?.definition.kind,
+    ).toBe("forgejo");
+    expect(
       builtInSourceControlDefinitions.findByChangeRequestUrl(
         "https://gitea.example.test/team/repo/pulls/7",
       )?.kind,
