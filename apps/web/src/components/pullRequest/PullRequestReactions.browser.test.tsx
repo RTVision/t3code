@@ -6,7 +6,11 @@ import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.send }));
-vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: { setReaction: {} } }));
+vi.mock("~/state/pullRequests", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permission = Atom.make(true);
+  return { pullRequestEnvironment: { setReaction: { permissionAtom: () => permission } } };
+});
 
 import { PullRequestReactionBar } from "./PullRequestReactions";
 
