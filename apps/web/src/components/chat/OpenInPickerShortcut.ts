@@ -3,6 +3,8 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import { useEffect } from "react";
 
 import { useEditorDispatch } from "../../editorPreferences";
@@ -77,12 +79,13 @@ export function useOpenFavoriteEditorShortcut({
           const error = squashAtomCommandFailure(result);
           toastManager.add({
             type: "error",
-            title: "Unable to open editor",
-            description: error instanceof Error ? error.message : "The editor could not be opened.",
+            title: m(msg("Unable to open editor")),
+            description:
+              error instanceof Error ? error.message : m(msg("The editor could not be opened.")),
           });
           return;
         }
-        announce(`Opened in ${label}`);
+        announce(m(msg("Opened in {editor}", { editor: label })));
       });
     };
     window.addEventListener("keydown", handler);

@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { EDITORS } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
@@ -9,6 +10,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
 export function EditorsSettingsPanel() {
+  const gt = useGT();
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const [selectedEnvironment, setSelectedEnvironment] = useState<string | null>(null);
@@ -55,23 +57,27 @@ export function EditorsSettingsPanel() {
       await bridge({ connection, terminal, executableOverride: override || null });
       await state.terminal.refresh(true);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not save editor settings.");
+      setError(error instanceof Error ? error.message : gt("Could not save editor settings."));
     }
     setSaving(false);
   };
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-6">
       <div>
-        <h1 className="text-lg font-semibold">Editors</h1>
+        <h1 className="text-lg font-semibold">
+          <T>Editors</T>
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Choose how projects and files open on this client. Editor choices apply to the selected
-          environment.
+          <T>
+            Choose how projects and files open on this client. Editor choices apply to the selected
+            environment.
+          </T>
         </p>
       </div>
       <label className="block space-y-2 text-sm">
-        Environment
+        <T>Environment</T>
         <select
-          aria-label="Editor environment"
+          aria-label={gt("Editor environment")}
           className="block w-full rounded-md border bg-background p-2"
           value={environmentId ?? ""}
           onChange={(event) => setSelectedEnvironment(event.target.value)}
@@ -84,9 +90,9 @@ export function EditorsSettingsPanel() {
         </select>
       </label>
       <label className="block space-y-2 text-sm">
-        Preferred editor
+        <T>Preferred editor</T>
         <select
-          aria-label="Preferred editor"
+          aria-label={gt("Preferred editor")}
           className="block w-full rounded-md border bg-background p-2"
           value={preferred}
           onChange={(event) => {
@@ -98,7 +104,7 @@ export function EditorsSettingsPanel() {
         >
           {!preferred && (
             <option value="" disabled>
-              No available editor
+              <T>No available editor</T>
             </option>
           )}
           {EDITORS.filter(
@@ -108,15 +114,21 @@ export function EditorsSettingsPanel() {
               {editor.label}
             </option>
           ))}
-          {neovimVisible && <option value="neovim">Neovim (Terminal)</option>}
+          {neovimVisible && (
+            <option value="neovim">
+              <T>Neovim (Terminal)</T>
+            </option>
+          )}
         </select>
       </label>
       <Button variant="outline" size="sm" onClick={() => state.select(null)}>
-        Use default editor
+        <T>Use default editor</T>
       </Button>
-      <section className="space-y-4 border-t pt-5" aria-label="Terminal editor settings">
+      <section className="space-y-4 border-t pt-5" aria-label={gt("Terminal editor settings")}>
         <div>
-          <h2 className="font-medium">Neovim (Terminal)</h2>
+          <h2 className="font-medium">
+            <T>Neovim (Terminal)</T>
+          </h2>
           <p role="status" className="mt-1 text-sm text-muted-foreground">
             {capability.message}
           </p>
@@ -129,13 +141,13 @@ export function EditorsSettingsPanel() {
         </div>
         {capability.reason === "ssh-association-required" && (
           <Link to="/settings/connections" className="text-sm underline">
-            Set up an SSH environment
+            <T>Set up an SSH environment</T>
           </Link>
         )}
         <label className="block space-y-2 text-sm">
-          Terminal on this desktop
+          <T>Terminal on this desktop</T>
           <select
-            aria-label="Terminal"
+            aria-label={gt("Terminal")}
             className="block w-full rounded-md border bg-background p-2"
             value={terminal}
             onChange={(event) =>
@@ -146,10 +158,14 @@ export function EditorsSettingsPanel() {
             }
             disabled={!window.desktopBridge?.setTerminalEditorSettings}
           >
-            <option value="automatic">Automatic</option>
+            <option value="automatic">
+              <T>Automatic</T>
+            </option>
             {terminal !== "automatic" &&
               !capability.terminals.some((item) => item.id === terminal) && (
-                <option value={terminal}>Windows Terminal (unavailable)</option>
+                <option value={terminal}>
+                  <T>Windows Terminal (unavailable)</T>
+                </option>
               )}
             {capability.terminals.map((terminal) => (
               <option key={terminal.id} value={terminal.id}>
@@ -159,12 +175,12 @@ export function EditorsSettingsPanel() {
           </select>
         </label>
         <label className="block space-y-2 text-sm">
-          Neovim executable in this environment (optional)
+          <T>Neovim executable in this environment (optional)</T>
           <Input
-            aria-label="Neovim executable"
+            aria-label={gt("Neovim executable")}
             value={override}
             onChange={(event) => edit({ override: event.target.value })}
-            placeholder="Absolute path; leave empty to detect automatically"
+            placeholder={gt("Absolute path; leave empty to detect automatically")}
             disabled={!window.desktopBridge?.setTerminalEditorSettings}
           />
         </label>
@@ -178,7 +194,7 @@ export function EditorsSettingsPanel() {
               !window.desktopBridge?.setTerminalEditorSettings
             }
           >
-            Save
+            <T>Save</T>
           </Button>
           <Button
             variant="outline"
@@ -186,7 +202,7 @@ export function EditorsSettingsPanel() {
             onClick={() => void state.terminal.rescan()}
             disabled={!state.terminal.connected || capability.state === "checking"}
           >
-            Rescan
+            <T>Rescan</T>
           </Button>
         </div>
         {error && (

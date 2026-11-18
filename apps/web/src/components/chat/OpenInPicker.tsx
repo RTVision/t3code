@@ -7,12 +7,14 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { memo, use, useRef } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { useEditorDispatch } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
+import type { MessageResolver } from "../../i18n/messages";
 import { useRemoteOpenHint } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
@@ -80,7 +82,11 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+  resolve: MessageResolver,
+) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -195,7 +201,10 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
   const availableEditorSet = new Set(availableEditors);
   return baseOptions
     .filter((option) => availableEditorSet.has(option.value))
-    .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+    .map((option) => ({
+      ...option,
+      label: editorLabelForPlatform(option.value, platform, resolve),
+    }));
 };
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
@@ -225,6 +234,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   displayMode?: "toolbar" | "panel";
   revealFileManager?: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -241,14 +252,14 @@ export const OpenInPicker = memo(function OpenInPicker({
   const isEditorMenuDenied = !canOpenGui && !canOperateTerminal;
   const [menuOpen, setMenuOpen] = useComposerMenuState(isEditorMenuDenied);
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
-  const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
+  const environmentLabel = useEnvironment(environmentId)?.label ?? null;
   const preferredEditor = dispatch.choice;
   const terminal = dispatch.terminal.capability;
   const terminalVisible =
     terminal.state === "available" ||
     terminal.state === "check-on-open" ||
     preferredEditor?.kind === "terminal";
-  const options = resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors);
+  const options = resolveOpenInOptions(navigator.platform, dispatch.effectiveEditors, messages);
   const primaryOption = options.find(({ value }) => value === preferredEditor?.editor) ?? null;
   const canOpenEditor = preferredEditor?.kind === "terminal" ? canOperateTerminal : canOpenGui;
   const density = presentation === "menu" ? "touch" : "default";
@@ -270,8 +281,8 @@ export const OpenInPicker = memo(function OpenInPicker({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to open editor",
-        description: error instanceof Error ? error.message : "The editor could not be opened.",
+        title: gt("Unable to open editor"),
+        description: error instanceof Error ? error.message : gt("The editor could not be opened."),
       });
       return false;
     }
@@ -286,13 +297,21 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const backgroundThread = use(BackgroundThreadContext);
   const toolbarLabel = isPanel
-    ? `Open in ${preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : (primaryOption?.label ?? "editor")}`
-    : "Open";
+    ? preferredEditor?.kind === "terminal" || primaryOption
+      ? gt("Open in {editor}", {
+          editor: preferredEditor?.kind === "terminal" ? "Neovim (Terminal)" : primaryOption!.label,
+        })
+      : gt("Open in editor")
+    : gt("Open", { $context: "verb, opens the project in the preferred editor" });
   const unavailableReason =
     remote.mode === "remote-unavailable"
-      ? `No SSH route to ${environmentLabel}`
+      ? environmentLabel !== null
+        ? gt("No SSH route to {environment}", { environment: environmentLabel })
+        : gt("No SSH route to this machine")
       : remote.mode === "remote-links" && options.length === 0
-        ? `Open from a computer to edit on ${environmentLabel}`
+        ? environmentLabel !== null
+          ? gt("Open from a computer to edit on {environment}", { environment: environmentLabel })
+          : gt("Open from a computer to edit on this machine")
         : null;
   const editorItems = (
     <>
@@ -303,7 +322,9 @@ export const OpenInPicker = memo(function OpenInPicker({
           onClick={() => openInEditor({ kind: "terminal", editor: "neovim" }, true)}
         >
           <NeovimIcon aria-hidden="true" />
-          <MenuItemLabel>Neovim (Terminal)</MenuItemLabel>
+          <MenuItemLabel>
+            <T>Neovim (Terminal)</T>
+          </MenuItemLabel>
           {preferredEditor?.kind === "terminal" && openFavoriteEditorShortcutLabel && (
             <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
           )}
@@ -320,7 +341,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           disabled={!canOperateTerminal}
           onClick={() => void dispatch.terminal.rescan()}
         >
-          Rescan Neovim
+          <T>Rescan Neovim</T>
         </MenuItem>
       )}
       {unavailableReason !== null ? (
@@ -331,7 +352,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <>
           {options.length === 0 && (
             <MenuItem density={density} disabled>
-              No installed editors found
+              <T>No installed editors found</T>
             </MenuItem>
           )}
           {options.map(({ label, Icon, value, kind }) => (
@@ -357,13 +378,17 @@ export const OpenInPicker = memo(function OpenInPicker({
           ))}
           {remote.mode === "remote-links" && !remoteHintSeen && (
             <MenuItem density={density} disabled>
-              Opens over SSH. Needs your key on {environmentLabel}
+              {environmentLabel !== null
+                ? gt("Opens over SSH. Needs your key on {environment}", {
+                    environment: environmentLabel,
+                  })
+                : gt("Opens over SSH. Needs your key on this machine")}
             </MenuItem>
           )}
         </>
       )}
       <MenuItem density={density} render={<Link to="/settings/editors" />}>
-        Editor settings…
+        <T>Editor settings…</T>
       </MenuItem>
     </>
   );
@@ -392,7 +417,11 @@ export const OpenInPicker = memo(function OpenInPicker({
                 />
               )
             )}
-            <MenuItemLabel>Open in {primaryLabel}</MenuItemLabel>
+            <MenuItemLabel>
+              <T>
+                Open in <Var>{primaryLabel}</Var>
+              </T>
+            </MenuItemLabel>
             {openFavoriteEditorShortcutLabel && (
               <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
             )}
@@ -401,7 +430,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuSub>
           <MenuSubTrigger density="touch" disabled={isEditorMenuDenied}>
             <SquareArrowOutUpRightIcon className="size-4" />
-            <MenuItemLabel>Open in…</MenuItemLabel>
+            <MenuItemLabel>
+              <T>Open in…</T>
+            </MenuItemLabel>
           </MenuSubTrigger>
           <MenuSubPopup>{editorItems}</MenuSubPopup>
         </MenuSub>
@@ -410,14 +441,14 @@ export const OpenInPicker = memo(function OpenInPicker({
   }
   return (
     <ActionGroup
-      aria-label="Open in editor"
+      aria-label={gt("Open in editor")}
       role="group"
       {...(isPanel
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
       <ThreadDetailsControl
-        aria-label={compact ? "Open file in preferred editor" : toolbarLabel}
+        aria-label={compact ? gt("Open file in preferred editor") : toolbarLabel}
         size={isPanel ? "sm" : "xs"}
         variant={isPanel ? "ghost" : "outline"}
         part="primary"
@@ -429,7 +460,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           if (!preferredEditor) return;
           const label = editorLabelForPlatform(preferredEditor.editor, navigator.platform);
           void openInEditor(preferredEditor).then((opened) => {
-            if (opened) announce(`Opened in ${label}`);
+            if (opened) announce(gt("Opened in {editor}", { editor: label }));
           });
         }}
       >
@@ -479,7 +510,7 @@ export const OpenInPicker = memo(function OpenInPicker({
           disabled={isEditorMenuDenied}
           render={
             <ThreadDetailsControl
-              aria-label="Choose editor"
+              aria-label={gt("Choose editor")}
               size={isPanel ? "sm" : "icon-xs"}
               variant={isPanel ? "ghost" : "outline"}
               part="secondary"

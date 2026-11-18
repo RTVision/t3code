@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -33,6 +34,7 @@ function CiJobs({
   onRerun: (target: PullRequestCiRerunTarget) => void;
   openLink: (url: string) => void;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(pullRequestEnvironment.ciJobs({ environmentId, input }));
   if (query.error)
     return (
@@ -40,7 +42,12 @@ function CiJobs({
         {query.error}
       </p>
     );
-  if (!query.data) return <p className="text-xs text-muted-foreground">Loading jobs…</p>;
+  if (!query.data)
+    return (
+      <p className="text-xs text-muted-foreground">
+        <T>Loading jobs…</T>
+      </p>
+    );
   return (
     <div className="space-y-1 pl-3">
       {query.data.jobs.map((job) => (
@@ -60,19 +67,23 @@ function CiJobs({
               size="xs"
               variant="ghost"
               disabled={disabled || query.isPending}
-              title="Rerun this job and dependent jobs"
+              title={gt("Rerun this job and dependent jobs")}
               onClick={() => onRerun({ kind: "job", jobId: job.id })}
             >
-              Rerun
+              <T>Rerun</T>
             </Button>
           )}
         </div>
       ))}
       {query.data.jobs.length === 0 && (
-        <p className="text-xs text-muted-foreground">No jobs reported.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No jobs reported.</T>
+        </p>
       )}
       {query.data.truncated && (
-        <p className="text-xs text-muted-foreground">More jobs are available on the host.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>More jobs are available on the host.</T>
+        </p>
       )}
     </div>
   );
@@ -93,6 +104,7 @@ function CiRunRow({
   openLink: (url: string) => void;
   disabled: boolean;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const rerun = useAtomCommand(pullRequestEnvironment.rerunCi, { reportFailure: false });
   const input = { ...reference, runId: run.id, headSha, attempt: run.attempt };
@@ -108,10 +120,10 @@ function CiRunRow({
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Unable to rerun CI",
+        title: gt("Unable to rerun CI"),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "The host refused the rerun.",
+          gt("The host refused the rerun."),
         ),
       });
   };
@@ -133,16 +145,16 @@ function CiRunRow({
             className="text-primary hover:underline"
             onClick={() => openLink(run.url!)}
           >
-            Open
+            <T>Open</T>
           </button>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1 text-xs">
         <span role="status" className="mr-auto text-muted-foreground">
           {pending
-            ? "Requesting rerun…"
+            ? gt("Requesting rerun…")
             : requested
-              ? "Rerun requested"
+              ? gt("Rerun requested")
               : pullRequestCheckStatusLabel(run)}
         </span>
         {run.rerunModes.map((kind) => (
@@ -153,7 +165,7 @@ function CiRunRow({
             disabled={disabled || pending || requested || !canRerun}
             onClick={() => void submit({ kind })}
           >
-            {kind === "failed" ? "Rerun failed" : "Rerun all"}
+            {kind === "failed" ? gt("Rerun failed") : gt("Rerun all")}
           </Button>
         ))}
       </div>
@@ -180,6 +192,7 @@ export function PullRequestCiRuns({
   reference: PullRequestRef;
   threadRef?: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(
     pullRequestEnvironment.ciRuns({ environmentId, input: reference }),
   );
@@ -187,13 +200,15 @@ export function PullRequestCiRuns({
   const open = useOpenLink(threadRef);
   const openLink = (url: string) => {
     void open(url).catch(() =>
-      toastManager.add({ type: "error", title: "Unable to open CI details" }),
+      toastManager.add({ type: "error", title: gt("Unable to open CI details") }),
     );
   };
   return (
     <section className="mt-3 space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-medium">CI runs</h3>
+        <h3 className="text-xs font-medium">
+          <T>CI runs</T>
+        </h3>
         <Button
           size="xs"
           variant="ghost"
@@ -202,7 +217,7 @@ export function PullRequestCiRuns({
             void invalidate({ environmentId, input: { reference } });
           }}
         >
-          Refresh CI
+          <T>Refresh CI</T>
         </Button>
       </div>
       {query.error ? (
@@ -224,16 +239,20 @@ export function PullRequestCiRuns({
             />
           ))}
           {query.data.runs.length === 0 && (
-            <p className="text-xs text-muted-foreground">No CI runs for this revision.</p>
+            <p className="text-xs text-muted-foreground">
+              <T>No CI runs for this revision.</T>
+            </p>
           )}
           {query.data.truncated && (
             <p className="text-xs text-muted-foreground">
-              Showing the most recent runs. More are available on the host.
+              <T>Showing the most recent runs. More are available on the host.</T>
             </p>
           )}
         </>
       ) : query.isPending ? (
-        <p className="text-xs text-muted-foreground">Loading CI runs…</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Loading CI runs…</T>
+        </p>
       ) : null}
     </section>
   );

@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { RunId } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ export function VimTimeline({
   onBottom: () => void;
   historyError: string | null;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -176,8 +178,8 @@ export function VimTimeline({
           <input
             ref={input}
             autoFocus
-            aria-label="Search conversation"
-            placeholder="Search conversation; Enter to search, Esc to cancel"
+            aria-label={gt("Search conversation")}
+            placeholder={gt("Search conversation; Enter to search, Esc to cancel")}
             className="w-full bg-transparent p-1 outline-none"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -197,15 +199,30 @@ export function VimTimeline({
           <span role="status">
             {goToTop
               ? historyPaused
-                ? "Earlier history loading paused"
-                : "Loading the start of the conversation…"
-              : `${query}: ${selectedIndex + 1}/${matches.length} matches${historyPaused ? " · earlier messages not searched yet" : searchingHistory && loadEarlier && !historyError ? " · searching earlier messages…" : ""}${historyError ? " · history unavailable; results are incomplete" : ""}`}
+                ? gt("Earlier history loading paused")
+                : gt("Loading the start of the conversation…")
+              : gt(
+                  "{query}: {current}/{total} matches{history, select, paused { · earlier messages not searched yet} searching { · searching earlier messages…} other {}}{unavailable, select, yes { · history unavailable; results are incomplete} other {}}",
+                  {
+                    query,
+                    current: selectedIndex + 1,
+                    total: matches.length,
+                    history: historyPaused
+                      ? "paused"
+                      : searchingHistory && loadEarlier && !historyError
+                        ? "searching"
+                        : "other",
+                    unavailable: historyError ? "yes" : "no",
+                  },
+                )}
           </span>
           {historyPaused && !historyError && (
-            <button onClick={() => setHistoryBudget(HISTORY_PAGE_BATCH)}>Load more history</button>
+            <button onClick={() => setHistoryBudget(HISTORY_PAGE_BATCH)}>
+              <T>Load more history</T>
+            </button>
           )}
           <button
-            aria-label="Close conversation search"
+            aria-label={gt("Close conversation search")}
             onClick={() => {
               setQuery("");
               setSearchingHistory(false);
@@ -213,7 +230,7 @@ export function VimTimeline({
               focusVimNormal();
             }}
           >
-            Close
+            <T>Close</T>
           </button>
         </div>
       )}

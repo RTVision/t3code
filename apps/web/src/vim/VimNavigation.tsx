@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { STATIC_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { useClientSettings } from "../hooks/useSettings";
@@ -72,6 +73,7 @@ function focusNeighbor(direction: string): void {
 }
 /** One capture owner decides whether a stroke belongs to Vim or the focused input. */
 export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
+  const gt = useGT();
   const settings = useClientSettings((value) => value.vim);
   const mode = useVimMode();
   const bindings = resolveVimBindings(settings);
@@ -341,10 +343,10 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
       {shown.length > 0 && (
         <div
           className="absolute bottom-full left-0 z-50 max-h-[min(18rem,60dvh)] w-max max-w-full overflow-auto rounded-t border bg-popover p-3 shadow"
-          aria-label="Vim shortcuts"
+          aria-label={gt("Vim shortcuts")}
         >
           <p className="mb-2 text-muted-foreground">
-            {help ? "Press Esc to close." : "Choose a shortcut or press Esc to cancel."}
+            {help ? gt("Press Esc to close.") : gt("Choose a shortcut or press Esc to cancel.")}
           </p>
           {shown
             .filter((binding) => binding.keys.length > 0 && binding.modes.includes(mode))
@@ -356,7 +358,7 @@ export function VimNavigation({ isOnSettings }: { isOnSettings: boolean }) {
             ))}
           {help && (
             <button type="button" className="mt-2 underline" onClick={() => setHelp(false)}>
-              Close help
+              <T>Close help</T>
             </button>
           )}
         </div>

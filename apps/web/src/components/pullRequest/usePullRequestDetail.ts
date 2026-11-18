@@ -196,6 +196,9 @@ export function usePullRequestDetail(
           ),
           commentsTruncated: activity?.commentsTruncated ?? false,
           reviewThreads: activity?.reviewThreads ?? [],
+          ...(activity?.reviewThreadsTruncated === undefined
+            ? {}
+            : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
           ...(activity?.overviewThreads === undefined
             ? {}
             : { overviewThreads: activity.overviewThreads }),
