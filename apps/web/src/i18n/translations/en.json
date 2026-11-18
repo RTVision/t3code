@@ -2953,6 +2953,7 @@
   "4030c7bc86af660f": "Guide delay, milliseconds",
   "6097afb7b70512e5": "Sequence timeout, milliseconds",
   "16bd2d22f86c1e98": "Filter Vim shortcuts",
+  "cb34ca40ee83fccd": "Overrides {commands} in the selected modes.",
   "3272e4d15689de0e": "Vim navigation",
   "1e37b3ac3ed41ce2": "Saved on this client, across connected environments. Prompt editing stays unchanged.",
   "11218e4bf45dd175": "Customize Vim shortcuts",

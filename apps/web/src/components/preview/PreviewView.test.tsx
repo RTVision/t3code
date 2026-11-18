@@ -1,3 +1,4 @@
+import { withI18n } from "../../../test/withI18n";
 import { act } from "../../../test/act";
 import {
   BUILT_IN_BROWSER_PROFILES,
@@ -422,10 +423,12 @@ it.each(["clear", "link", "move"] as const)(
     });
     const render = () =>
       root.render(
-        <AppAtomRegistryProvider>
-          <ElectronBrowserHost />
-          <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />
-        </AppAtomRegistryProvider>,
+        withI18n(
+          <AppAtomRegistryProvider>
+            <ElectronBrowserHost />
+            <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />
+          </AppAtomRegistryProvider>,
+        ),
       );
     try {
       await act(async () => render());
@@ -580,12 +583,12 @@ describe("PreviewView navigation", () => {
     mocks.recordingRuntimeTabId = TEST_RUNTIME_TAB_ID;
     try {
       await act(() => {
-        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+        root.render(withI18n(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />));
       });
       expect(hasCursor(container)).toBe(false);
       mocks.serverEpoch = "replacement-server";
       await act(() => {
-        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+        root.render(withI18n(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />));
       });
       expect(hasCursor(container)).toBe(true);
       expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
@@ -606,9 +609,11 @@ describe("PreviewView navigation", () => {
     try {
       await act(() => {
         root.render(
-          <Profiler id="preview" onRender={onRender}>
-            <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />
-          </Profiler>,
+          withI18n(
+            <Profiler id="preview" onRender={onRender}>
+              <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />
+            </Profiler>,
+          ),
         );
       });
       const initialRenderCount = onRender.mock.calls.length;
@@ -631,14 +636,16 @@ describe("PreviewView navigation", () => {
     ["localhost:5173/app", "http://localhost:5173/app"],
   ])("preserves a direct localhost URL in a WSL environment", async (submitted, expected) => {
     renderToStaticMarkup(
-      <PreviewView
-        threadRef={{
-          environmentId: EnvironmentId.make("environment-1"),
-          threadId: ThreadId.make("thread-1"),
-        }}
-        tabId="tab-1"
-        visible
-      />,
+      withI18n(
+        <PreviewView
+          threadRef={{
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId: ThreadId.make("thread-1"),
+          }}
+          tabId="tab-1"
+          visible
+        />,
+      ),
     );
 
     expect(mocks.submittedUrl).not.toBeNull();
@@ -665,14 +672,16 @@ describe("PreviewView navigation", () => {
     async ({ profileId, records }) => {
       mocks.profileId = profileId;
       renderToStaticMarkup(
-        <PreviewView
-          threadRef={{
-            environmentId: EnvironmentId.make("environment-1"),
-            threadId: ThreadId.make("thread-1"),
-          }}
-          tabId="tab-1"
-          visible
-        />,
+        withI18n(
+          <PreviewView
+            threadRef={{
+              environmentId: EnvironmentId.make("environment-1"),
+              threadId: ThreadId.make("thread-1"),
+            }}
+            tabId="tab-1"
+            visible
+          />,
+        ),
       );
 
       await mocks.submittedUrl?.("localhost:3000/admin");
@@ -702,14 +711,16 @@ describe("PreviewView navigation", () => {
   it("maps an empty-state localhost server onto the WSL host", async () => {
     mocks.showEmptyState = true;
     renderToStaticMarkup(
-      <PreviewView
-        threadRef={{
-          environmentId: EnvironmentId.make("environment-1"),
-          threadId: ThreadId.make("thread-1"),
-        }}
-        tabId="tab-1"
-        visible
-      />,
+      withI18n(
+        <PreviewView
+          threadRef={{
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId: ThreadId.make("thread-1"),
+          }}
+          tabId="tab-1"
+          visible
+        />,
+      ),
     );
 
     expect(mocks.emptyStateUrl).not.toBeNull();
@@ -746,7 +757,7 @@ describe("PreviewView navigation", () => {
       visible: true,
     } as const;
 
-    renderToStaticMarkup(<PreviewView {...props} />);
+    renderToStaticMarkup(withI18n(<PreviewView {...props} />));
     expect(mocks.pictureInPicturePressed).toBe(false);
     mocks.togglePictureInPicture?.();
     expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, {
@@ -756,7 +767,7 @@ describe("PreviewView navigation", () => {
     expect(mocks.closeRightPanel).toHaveBeenCalledWith(props.threadRef);
 
     mocks.miniPlayerTabId = "tab-1";
-    renderToStaticMarkup(<PreviewView {...props} />);
+    renderToStaticMarkup(withI18n(<PreviewView {...props} />));
     expect(mocks.pictureInPicturePressed).toBe(true);
     mocks.togglePictureInPicture?.();
     expect(mocks.closeMiniPlayer).toHaveBeenCalledWith(props.threadRef);
@@ -772,14 +783,14 @@ describe("PreviewView navigation", () => {
       visible: true,
     } as const;
 
-    renderToStaticMarkup(<PreviewView {...props} />);
+    renderToStaticMarkup(withI18n(<PreviewView {...props} />));
     mocks.toggleNativePictureInPicture?.();
     await vi.waitFor(() =>
       expect(mocks.openPictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
     );
 
     mocks.pictureInPicture = true;
-    renderToStaticMarkup(<PreviewView {...props} />);
+    renderToStaticMarkup(withI18n(<PreviewView {...props} />));
     mocks.toggleNativePictureInPicture?.();
     await vi.waitFor(() =>
       expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
@@ -803,12 +814,14 @@ describe("PreviewView navigation", () => {
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
 
     renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
+      withI18n(
+        <PreviewView
+          threadRef={TEST_THREAD_REF}
+          tabId="tab-1"
+          visible
+          onSendAnnotation={onSendAnnotation}
+        />,
+      ),
     );
     mocks.toggleAnnotation?.();
 
@@ -849,7 +862,7 @@ describe("PreviewView navigation", () => {
       />
     );
     try {
-      await act(async () => root.render(view()));
+      await act(async () => root.render(withI18n(view())));
       await act(async () => mocks.toggleAnnotation?.());
       expect(submitPick).toBeDefined();
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
@@ -857,7 +870,7 @@ describe("PreviewView navigation", () => {
       mocks.readEnvironmentScope.mockImplementation(
         (environmentId?: unknown) => environmentId !== TEST_THREAD_REF.environmentId,
       );
-      await act(async () => root.render(view()));
+      await act(async () => root.render(withI18n(view())));
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, false);
       await act(async () => submitPick!());
       expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
@@ -865,7 +878,7 @@ describe("PreviewView navigation", () => {
 
       mocks.readEnvironmentScope.mockReturnValue(true);
       mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-      await act(async () => root.render(view()));
+      await act(async () => root.render(withI18n(view())));
       await act(async () => mocks.toggleAnnotation?.());
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
       expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null);
@@ -888,7 +901,7 @@ describe("PreviewView navigation", () => {
     const root = createRoot(document.createElement("div") as unknown as Element);
     try {
       await act(async () =>
-        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />),
+        root.render(withI18n(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />)),
       );
       await act(async () => mocks.toggleAnnotation?.());
       expect(finishUpdate).toBeDefined();
@@ -921,12 +934,14 @@ describe("PreviewView navigation", () => {
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send", screenshotFailed: true });
 
     renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
+      withI18n(
+        <PreviewView
+          threadRef={TEST_THREAD_REF}
+          tabId="tab-1"
+          visible
+          onSendAnnotation={onSendAnnotation}
+        />,
+      ),
     );
     mocks.toggleAnnotation?.();
 
@@ -956,12 +971,14 @@ describe("PreviewView navigation", () => {
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
 
     renderToStaticMarkup(
-      <PreviewView
-        threadRef={TEST_THREAD_REF}
-        tabId="tab-1"
-        visible
-        onSendAnnotation={onSendAnnotation}
-      />,
+      withI18n(
+        <PreviewView
+          threadRef={TEST_THREAD_REF}
+          tabId="tab-1"
+          visible
+          onSendAnnotation={onSendAnnotation}
+        />,
+      ),
     );
     mocks.toggleAnnotation?.();
 

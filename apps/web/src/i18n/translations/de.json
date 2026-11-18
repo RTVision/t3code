@@ -2954,6 +2954,7 @@
   "4030c7bc86af660f": "Verzögerung der Hilfe, Millisekunden",
   "6097afb7b70512e5": "Zeitlimit für Tastensequenzen, Millisekunden",
   "16bd2d22f86c1e98": "Vim-Tastenkürzel filtern",
+  "cb34ca40ee83fccd": "Überschreibt {commands} in den gewählten Modi.",
   "3272e4d15689de0e": "Vim-Navigation",
   "1e37b3ac3ed41ce2": "Auf diesem Client für alle verbundenen Umgebungen gespeichert. Die Prompt-Bearbeitung bleibt unverändert.",
   "11218e4bf45dd175": "Vim-Tastenkürzel anpassen",

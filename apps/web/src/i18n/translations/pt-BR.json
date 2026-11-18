@@ -2953,6 +2953,7 @@
   "4030c7bc86af660f": "Atraso do guia, milissegundos",
   "6097afb7b70512e5": "Tempo limite da sequência, milissegundos",
   "16bd2d22f86c1e98": "Filtrar atalhos do Vim",
+  "cb34ca40ee83fccd": "Substitui {commands} nos modos selecionados.",
   "3272e4d15689de0e": "Navegação Vim",
   "1e37b3ac3ed41ce2": "Salvo neste cliente para todos os ambientes conectados. A edição de prompts permanece igual.",
   "11218e4bf45dd175": "Personalizar atalhos do Vim",

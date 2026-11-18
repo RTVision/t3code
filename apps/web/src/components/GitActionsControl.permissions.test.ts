@@ -1,3 +1,4 @@
+import { withI18n } from "../../test/withI18n";
 import { act } from "../../test/act";
 import {
   AuthOrchestrationOperateScope,
@@ -266,8 +267,8 @@ async function renderActions() {
     },
   });
   await act(async () => {
-    if (renderer) renderer.update(element);
-    else renderer = create(element);
+    if (renderer) renderer.update(withI18n(element));
+    else renderer = create(withI18n(element));
   });
   const root = renderer!.root;
   const commitMenuItem = root.find(
@@ -277,8 +278,11 @@ async function renderActions() {
     commitMenuItem.props.onClick();
   });
   const buttonHandler = (label: string): (() => void) =>
-    root.find((node) => String(node.type) === "Button" && node.props.children === label).props
-      .onClick;
+    root.find(
+      (node) =>
+        String(node.type) === "Button" &&
+        node.findAll((child) => child.children.includes(label)).length > 0,
+    ).props.onClick;
   const commit = buttonHandler("Commit");
   const commitOnNewBranch = buttonHandler("Commit on new branch");
   return async ({ featureBranch }: { action: "commit"; featureBranch?: boolean }) => {
@@ -432,8 +436,8 @@ async function changedFileButton() {
     },
   });
   await act(async () => {
-    if (renderer) renderer.update(element);
-    else renderer = create(element);
+    if (renderer) renderer.update(withI18n(element));
+    else renderer = create(withI18n(element));
   });
   return renderer!.root.find((node) => node.props["aria-label"] === "Open file.ts in editor").props;
 }

@@ -2953,6 +2953,7 @@
   "4030c7bc86af660f": "Délai du guide, millisecondes",
   "6097afb7b70512e5": "Délai de séquence, millisecondes",
   "16bd2d22f86c1e98": "Filtrer les raccourcis Vim",
+  "cb34ca40ee83fccd": "Remplace {commands} dans les modes choisis.",
   "3272e4d15689de0e": "Navigation Vim",
   "1e37b3ac3ed41ce2": "Enregistré sur ce client pour tous les environnements connectés. L'édition des instructions reste inchangée.",
   "11218e4bf45dd175": "Personnaliser les raccourcis Vim",

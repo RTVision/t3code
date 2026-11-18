@@ -2953,6 +2953,7 @@
   "4030c7bc86af660f": "Fördröjning för guiden, millisekunder",
   "6097afb7b70512e5": "Tidsgräns för tangentsekvens, millisekunder",
   "16bd2d22f86c1e98": "Filtrera Vim-kortkommandon",
+  "cb34ca40ee83fccd": "Åsidosätter {commands} i valda lägen.",
   "3272e4d15689de0e": "Vim-navigering",
   "1e37b3ac3ed41ce2": "Sparas på den här klienten för alla anslutna miljöer. Redigering av instruktioner ändras inte.",
   "11218e4bf45dd175": "Anpassa Vim-kortkommandon",

@@ -1,3 +1,4 @@
+import { withI18n } from "../../../test/withI18n";
 import { act } from "../../../test/act";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
@@ -338,21 +339,23 @@ describe.each([
 
   function render() {
     renderer = create(
-      <PullRequestDetailPanel
-        environmentId={threadRef.environmentId}
-        reference={detail}
-        context={context}
-        {...(target ? { composerDraftTarget: target, threadRef } : {})}
-        shortcutsEnabled={false}
-        getShortcutContext={() => ({
-          terminalFocus: false,
-          terminalOpen: false,
-          previewFocus: false,
-          previewOpen: false,
-          isWeb: true,
-          isDesktop: false,
-        })}
-      />,
+      withI18n(
+        <PullRequestDetailPanel
+          environmentId={threadRef.environmentId}
+          reference={detail}
+          context={context}
+          {...(target ? { composerDraftTarget: target, threadRef } : {})}
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />,
+      ),
     );
   }
 
@@ -434,12 +437,12 @@ it("masks granular Gitea reaction subjects for a read-only panel and restores th
   try {
     access.allowed = false;
     await act(async () => {
-      renderer = create(surface());
+      renderer = create(withI18n(surface()));
     });
     expect(reaction().props.disabled).toBe(true);
     expect(reaction().props["aria-pressed"]).toBe(false);
     access.allowed = true;
-    await act(async () => renderer.update(surface()));
+    await act(async () => renderer.update(withI18n(surface())));
     expect(reaction().props.disabled).toBe(false);
   } finally {
     Object.assign(detail, { capabilities: previous });

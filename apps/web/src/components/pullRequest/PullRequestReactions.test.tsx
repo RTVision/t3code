@@ -1,3 +1,4 @@
+import { withI18n } from "../../../test/withI18n";
 import { act } from "../../../test/act";
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -104,7 +105,7 @@ afterEach(async () => {
 });
 it("preserves readable Gitea counts while denying optimistic updates, then reacts after regrant", async () => {
   await act(async () => {
-    renderer = create(render());
+    renderer = create(withI18n(render()));
   });
   const click = pill().props.onClick;
   expect(pill().props.disabled).toBe(true);
@@ -130,7 +131,7 @@ it("preserves readable Gitea counts while denying optimistic updates, then react
 it("rejects a retained reaction callback immediately after live revocation without optimistic marking", async () => {
   registry.set(sessions(environmentId), AsyncResult.success(session(true)));
   await act(async () => {
-    renderer = create(render());
+    renderer = create(withI18n(render()));
   });
   const click = pill().props.onClick;
   await act(async () => {
@@ -145,10 +146,10 @@ it("rejects a retained reaction callback immediately after live revocation witho
 it("rejects a retained callback when this host subject loses reaction support", async () => {
   registry.set(sessions(environmentId), AsyncResult.success(session(true)));
   await act(async () => {
-    renderer = create(render());
+    renderer = create(withI18n(render()));
   });
   const click = pill().props.onClick;
-  await act(async () => renderer!.update(render(false)));
+  await act(async () => renderer!.update(withI18n(render(false))));
   await act(async () => click());
   expect(state.writes).not.toHaveBeenCalled();
   expect(pill().props.disabled).toBe(true);
@@ -160,10 +161,12 @@ it("uses the current destination grant and subject for a callback retained acros
   registry.set(sessions(environmentId), AsyncResult.success(session(true)));
   registry.set(sessions(nextEnvironmentId), AsyncResult.success(session(false)));
   await act(async () => {
-    renderer = create(render());
+    renderer = create(withI18n(render()));
   });
   const click = pill().props.onClick;
-  await act(async () => renderer!.update(render(true, nextEnvironmentId, "gitea-comment-2")));
+  await act(async () =>
+    renderer!.update(withI18n(render(true, nextEnvironmentId, "gitea-comment-2"))),
+  );
   await act(async () => click());
   expect(state.writes).not.toHaveBeenCalled();
   expect(pill().props["aria-label"]).toBe("thumbs up, 1");

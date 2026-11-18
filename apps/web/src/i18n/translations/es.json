@@ -2953,6 +2953,7 @@
   "4030c7bc86af660f": "Retraso de la guía, milisegundos",
   "6097afb7b70512e5": "Tiempo límite de secuencia, milisegundos",
   "16bd2d22f86c1e98": "Filtrar atajos de Vim",
+  "cb34ca40ee83fccd": "Anula {commands} en los modos seleccionados.",
   "3272e4d15689de0e": "Navegación Vim",
   "1e37b3ac3ed41ce2": "Se guarda en este cliente para todos los entornos conectados. La edición de instrucciones no cambia.",
   "11218e4bf45dd175": "Personalizar atajos de Vim",

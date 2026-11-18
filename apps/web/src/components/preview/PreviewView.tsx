@@ -261,9 +261,15 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // IPC interprets undefined profile ids as all profiles.
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId, messages);
+  // Native guests pin their partition once settings hydrate. Never pass an
+  // unresolved profile to clear-data IPC: undefined means every profile there.
+  const activeProfileId = isServerTab
+    ? (snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID)
+    : ((tabId ? previewState.desktopProfileByTabId?.[tabId] : undefined) ?? snapshot?.profileId);
+  const activeProfileName =
+    activeProfileId === undefined
+      ? undefined
+      : previewProfileName(browserDefaults.profiles, activeProfileId, messages);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
