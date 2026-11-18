@@ -1,3 +1,4 @@
+import { withI18n } from "../../../test/withI18n";
 import { act } from "../../../test/act";
 import { createElement, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -86,7 +87,9 @@ const props = {
 };
 let renderer: ReactTestRenderer;
 const button = (label: string) =>
-  renderer.root.findAllByType("button").find((node) => node.props.children === label)!;
+  renderer.root
+    .findAllByType("button")
+    .find((node) => node.findAll((child) => child.children.includes(label)).length > 0)!;
 
 beforeEach(() => {
   mocks.pending = false;
@@ -102,7 +105,7 @@ afterEach(async () => {
 
 it("loads jobs only after expanding a run, and opens their host details", async () => {
   await act(async () => {
-    renderer = create(<PullRequestCiRuns {...props} />);
+    renderer = create(withI18n(<PullRequestCiRuns {...props} />));
   });
   expect(mocks.jobs).not.toHaveBeenCalled();
   await act(async () => button("CI").props.onClick());
@@ -117,7 +120,7 @@ it("shows shared rerun progress and allows another request after CI refreshes", 
     return { _tag: "Success", value: undefined };
   });
   await act(async () => {
-    renderer = create(<PullRequestCiRuns {...props} />);
+    renderer = create(withI18n(<PullRequestCiRuns {...props} />));
   });
   await act(async () => {
     button("Rerun failed").props.onClick();
@@ -139,7 +142,7 @@ it("shows shared rerun progress and allows another request after CI refreshes", 
 it("does not submit a rerun while the run data is refreshing", async () => {
   mocks.pending = true;
   await act(async () => {
-    renderer = create(<PullRequestCiRuns {...props} />);
+    renderer = create(withI18n(<PullRequestCiRuns {...props} />));
   });
   await act(async () => button("Rerun all").props.onClick());
   expect(mocks.rerun).not.toHaveBeenCalled();
@@ -148,7 +151,7 @@ it("does not submit a rerun while the run data is refreshing", async () => {
 
 it("blocks reruns after source control permission is revoked", async () => {
   await act(async () => {
-    renderer = create(<PullRequestCiRuns {...props} />);
+    renderer = create(withI18n(<PullRequestCiRuns {...props} />));
   });
   await act(async () => {
     registry.set(rerunPermission, false);

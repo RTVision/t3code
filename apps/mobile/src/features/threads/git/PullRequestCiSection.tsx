@@ -1,3 +1,5 @@
+import { m } from "../../../i18n/messages";
+import { msg, T, useGT } from "gt-react-native";
 import * as Dialog from "../../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -41,7 +43,7 @@ function Action({
 
 function open(url: string) {
   void tryOpenExternalUrl(url, "pull-request").then((opened) => {
-    if (!opened) Dialog.alert("Unable to open CI details");
+    if (!opened) Dialog.alert(m(msg("Unable to open CI details")));
   });
 }
 
@@ -56,6 +58,7 @@ function Jobs({
   disabled: boolean;
   onRerun: (target: PullRequestCiRerunTarget) => void;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(pullRequestCiEnvironment.ciJobs({ environmentId, input }));
   if (query.error)
     return (
@@ -63,7 +66,12 @@ function Jobs({
         {query.error}
       </Text>
     );
-  if (!query.data) return <Text className="text-sm text-muted-foreground">Loading jobs…</Text>;
+  if (!query.data)
+    return (
+      <Text className="text-sm text-muted-foreground">
+        <T>Loading jobs…</T>
+      </Text>
+    );
   return (
     <View className="gap-1 pl-2">
       {query.data.jobs.map((job) => (
@@ -74,7 +82,7 @@ function Jobs({
           </View>
           {job.canRerun && (
             <Action
-              label="Rerun job"
+              label={gt("Rerun job")}
               disabled={disabled || query.isPending}
               onPress={() => onRerun({ kind: "job", jobId: job.id })}
             />
@@ -82,10 +90,12 @@ function Jobs({
         </View>
       ))}
       {query.data.truncated && (
-        <Text className="text-xs text-muted-foreground">More jobs are available on the host.</Text>
+        <Text className="text-xs text-muted-foreground">
+          <T>More jobs are available on the host.</T>
+        </Text>
       )}
       <Text className="text-xs text-muted-foreground">
-        Rerunning a job may also rerun dependent jobs.
+        <T>Rerunning a job may also rerun dependent jobs.</T>
       </Text>
     </View>
   );
@@ -104,6 +114,7 @@ function Run({
   run: PullRequestCiRun;
   disabled: boolean;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const rerun = useAtomCommand(pullRequestCiEnvironment.rerunCi, { reportFailure: false });
   const input = { ...reference, runId: run.id, headSha, attempt: run.attempt };
@@ -119,8 +130,8 @@ function Run({
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Unable to rerun CI",
-        error instanceof Error ? error.message : "The host refused the rerun.",
+        gt("Unable to rerun CI"),
+        error instanceof Error ? error.message : gt("The host refused the rerun."),
       );
     }
   };
@@ -135,14 +146,14 @@ function Run({
         <Text className="font-t3-bold text-foreground">{run.name}</Text>
       </Pressable>
       <Text accessibilityLiveRegion="polite" className="text-xs text-muted-foreground">
-        {pending ? "Requesting rerun…" : requested ? "Rerun requested" : run.status}
+        {pending ? gt("Requesting rerun…") : requested ? gt("Rerun requested") : run.status}
       </Text>
       <View className="flex-row flex-wrap">
-        {run.url && <Action label="Open run" onPress={() => open(run.url!)} />}
+        {run.url && <Action label={gt("Open run")} onPress={() => open(run.url!)} />}
         {run.rerunModes.map((kind) => (
           <Action
             key={kind}
-            label={kind === "all" ? "Rerun all" : "Rerun failed"}
+            label={kind === "all" ? gt("Rerun all") : gt("Rerun failed")}
             disabled={disabled || pending || requested || !canRerun}
             onPress={() => void submit({ kind })}
           />
@@ -167,6 +178,7 @@ function Runs({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(
     pullRequestCiEnvironment.ciRuns({ environmentId, input: reference }),
   );
@@ -174,7 +186,7 @@ function Runs({
   return (
     <View className="gap-2">
       <Action
-        label="Refresh CI"
+        label={gt("Refresh CI")}
         disabled={query.isPending}
         onPress={() => {
           void invalidate({ environmentId, input: { reference } });
@@ -198,16 +210,20 @@ function Runs({
             />
           ))}
           {query.data.runs.length === 0 && (
-            <Text className="text-sm text-muted-foreground">No CI runs for this revision.</Text>
+            <Text className="text-sm text-muted-foreground">
+              <T>No CI runs for this revision.</T>
+            </Text>
           )}
           {query.data.truncated && (
             <Text className="text-xs text-muted-foreground">
-              More runs are available on the host.
+              <T>More runs are available on the host.</T>
             </Text>
           )}
         </>
       ) : query.isPending ? (
-        <Text className="text-sm text-muted-foreground">Loading CI runs…</Text>
+        <Text className="text-sm text-muted-foreground">
+          <T>Loading CI runs…</T>
+        </Text>
       ) : null}
     </View>
   );
@@ -229,7 +245,12 @@ function Checks({
         {query.error}
       </Text>
     );
-  if (!query.data) return <Text className="text-sm text-muted-foreground">Loading checks…</Text>;
+  if (!query.data)
+    return (
+      <Text className="text-sm text-muted-foreground">
+        <T>Loading checks…</T>
+      </Text>
+    );
   return (
     <View className="gap-2">
       {query.data.capabilities.ciRuns ? (
@@ -246,7 +267,9 @@ function Checks({
         </View>
       ))}
       {!query.data.capabilities.ciRuns && query.data.checks.length === 0 && (
-        <Text className="text-sm text-muted-foreground">No checks reported.</Text>
+        <Text className="text-sm text-muted-foreground">
+          <T>No checks reported.</T>
+        </Text>
       )}
     </View>
   );
@@ -268,7 +291,9 @@ export function PullRequestCiSection({
         onPress={() => setExpanded(!expanded)}
         className="min-h-11 justify-center"
       >
-        <Text className="font-t3-bold text-foreground">CI runs and checks</Text>
+        <Text className="font-t3-bold text-foreground">
+          <T>CI runs and checks</T>
+        </Text>
       </Pressable>
       {expanded && <Checks environmentId={environmentId} reference={reference} />}
     </View>

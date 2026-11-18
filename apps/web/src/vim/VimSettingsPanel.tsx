@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useState } from "react";
 import { DEFAULT_VIM_SETTINGS, type VimSettings } from "@t3tools/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
@@ -9,6 +10,7 @@ import { Switch } from "../components/ui/switch";
 import { toastManager } from "../components/ui/toast";
 import { bindingWarnings, resolveVimBindings, type VimBinding, type VimMode } from "./bindings";
 export function VimSettingsPanel() {
+  const gt = useGT();
   const settings = useClientSettings((value) => value.vim);
   const legacy = useAtomValue(primaryServerKeybindingsAtom);
   const [query, setQuery] = useState("");
@@ -16,40 +18,46 @@ export function VimSettingsPanel() {
   const save = (update: (current: VimSettings) => VimSettings) => {
     void persistClientSettingsUpdate((current) => ({ ...current, vim: update(current.vim) })).catch(
       () => {
-        toastManager.add({ type: "error", title: "Could not save Vim preferences" });
+        toastManager.add({ type: "error", title: gt("Could not save Vim preferences") });
       },
     );
   };
   return (
-    <section className="space-y-4 rounded-lg border p-4" aria-label="Vim navigation">
+    <section className="space-y-4 rounded-lg border p-4" aria-label={gt("Vim navigation")}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-sm font-medium">Vim navigation</h2>
+          <h2 className="text-sm font-medium">
+            <T>Vim navigation</T>
+          </h2>
           <p className="text-xs text-muted-foreground">
-            Saved on this client, across connected environments. Prompt editing stays unchanged.
+            <T>
+              Saved on this client, across connected environments. Prompt editing stays unchanged.
+            </T>
           </p>
         </div>
         <Switch
           checked={settings.enabled}
           onCheckedChange={(enabled) => save((current) => ({ ...current, enabled }))}
-          aria-label="Enable Vim navigation"
+          aria-label={gt("Enable Vim navigation")}
         />
       </div>
       <details>
-        <summary className="cursor-pointer text-sm">Customize Vim shortcuts</summary>
+        <summary className="cursor-pointer text-sm">
+          <T>Customize Vim shortcuts</T>
+        </summary>
         <div className="mt-3 space-y-3" data-keybinding-capture>
           <label className="flex items-center gap-2 text-xs">
             <Switch
               checked={settings.guideEnabled}
               onCheckedChange={(guideEnabled) => save((current) => ({ ...current, guideEnabled }))}
             />
-            Show pending-key guide
+            <T>Show pending-key guide</T>
           </label>
           {(["guideDelayMs", "sequenceTimeoutMs"] as const).map((key) => (
             <label key={key} className="flex items-center justify-between gap-2 text-xs">
               {key === "guideDelayMs"
-                ? "Guide delay, milliseconds"
-                : "Sequence timeout, milliseconds"}
+                ? gt("Guide delay, milliseconds")
+                : gt("Sequence timeout, milliseconds")}
               <input
                 className="w-24 rounded border px-2 py-1"
                 type="number"
@@ -74,17 +82,21 @@ export function VimSettingsPanel() {
             </label>
           ))}
           <p className="text-xs text-muted-foreground">
-            The guide stays open until you choose a command or cancel. Sequence timeout applies to
-            counts and shortcuts without the guide.
+            <T>
+              The guide stays open until you choose a command or cancel. Sequence timeout applies to
+              counts and shortcuts without the guide.
+            </T>
           </p>
           <p className="text-xs text-muted-foreground">
-            Separate strokes with spaces, alternatives with commas. Use uppercase letters for Shift,
-            such as G. Empty keys disable a command. Vim wins over ordinary shortcuts only in the
-            selected modes.
+            <T>
+              Separate strokes with spaces, alternatives with commas. Use uppercase letters for
+              Shift, such as G. Empty keys disable a command. Vim wins over ordinary shortcuts only
+              in the selected modes.
+            </T>
           </p>
           <input
-            aria-label="Filter Vim shortcuts"
-            placeholder="Filter Vim shortcuts"
+            aria-label={gt("Filter Vim shortcuts")}
+            placeholder={gt("Filter Vim shortcuts")}
             className="w-full rounded border px-2 py-1 text-sm"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -134,7 +146,7 @@ export function VimSettingsPanel() {
               save((current) => ({ ...DEFAULT_VIM_SETTINGS, enabled: current.enabled }))
             }
           >
-            Reset Vim defaults
+            <T>Reset Vim defaults</T>
           </Button>
         </div>
       </details>
@@ -154,6 +166,7 @@ function BindingEditor({
   onSave: (keys: string[], modes: readonly VimMode[]) => void;
   onReset: () => void;
 }) {
+  const gt = useGT();
   const [draft, setDraft] = useState(binding.keys.join(", "));
   const [modes, setModes] = useState(binding.modes);
   const keys = draft
@@ -198,10 +211,10 @@ function BindingEditor({
           size="xs"
           disabled={warnings.some((warning) => warning.startsWith("Invalid"))}
         >
-          Save
+          <T>Save</T>
         </Button>
         <Button type="button" size="xs" variant="ghost" onClick={onReset}>
-          Reset
+          <T>Reset</T>
         </Button>
       </div>
       {warnings.map((warning) => (
@@ -211,7 +224,7 @@ function BindingEditor({
       ))}
       {legacyLabels.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Overrides {legacyLabels.join(", ")} in the selected modes.
+          {gt("Overrides {commands} in the selected modes.", { commands: legacyLabels.join(", ") })}
         </p>
       )}
     </form>

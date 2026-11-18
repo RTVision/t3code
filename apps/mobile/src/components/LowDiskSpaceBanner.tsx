@@ -1,3 +1,4 @@
+import { useMessages, useGT } from "gt-react-native";
 import { describeLowDiskSpace } from "@t3tools/client-runtime/low-disk-space";
 import type { ServerLowDiskSpace } from "@t3tools/contracts";
 import { View } from "react-native";
@@ -10,8 +11,10 @@ export function LowDiskSpaceBanner(props: {
   readonly report: ServerLowDiskSpace;
   readonly environmentLabel: string | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const critical = props.report.level === "critical";
-  const where = props.environmentLabel ?? "server";
+  const where = props.environmentLabel ?? gt("server");
   return (
     <View
       accessibilityRole="alert"
@@ -27,7 +30,9 @@ export function LowDiskSpaceBanner(props: {
         )}
         numberOfLines={1}
       >
-        {critical ? "Disk almost full" : "Low disk space"} on {where}
+        {critical
+          ? gt("Disk almost full on {environment}", { environment: where })
+          : gt("Low disk space on {environment}", { environment: where })}
       </Text>
       <Text
         className={cn(
@@ -36,7 +41,7 @@ export function LowDiskSpaceBanner(props: {
         )}
         numberOfLines={3}
       >
-        {describeLowDiskSpace(props.report)}
+        {describeLowDiskSpace(props.report, messages)}
       </Text>
     </View>
   );

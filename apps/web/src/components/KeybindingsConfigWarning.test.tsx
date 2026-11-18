@@ -1,3 +1,4 @@
+import { withI18n } from "../../test/withI18n";
 import { act } from "../../test/act";
 import { RegistryContext } from "@effect/atom-react";
 import {
@@ -129,14 +130,16 @@ afterEach(async () => {
 it("updates a visible warning on revocation and blocks its retained action until regrant", async () => {
   await act(async () => {
     renderer = create(
-      <RegistryContext.Provider value={state.registry!}>
-        <KeybindingsConfigWarning
-          environmentId={environmentId}
-          configPath="/t3/keybindings.json"
-          availableEditors={["vscode"]}
-          message="Invalid shortcut"
-        />
-      </RegistryContext.Provider>,
+      withI18n(
+        <RegistryContext.Provider value={state.registry!}>
+          <KeybindingsConfigWarning
+            environmentId={environmentId}
+            configPath="/t3/keybindings.json"
+            availableEditors={["vscode"]}
+            message="Invalid shortcut"
+          />
+        </RegistryContext.Provider>,
+      ),
     );
   });
   const open = renderer!.root.findByType("button").props.onClick;
@@ -184,14 +187,16 @@ it.each(["terminal", "remote-gui"] as const)(
     );
     await act(async () => {
       renderer = create(
-        <RegistryContext.Provider value={state.registry!}>
-          <KeybindingsConfigWarning
-            environmentId={environmentId}
-            configPath="/t3/keybindings.json"
-            availableEditors={route === "terminal" ? [] : ["vscode"]}
-            message="Invalid shortcut"
-          />
-        </RegistryContext.Provider>,
+        withI18n(
+          <RegistryContext.Provider value={state.registry!}>
+            <KeybindingsConfigWarning
+              environmentId={environmentId}
+              configPath="/t3/keybindings.json"
+              availableEditors={route === "terminal" ? [] : ["vscode"]}
+              message="Invalid shortcut"
+            />
+          </RegistryContext.Provider>,
+        ),
       );
     });
     const button = renderer!.root.findByType("button");
@@ -216,11 +221,11 @@ it("refreshes warning availability when the selected editor route and live grant
   );
   const disabled = () => renderer!.root.findByType("button").props.disabled;
   await act(async () => {
-    renderer = create(warning());
+    renderer = create(withI18n(warning()));
   });
   expect(disabled()).toBe(false);
   state.choice = { kind: "terminal", editor: "neovim" };
-  await act(async () => renderer!.update(warning()));
+  await act(async () => renderer!.update(withI18n(warning())));
   expect(disabled()).toBe(true);
   await act(async () =>
     state.registry!.set(
@@ -233,14 +238,14 @@ it("refreshes warning availability when the selected editor route and live grant
   state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "dev" } };
   await act(async () => {
     state.registry!.set(state.sessions.get(environmentId)!, AsyncResult.success(session([])));
-    renderer!.update(warning());
+    renderer!.update(withI18n(warning()));
   });
   expect(disabled()).toBe(false);
   state.remote = { mode: "remote-unavailable" };
-  await act(async () => renderer!.update(warning()));
+  await act(async () => renderer!.update(withI18n(warning())));
   expect(disabled()).toBe(true);
   state.remote = { mode: "local-exec" };
-  await act(async () => renderer!.update(warning()));
+  await act(async () => renderer!.update(withI18n(warning())));
   expect(disabled()).toBe(true);
   await act(async () =>
     state.registry!.set(

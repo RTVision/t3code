@@ -27,6 +27,14 @@ vi.hoisted(() => {
     },
   });
 });
+vi.mock("gt-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("gt-react")>();
+  return {
+    ...actual,
+    useGT: () => actual.gtFallback,
+    useMessages: () => actual.mFallback,
+  };
+});
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness: hooks } = await import("../../test/reactHookHarness");

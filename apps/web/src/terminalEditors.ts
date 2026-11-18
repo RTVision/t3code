@@ -1,3 +1,5 @@
+import { m } from "~/i18n/messages";
+import { msg } from "gt-react";
 import type {
   EnvironmentId,
   TerminalEditorCapability,
@@ -10,7 +12,9 @@ import { useEnvironmentPresentation } from "./state/presentation";
 import { useEnvironmentQuery } from "./state/query";
 const CHECKING: TerminalEditorCapability = {
   state: "checking",
-  message: "Checking Neovim…",
+  get message() {
+    return m(msg("Checking Neovim…"));
+  },
   preferenceKey: "",
   routeGeneration: "",
   terminals: [],
@@ -21,13 +25,17 @@ const DISCONNECTED: TerminalEditorCapability = {
   ...CHECKING,
   state: "unavailable",
   reason: "disconnected",
-  message: "Connect the environment to check Neovim.",
+  get message() {
+    return m(msg("Connect the environment to check Neovim."));
+  },
 };
 const DESKTOP_REQUIRED: TerminalEditorCapability = {
   ...CHECKING,
   state: "unavailable",
   reason: "desktop-required",
-  message: "Neovim (Terminal) requires a desktop app with terminal editor support.",
+  get message() {
+    return m(msg("Neovim (Terminal) requires a desktop app with terminal editor support."));
+  },
 };
 const cache = new Map<
   string,
@@ -70,7 +78,7 @@ function probe(input: TerminalEditorProbeInput) {
         ...CHECKING,
         state: "unavailable",
         reason: "probe-error",
-        message: error instanceof Error ? error.message : "Could not check Neovim.",
+        message: error instanceof Error ? error.message : m(msg("Could not check Neovim.")),
       })),
   };
   cache.set(key, entry);

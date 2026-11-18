@@ -21,6 +21,8 @@ import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
+import { m } from "./i18n/messages";
 import { useEditorPreference } from "./editorPreferenceStorage";
 import { useEffect } from "react";
 import { randomUUID } from "./lib/utils";
@@ -40,8 +42,12 @@ export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<
   "PreferredEditorEnvironmentRequiredError",
   { targetPath: Schema.String },
 ) {
-  override get message() {
-    return `Cannot open ${this.targetPath} because no environment is selected.`;
+  override get message(): string {
+    return m(
+      msg("Cannot open {targetPath} because no environment is selected.", {
+        targetPath: this.targetPath,
+      }),
+    );
   }
 }
 export class PreferredEditorUnavailableError extends Schema.TaggedError<PreferredEditorUnavailableError>()(
@@ -52,8 +58,13 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
     availableEditorIds: Schema.Array(EditorId),
   },
 ) {
-  override get message() {
-    return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
+  override get message(): string {
+    return m(
+      msg("No available editor can open {targetPath} in environment {environmentId}.", {
+        targetPath: this.targetPath,
+        environmentId: this.environmentId,
+      }),
+    );
   }
 }
 export class EditorOpenError extends Schema.TaggedError<EditorOpenError>()("EditorOpenError", {
