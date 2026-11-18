@@ -47,6 +47,14 @@ it("paints only matches near the viewport plus the active one, in a row with mor
   using timeline = mountTimeline(
     `<div data-timeline-row-id="row"><div data-thread-find-text>${"e x".repeat(count)}</div></div>`,
   );
+  // Chromium may split the long row into multiple text nodes.
+  const startOffset = (range: Range) => {
+    const text = document.createTreeWalker(timeline.container, NodeFilter.SHOW_TEXT);
+    let offset = range.startOffset;
+    for (let node = text.nextNode(); node && node !== range.startContainer; node = text.nextNode())
+      offset += node.textContent?.length ?? 0;
+    return offset;
+  };
   await using _screen = await render(
     <Highlights
       container={timeline.container}
@@ -59,14 +67,14 @@ it("paints only matches near the viewport plus the active one, in a row with mor
   const visible = painted();
   expect(visible.length).toBeGreaterThan(0);
   expect(visible.length).toBeLessThan(5_000);
-  expect(Math.max(...visible.map((range) => range.startOffset))).toBeLessThan(count);
+  expect(Math.max(...visible.map(startOffset))).toBeLessThan(count);
   expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
-  expect(onActiveRange.mock.lastCall?.[0]?.startOffset).toBe((count - 1) * 3);
+  const active = onActiveRange.mock.lastCall?.[0];
+  expect(active?.toString()).toBe("e");
+  expect(startOffset(active!)).toBe((count - 1) * 3);
 
   timeline.container.scrollTop = timeline.container.scrollHeight;
-  await vi.waitFor(() =>
-    expect(Math.max(...painted().map((range) => range.startOffset))).toBe((count - 2) * 3),
-  );
+  await vi.waitFor(() => expect(Math.max(...painted().map(startOffset))).toBe((count - 2) * 3));
   expect(painted().length).toBeLessThan(5_000);
 });
 
