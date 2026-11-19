@@ -173,14 +173,13 @@ jobs:
         if: matrix.platform == 'win'
         shell: bash
         run: node apps/server/scripts/cli.ts build-exe --verbose
-      - name: Build and verify Windows CLI archive
+      - name: Build Windows CLI archive
         if: matrix.platform == 'win'
         shell: bash
         run: |
           mkdir -p cli-resource-monitor/win32-x64
           cp resource-monitor/t3-resource-monitor.exe cli-resource-monitor/win32-x64/
           node scripts/build-cli-archive.ts --platform win --arch x64 --version "${{ needs.prepare.outputs.version }}" --resource-monitor-dir cli-resource-monitor --output-dir release-cli
-          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
       - uses: actions/upload-artifact@v7
         if: matrix.platform == 'win'
         with:
@@ -188,8 +187,31 @@ jobs:
           path: release-cli/*
           if-no-files-found: error
 
-  cli:
+  windows-cli-smoke:
     needs: [prepare, desktop]
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --frozen-lockfile
+              - --filter=@t3tools/scripts...
+      - uses: actions/download-artifact@v8
+        with:
+          name: rtvision-cli-win32-x64
+          path: release-cli
+      - name: Smoke-test Windows CLI archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/smoke-cli-archive.ts --archive "release-cli/t3-$VERSION-win32-x64.zip" --expect-version "$VERSION"
+
+  cli:
+    needs: [prepare, desktop, windows-cli-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
