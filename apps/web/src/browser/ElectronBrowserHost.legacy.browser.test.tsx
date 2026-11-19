@@ -17,6 +17,7 @@ vi.mock("~/components/preview/usePreviewSession", () => ({
   useDesktopHostedPreviewSessions: vi.fn(),
 }));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {} } }));
+vi.mock("~/state/previewTunnel", () => ({ readPreviewTunnelUrl: vi.fn() }));
 vi.mock("~/state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => undefined }));
 vi.mock("./browserDefaults", () => ({ useBrowserDefaults: () => ({}) }));

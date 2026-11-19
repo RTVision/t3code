@@ -745,7 +745,7 @@ describe("ssh tunnel scripts", () => {
         const bin = NodePath.join(root, "bin");
         NodeFS.mkdirSync(bin);
         NodeFS.mkdirSync(NodePath.join(root, "home"));
-        // A host the release archive cannot run on, so only reuse can succeed.
+        // This host has no archive. Stub its npm fallback to keep the test off the registry.
         NodeFS.writeFileSync(
           NodePath.join(bin, "uname"),
           `#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n`,
@@ -754,6 +754,11 @@ describe("ssh tunnel scripts", () => {
         NodeFS.writeFileSync(
           NodePath.join(bin, "t3"),
           `#!/bin/sh\ncase "$1" in --version) echo "t3 v${installed}"; exit ${status} ;; *) echo "host t3 $*" ;; esac\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "npm"),
+          '#!/bin/sh\nprintf "npm fallback: %s\\n" "$*" >&2\nexit 1\n',
           { mode: 0o755 },
         );
         const runner = NodePath.join(root, "run-t3.sh");
@@ -768,6 +773,7 @@ describe("ssh tunnel scripts", () => {
         } else {
           assert.notEqual(result.status, 0);
           assert.include(result.stderr, "has no t3 release archive.");
+          assert.include(result.stderr, `t3@npm:@rtvision/t3@${ARCHIVE.archiveVersion}`);
         }
       } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });
