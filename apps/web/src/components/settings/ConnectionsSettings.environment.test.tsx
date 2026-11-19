@@ -111,6 +111,7 @@ vi.mock("../../cloud/useCloudLinkController", () => ({
     managedTunnelActive: false,
     publishAgentActivity: false,
     holdWebhooksWhileOffline: false,
+    needsRelayConfiguration: () => false,
     reconcileCloudState: state.reconcile,
   }),
 }));

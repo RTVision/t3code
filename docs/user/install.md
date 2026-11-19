@@ -84,7 +84,7 @@ Download the Windows x64 or Linux x64 installer from
 [RTVision GitHub Releases](https://github.com/RTVision/t3code/releases).
 Desktop installers are unsigned.
 
-The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+The AUR packages support x86_64 and ARM64.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 

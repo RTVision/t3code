@@ -242,8 +242,6 @@ try {
     },
   );
 
-  // Match release installs: keep locked dependency versions so new registry releases cannot
-  // bypass the version-specific patches while checking a package version bump.
   NodeChildProcess.execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",
