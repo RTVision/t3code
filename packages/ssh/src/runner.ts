@@ -87,18 +87,20 @@ export const buildWslSshEnvironment = Effect.fn("ssh/runner.buildWslSshEnvironme
 
 export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
   args: ReadonlyArray<string>,
-  options: { readonly env: NodeJS.ProcessEnv; readonly stdin: Stream.Stream<Uint8Array> },
+  options: { readonly env: NodeJS.ProcessEnv; readonly stdin: Stream.Stream<Uint8Array> | "pipe" },
 ) {
   const runner = yield* SshRunner;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const command = yield* sshCommandForRunner;
+  const stdin =
+    options.stdin === "pipe" ? options.stdin : { stream: options.stdin, endOnDone: true };
   if (runner.kind === "native") {
     return yield* spawner.spawn(
       ChildProcess.make(command, args, {
         env: options.env,
         extendEnv: true,
         forceKillAfter: "1 second",
-        stdin: { stream: options.stdin, endOnDone: true },
+        stdin,
       }),
     );
   }
@@ -149,7 +151,7 @@ export const spawnSsh = Effect.fn("ssh/runner.spawnSsh")(function* (
       {
         env: yield* buildWslSshEnvironment(options.env),
         extendEnv: true,
-        stdin: { stream: options.stdin, endOnDone: true },
+        stdin,
       },
     ),
   );

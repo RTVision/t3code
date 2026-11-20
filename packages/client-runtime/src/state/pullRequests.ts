@@ -414,17 +414,20 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
 ): C {
   return {
     ...command,
-    run: async (registry, target) => {
-      const edit = editOf(registry, target);
-      if (edit === null) return command.run(registry, target);
-      const edits = pullRequestPendingEditsAtom(target.environmentId);
-      registry.update(edits, (current) => [...current, edit]);
-      try {
-        return await command.run(registry, target);
-      } finally {
-        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
-      }
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        const edit = editOf(registry, target);
+        if (edit === null) return command.run(registry, target);
+        const edits = pullRequestPendingEditsAtom(target.environmentId);
+        return Effect.acquireUseRelease(
+          Effect.sync(() => registry.update(edits, (current) => [...current, edit])),
+          () => command.run(registry, target),
+          () =>
+            Effect.sync(() =>
+              registry.update(edits, (current) => current.filter((entry) => entry !== edit)),
+            ),
+        );
+      }),
   } satisfies AtomCommand<Target, A, E>;
 }
 
@@ -1034,26 +1037,33 @@ export function createPullRequestCiEnvironmentAtoms<R, E>(
   });
   const rerunCi: typeof requestRerun = {
     ...requestRerun,
-    run: async (registry, target) => {
+    run: Effect.fn("PullRequests.rerunCi")(function* (registry, target) {
       const key = stateKey(target);
-      if (registry.get(rerunState(key)) !== "idle") return AsyncResult.success(undefined);
+      if (registry.get(rerunState(key)) !== "idle") return;
       const submission = submissions(key);
       const runs = ciRuns(target);
-      const unmount = registry.mount(submission);
-      registry.set(submission, { phase: "pending" });
-      try {
-        const result = await requestRerun.run(registry, target);
-        const observed = lastResponse(registry.get(runs));
-        registry.set(
-          submission,
-          result._tag === "Success" ? { phase: "requested", observed } : null,
-        );
-        return result;
-      } finally {
-        if (registry.get(submission)?.phase === "pending") registry.set(submission, null);
-        unmount();
-      }
-    },
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const unmount = registry.mount(submission);
+          registry.set(submission, { phase: "pending" });
+          return unmount;
+        }),
+        () =>
+          requestRerun.run(registry, target).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                const observed = lastResponse(registry.get(runs));
+                registry.set(submission, { phase: "requested", observed });
+              }),
+            ),
+          ),
+        (unmount) =>
+          Effect.sync(() => {
+            if (registry.get(submission)?.phase === "pending") registry.set(submission, null);
+            unmount();
+          }),
+      );
+    }),
   };
   return {
     ciRuns,
