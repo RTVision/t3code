@@ -40,6 +40,8 @@ import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
+  controlMasterArgs,
+  findLiveControlPath,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
@@ -580,6 +582,10 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; return 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
+  if ! command -v tar >/dev/null 2>&1; then
+    printf 'Remote host needs tar to unpack %s. Install tar on it and try again.\\n' "$T3_ARCHIVE" >&2
+    return 1
+  fi
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
@@ -605,7 +611,7 @@ if ! t3_runtime_ready; then
     if command -v gzip >/dev/null 2>&1; then printf '%s\\n' "$T3_TAR_ERROR" >&2
     else printf 'Remote host needs gzip to unpack %s. Install gzip on it and try again.\\n' "$T3_ARCHIVE" >&2
     fi
-    exit 1
+    return 1
   fi
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
@@ -655,6 +661,12 @@ const REMOTE_MANAGED_SERVER_RUNNING_SCRIPT = `managed_server_running() {
   ! ps -ww -o args= -p "$$" >/dev/null 2>&1
 }`;
 
+// NFS-shared homes can link ~/.t3 to a directory that does not exist yet, and
+// mkdir -p fails with EEXIST on a dangling symlink, so create its target first.
+const REMOTE_ENSURE_T3_HOME_SCRIPT = `if [ -L "$HOME/.t3" ] && [ ! -e "$HOME/.t3" ]; then
+  (cd "$HOME" && mkdir -p "$(readlink .t3)")
+fi`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
@@ -670,6 +682,7 @@ RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
 LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
+@@T3_ENSURE_T3_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
 cleanup_launch() {
   rm -f "$RUNNER_NEXT"
@@ -1105,6 +1118,7 @@ const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+@@T3_ENSURE_T3_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
@@ -1218,6 +1232,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
     T3_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
+    T3_ENSURE_T3_HOME_SCRIPT: REMOTE_ENSURE_T3_HOME_SCRIPT,
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
@@ -1233,6 +1248,7 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
 export function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: stateKey,
+    T3_ENSURE_T3_HOME_SCRIPT: REMOTE_ENSURE_T3_HOME_SCRIPT,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
@@ -1550,6 +1566,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly authOptions: SshAuth.SshAuthOptions;
+  /** Forward through this live ControlMaster instead of signing in again. */
+  readonly controlPath: string | null;
   readonly remoteServerKind: "external" | "managed" | null;
 }): Effect.fn.Return<
   { readonly exited: Effect.Effect<never, SshCommandError> },
@@ -1586,7 +1604,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   const sshRunner = yield* SshRunner;
   const runnerDescription = yield* describeSshRunner;
   yield* forwardWslTunnel(input.localPort);
-  const args = [
+  const directArgs = [
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
@@ -1609,9 +1627,43 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "--",
     hostSpec,
   ];
+  const { controlPath } = input;
+  // The master's own GatewayPorts would otherwise decide the bind address.
+  const forwardHost = sshRunner.kind === "wsl" ? sshRunner.tunnelHost : "127.0.0.1";
+  const controlMasterForward = `${forwardHost}:${input.localPort}:127.0.0.1:${input.remotePort}`;
+  const { args, stdin } =
+    controlPath === null
+      ? { args: directArgs, stdin: Stream.empty }
+      : {
+          // A mux client with -N exits once the master takes the forward, so hold a session
+          // open on stdin to keep a process whose exit means the tunnel is gone.
+          args: [
+            ...baseSshArgs(input.resolvedTarget, { batchMode: "yes" }),
+            ...controlMasterArgs(controlPath),
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ControlMaster=no",
+            "-T",
+            "-L",
+            controlMasterForward,
+            "--",
+            hostSpec,
+            "sh -c 'exec cat >/dev/null'",
+          ],
+          stdin: "pipe" as const,
+        };
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
   const scope = yield* Scope.Scope;
+  if (controlPath !== null) {
+    const cancelForward = runSshCommand(input.resolvedTarget, {
+      preHostArgs: [...controlMasterArgs(controlPath), "-O", "cancel", "-L", controlMasterForward],
+    });
+    const services = yield* Effect.context<Effect.Services<typeof cancelForward>>();
+    // The master keeps a forward after the mux client exits.
+    yield* Scope.addFinalizer(scope, cancelForward.pipe(Effect.provide(services), Effect.ignore));
+  }
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
     command: tunnelCommand,
@@ -1620,7 +1672,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     remoteServerKind: input.remoteServerKind,
     httpBaseUrl: input.httpBaseUrl,
   });
-  const child = yield* spawnSsh(args, { env: childEnvironment, stdin: Stream.empty }).pipe(
+  const child = yield* spawnSsh(args, { env: childEnvironment, stdin }).pipe(
     Effect.mapError(
       (cause) =>
         new SshCommandError({
@@ -2026,8 +2078,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       remotePort,
     });
     const entryScope = yield* Scope.fork(managerScope, "sequential");
-    const connect = Effect.fn("ssh/tunnel.connect")(function* (
+    const connectAttempt = Effect.fn("ssh/tunnel.connectAttempt")(function* (
       authOptions: SshAuth.SshAuthOptions,
+      controlPath: string | null,
     ) {
       const attemptScope = yield* Scope.fork(entryScope, "sequential");
       return yield* startSshTunnel({
@@ -2038,6 +2091,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         httpBaseUrl,
         wsBaseUrl,
         authOptions,
+        controlPath,
         remoteServerKind: remoteLaunch.remoteServerKind,
       }).pipe(
         Effect.provideService(Scope.Scope, attemptScope),
@@ -2047,6 +2101,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         ),
       );
     });
+    const connect = (authOptions: SshAuth.SshAuthOptions) =>
+      connectAttempt(authOptions, null).pipe(
+        Effect.catchIf(SshAuth.isSshAuthFailure, (error) =>
+          findLiveControlPath(input.resolvedTarget).pipe(
+            Effect.flatMap((controlPath) =>
+              controlPath === null ? Effect.fail(error) : connectAttempt(authOptions, controlPath),
+            ),
+          ),
+        ),
+      );
     let connection = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,

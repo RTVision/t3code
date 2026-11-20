@@ -33,7 +33,7 @@ import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, runAtomCommand } from "./runtime.ts";
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -321,9 +321,10 @@ describe("command permissions", () => {
     });
     const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
     try {
-      const first = command.run(registry, target);
+      const quiet = { reportFailure: false, reportDefect: false };
+      const first = runAtomCommand(registry, command, target, quiet);
       await entered;
-      const second = command.run(registry, target);
+      const second = runAtomCommand(registry, command, target, quiet);
       registry.set(sessions(env), AsyncResult.success(grant(false)));
       release();
       expect((await first)._tag).toBe("Success");
@@ -499,10 +500,10 @@ it.effect(
       setAccess(false);
       expect(yield* readLinks).toEqual({ links: [] });
       const linkInput = { url: peer.urls[0]!, pairingCode: "test-code", access: peer.access };
-      const link = Effect.promise(() =>
+      const link = Effect.exit(
         peerLinks.link.run(registry, { environmentId: env, input: linkInput }),
       );
-      const unlink = Effect.promise(() =>
+      const unlink = Effect.exit(
         peerLinks.unlink.run(registry, {
           environmentId: env,
           input: { environmentId: peer.environmentId },
@@ -667,19 +668,20 @@ it("matches the server editor grant for availability and destination dispatch ac
       }),
   });
   const target = { environmentId: env, input: { cwd: "/repo/file.ts", editor: "vscode" as const } };
+  const quiet = { reportFailure: false, reportDefect: false };
   try {
     registry.set(sessions(env), AsyncResult.success(grant(false)));
     registry.set(sessions(other), AsyncResult.success(grant(true)));
     expect(registry.get(command.permissionAtom(env))).toBe(false);
-    expect((await command.run(registry, target))._tag).toBe("Failure");
+    expect((await runAtomCommand(registry, command, target, quiet))._tag).toBe("Failure");
     expect(writes).toBe(0);
     registry.set(sessions(env), AsyncResult.success(grant(true)));
     expect(registry.get(command.permissionAtom(env))).toBe(true);
-    expect((await command.run(registry, target))._tag).toBe("Success");
+    expect((await runAtomCommand(registry, command, target, quiet))._tag).toBe("Success");
     expect(writes).toBe(1);
     registry.set(sessions(env), AsyncResult.success(grant(false)));
     expect(registry.get(command.permissionAtom(env))).toBe(false);
-    expect((await command.run(registry, target))._tag).toBe("Failure");
+    expect((await runAtomCommand(registry, command, target, quiet))._tag).toBe("Failure");
     expect(writes).toBe(1);
   } finally {
     unmount();
@@ -745,11 +747,12 @@ it("refuses an MCP tool queued before destination access was revoked", async () 
       arguments: {},
     },
   };
+  const quiet = { reportFailure: false, reportDefect: false };
   try {
     registry.set(sessions(env), AsyncResult.success(grant(true)));
-    const first = command.run(registry, target);
+    const first = runAtomCommand(registry, command, target, quiet);
     await entered;
-    const second = command.run(registry, target);
+    const second = runAtomCommand(registry, command, target, quiet);
     registry.set(sessions(env), AsyncResult.success(readGrant()));
     release();
     expect((await first)._tag).toBe("Success");
