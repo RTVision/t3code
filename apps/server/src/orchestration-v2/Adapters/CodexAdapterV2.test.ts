@@ -666,6 +666,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly cwd?: string | null;
   readonly effort?: string;
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
@@ -711,7 +712,10 @@ function codexReplayPreamble(input: {
       frame: {
         id: 2,
         method: "thread/start",
-        params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+        params: {
+          ...(input.cwd == null ? {} : { cwd: input.cwd }),
+          config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+        },
       },
     },
     {
@@ -930,11 +934,14 @@ it.effect("reads the active MCP binding when a handoff starts the native Codex t
       };
       const transcript = makeCodexReplayTranscript({
         scenario: "mcp-handoff",
-        entries: codexReplayPreamble({
-          nativeThreadId: "native-mcp-handoff",
-          nativeTurnId: "unused",
-          prompt: "unused",
-        }).slice(0, 5),
+        entries: withConfigReadBeforeTurnStart(
+          codexReplayPreamble({
+            nativeThreadId: "native-mcp-handoff",
+            nativeTurnId: "unused",
+            prompt: "unused",
+            cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+          }).slice(0, 5),
+        ),
       });
       const context = yield* Layer.build(CodexReplay.layerReplay(transcript));
       const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
