@@ -781,6 +781,15 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
+  function stubRunnerNpm(bin: string) {
+    NodeFS.symlinkSync(process.execPath, NodePath.join(bin, "node"));
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "npm"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+  }
+
   // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
   const checksumTools =
     NodeChildProcess.spawnSync("sh", ["-c", 'command -v "$1"', "sh", "shasum"]).status === 0
@@ -803,18 +812,7 @@ describe("ssh tunnel scripts", () => {
       NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
         cwd: release,
       });
-      for (const tool of [
-        "sh",
-        "mkdir",
-        "mktemp",
-        "cat",
-        "rm",
-        "grep",
-        "cut",
-        checksum,
-        "tar",
-        "mv",
-      ]) {
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm", "grep", "cut", checksum, "mv"]) {
         NodeFS.symlinkSync(
           NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
             encoding: "utf8",
@@ -822,6 +820,7 @@ describe("ssh tunnel scripts", () => {
           NodePath.join(bin, tool),
         );
       }
+      stubRunnerNpm(bin);
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
@@ -832,6 +831,10 @@ describe("ssh tunnel scripts", () => {
         `#!/bin/sh\nfor last; do :; done\nfor a; do case "$a" in http*) src="${release}/\${a##*/}" ;; esac; done\nexec cat "$src" > "$last"\n`,
         { mode: 0o755 },
       );
+      // Some tar programs can unpack gzip archives without the gzip command.
+      NodeFS.writeFileSync(NodePath.join(bin, "tar"), '#!/bin/sh\nexec gzip "$@"\n', {
+        mode: 0o755,
+      });
       const runner = NodePath.join(root, "run-t3.sh");
       NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
       const result = NodeChildProcess.spawnSync(NodePath.join(bin, "sh"), [runner, "--version"], {
@@ -841,6 +844,7 @@ describe("ssh tunnel scripts", () => {
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /(missing|needs) gzip/);
       assert.notInclude(result.stderr, "Cannot exec");
+      assert.include(result.stderr, `t3@npm:@rtvision/t3@${ARCHIVE.archiveVersion}`);
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }
@@ -861,6 +865,7 @@ describe("ssh tunnel scripts", () => {
           NodePath.join(bin, tool),
         );
       }
+      stubRunnerNpm(bin);
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
@@ -880,6 +885,7 @@ describe("ssh tunnel scripts", () => {
       assert.notEqual(result.status, 0);
       assert.include(result.stderr, "needs tar");
       assert.notInclude(result.stderr, "download attempt");
+      assert.include(result.stderr, `t3@npm:@rtvision/t3@${ARCHIVE.archiveVersion}`);
     } finally {
       NodeFS.rmSync(root, { recursive: true, force: true });
     }
