@@ -84,13 +84,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
       }
     }
 
-    async function launch(home: string) {
+    async function launch(home: string, signal: AbortSignal) {
       const script = NodePath.join(home, "launch.sh");
       await NodeFSP.writeFile(script, buildRemoteLaunchScript(runner));
-      return exec("sh", [script, "test"], { env: { ...process.env, HOME: home }, timeout: 15_000 });
+      return exec("sh", [script, "test"], { env: { ...process.env, HOME: home }, signal });
     }
 
-    it("prefers the daemon when another server overwrites the shared runtime record", async () => {
+    it("prefers the daemon when another server overwrites the shared runtime record", async ({
+      signal,
+    }) => {
       await fixture(async (home, pid, port) => {
         await NodeFSP.writeFile(
           NodePath.join(home, ".t3/runtime/server-runtime.json"),
@@ -100,7 +102,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
           NodePath.join(home, ".t3/userdata/server-runtime.json"),
           JSON.stringify({ pid, port: 1, origin: "http://127.0.0.1:1" }),
         );
-        const result = await launch(home);
+        const result = await launch(home, signal);
         expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "external" });
         expect(
           await NodeFSP.readFile(NodePath.join(home, ".t3/ssh-launch/test/managed"), "utf8"),
@@ -108,13 +110,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
       });
     });
 
-    it("does not launch an SSH replacement while the daemon child is restarting", async () => {
+    it("does not launch an SSH replacement while the daemon child is restarting", async ({
+      signal,
+    }) => {
       await fixture(async (home, pid) => {
         await NodeFSP.writeFile(
           NodePath.join(home, ".t3/runtime/server-runtime.json"),
           JSON.stringify({ pid, launcherPid: pid, port: 1, origin: "http://127.0.0.1:1" }),
         );
-        await expect(launch(home)).rejects.toMatchObject({
+        await expect(launch(home, signal)).rejects.toMatchObject({
           stderr: expect.stringContaining("daemon is unavailable on 127.0.0.1:1"),
         });
         await expect(
@@ -125,7 +129,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
       });
     });
 
-    it("reuses the daemon port when the recorded child has exited", async () => {
+    it("reuses the daemon port when the recorded child has exited", async ({ signal }) => {
       await fixture(async (home, pid, port) => {
         await NodeFSP.writeFile(
           NodePath.join(home, ".t3/runtime/server-runtime.json"),
@@ -136,14 +140,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
             origin: `http://127.0.0.1:${port}`,
           }),
         );
-        const result = await launch(home);
+        const result = await launch(home, signal);
         expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "external" });
       });
     });
 
-    it.each(["missing", "stale", "corrupt"])(
+    it.for(["missing", "stale", "corrupt"])(
       "refuses a standalone even with a live foreground server when the daemon record is %s",
-      async (state) => {
+      async (state, { signal }) => {
         await fixture(async (home, pid, port) => {
           await NodeFSP.writeFile(
             NodePath.join(home, ".t3/runtime/service-state.json"),
@@ -166,7 +170,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
             NodePath.join(home, ".t3/userdata/server-runtime.json"),
             JSON.stringify({ pid, port, origin: `http://127.0.0.1:${port}` }),
           );
-          await expect(launch(home)).rejects.toMatchObject({
+          await expect(launch(home, signal)).rejects.toMatchObject({
             stderr: expect.stringContaining("Start or repair the service"),
           });
           await expect(
@@ -175,13 +179,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
           // Removing service ownership restores foreground discovery.
           await NodeFSP.rm(NodePath.join(home, ".t3/runtime/service-state.json"));
           await NodeFSP.rm(NodePath.join(home, ".t3/runtime/server-runtime.json"), { force: true });
-          const result = await launch(home);
+          const result = await launch(home, signal);
           expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "external" });
         });
       },
     );
 
-    it("classifies the daemon as external even if stale SSH ownership names the same PID", async () => {
+    it("classifies the daemon as external even if stale SSH ownership names the same PID", async ({
+      signal,
+    }) => {
       await fixture(async (home, pid, port) => {
         const dir = NodePath.join(home, ".t3/ssh-launch/test");
         await NodeFSP.writeFile(
@@ -191,17 +197,19 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
         await NodeFSP.writeFile(NodePath.join(dir, "pid"), `${pid}\n`);
         await NodeFSP.writeFile(NodePath.join(dir, "port"), `${port}\n`);
         await NodeFSP.writeFile(NodePath.join(dir, "managed"), "managed\n");
-        const result = await launch(home);
+        const result = await launch(home, signal);
         expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "external" });
         expect(await NodeFSP.readFile(NodePath.join(dir, "managed"), "utf8")).toBe("external\n");
       });
     });
 
-    it("keeps a previously selected external server external when it is unavailable", async () => {
+    it("keeps a previously selected external server external when it is unavailable", async ({
+      signal,
+    }) => {
       await fixture(async (home) => {
         await NodeFSP.writeFile(NodePath.join(home, ".t3/ssh-launch/test/managed"), "external\n");
         await NodeFSP.writeFile(NodePath.join(home, ".t3/ssh-launch/test/port"), "1\n");
-        await expect(launch(home)).rejects.toMatchObject({
+        await expect(launch(home, signal)).rejects.toMatchObject({
           stderr: expect.stringContaining("external T3 server is unavailable"),
         });
         await expect(
@@ -212,7 +220,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
       });
     });
 
-    it("reuses its own SSH-managed server without killing or reclassifying it", async () => {
+    it("reuses its own SSH-managed server without killing or reclassifying it", async ({
+      signal,
+    }) => {
       await fixture(async (home, pid, port) => {
         const dir = NodePath.join(home, ".t3/ssh-launch/test");
         await NodeFSP.writeFile(
@@ -226,19 +236,19 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32").each(["node", "
           NodePath.join(dir, "run-t3.sh"),
           `${buildRemoteT3RunnerScript(runner).trimEnd()}\n`,
         );
-        const result = await launch(home);
+        const result = await launch(home, signal);
         expect(JSON.parse(result.stdout)).toEqual({ remotePort: port, serverKind: "managed" });
         expect(await NodeFSP.readFile(NodePath.join(dir, "pid"), "utf8")).toBe(`${pid}\n`);
       });
     });
 
-    it("does not replace a daemon that is bound to a non-loopback host", async () => {
+    it("does not replace a daemon that is bound to a non-loopback host", async ({ signal }) => {
       await fixture(async (home, pid) => {
         await NodeFSP.writeFile(
           NodePath.join(home, ".t3/runtime/server-runtime.json"),
           JSON.stringify({ pid, launcherPid: pid, port: 1, origin: "http://192.0.2.1:1" }),
         );
-        await expect(launch(home)).rejects.toMatchObject({
+        await expect(launch(home, signal)).rejects.toMatchObject({
           stderr: expect.stringContaining("bind it to loopback or a wildcard host"),
         });
         await expect(

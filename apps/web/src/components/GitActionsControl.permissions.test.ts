@@ -261,6 +261,7 @@ let renderer: ReactTestRenderer | null = null;
 async function renderActions() {
   const element = createElement(GitActionsControl, {
     gitCwd: "/repo",
+    name: "repo",
     activeThreadRef: {
       environmentId: EnvironmentId.make("environment"),
       threadId: ThreadId.make("thread"),
@@ -430,6 +431,7 @@ describe("Git actions while thread details load", () => {
 async function changedFileButton() {
   const element = createElement(GitActionsControl, {
     gitCwd: "/repo",
+    name: "repo",
     activeThreadRef: {
       environmentId: EnvironmentId.make("environment"),
       threadId: ThreadId.make("thread"),

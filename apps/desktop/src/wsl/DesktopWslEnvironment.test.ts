@@ -27,10 +27,10 @@ import {
   layer as layerDesktopWslEnvironment,
   buildWslRuntimeInstallScript,
   makeIsAvailable,
-  buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
   parseResolvedPath,
+  parseT3Home,
   parseWslRuntimeRoot,
   DesktopWslDistroListError,
   DesktopWslEnvironment,
@@ -290,10 +290,9 @@ describe("WSL runtime cache", () => {
   it.each([
     [
       "install",
-      (id: string) => buildWslRuntimeInstallScript("/runtime.tar.gz", id, "b".repeat(64)),
+      (id: string) => buildWslRuntimeInstallScript("/runtime.tar.gz", id, "b".repeat(64), null),
     ],
-    ["prune", buildWslRuntimePruneScript],
-    ["invalidate", buildWslRuntimeInvalidateScript],
+    ["prune", (id: string) => buildWslRuntimePruneScript(id, null)],
   ] as const)("sanitizes cache ids in the %s script", (_, buildScript) => {
     const runtimeId = "1.2.3/x64; touch /tmp/nope";
     const script = buildScript(runtimeId);
@@ -306,6 +305,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      null,
     );
 
     expect(script).toContain('runtime_parent="$HOME/.t3/wsl-runtime"');
@@ -342,6 +342,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      null,
     );
 
     const expected = "b".repeat(64);
@@ -364,6 +365,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "sha256-" + "c".repeat(64),
       "b".repeat(64),
+      null,
     );
 
     expect(script).toContain('grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
@@ -388,6 +390,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      null,
     );
 
     // The same proof the SSH runner and CLI installers use: executable, and
@@ -408,6 +411,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      null,
     );
 
     expect(script).toContain(`  sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1`);
@@ -435,6 +439,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      null,
     );
 
     expect(script).toContain('if ! runtime_entry_runs "$runtime_tmp"; then');
@@ -456,7 +461,7 @@ describe("WSL runtime cache", () => {
   });
 
   it("prunes completed runtimes except the current and newest previous cache", () => {
-    const script = buildWslRuntimePruneScript("1.2.3/x64");
+    const script = buildWslRuntimePruneScript("1.2.3/x64", null);
 
     expect(script).toContain('current_runtime="$runtime_parent/1.2.3_x64"');
     expect(script).toContain('[ "$candidate" -nt "$previous_runtime" ]');
@@ -467,7 +472,7 @@ describe("WSL runtime cache", () => {
   });
 
   it("never deletes a runtime another backend is running from", () => {
-    const script = buildWslRuntimePruneScript("1.2.3/x64");
+    const script = buildWslRuntimePruneScript("1.2.3/x64", null);
 
     expect(script).toContain('  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
     expect(script).toContain('  ! runtime_in_use "$candidate" || continue');
@@ -481,19 +486,12 @@ describe("WSL runtime cache", () => {
   });
 
   it("sweeps orphaned install scratch directories the ready-marker loops cannot see", () => {
-    const script = buildWslRuntimePruneScript("1.2.3/x64");
+    const script = buildWslRuntimePruneScript("1.2.3/x64", null);
 
     expect(script).toContain(
       'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     );
     expect(script).toContain('find "$scratch" -maxdepth 0 -mmin +120');
-  });
-
-  it("invalidates a cache by dropping its ready marker, not the tree", () => {
-    const script = buildWslRuntimeInvalidateScript("1.2.3/x64");
-
-    expect(script).toContain('rm -f "$HOME/.t3/wsl-runtime/1.2.3_x64/.t3code-wsl-runtime-ready"');
-    expect(script).not.toContain("rm -rf");
   });
 });
 
@@ -527,13 +525,12 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     const archivePath = `${work}/wsl-runtime.tar.gz`;
     const archiveSha = readField(result.stdout, "archiveSha");
     const runtimeId = `sha256-${archiveSha}`;
-    // The script reads $HOME, and WSL does not inherit the parent process's
-    // environment, so the home override rides in the script itself.
-    const installScript = (archive = archivePath, sha = archiveSha) =>
+    // WSL does not inherit HOME; embed the fixture's override in the script.
+    const installScript = (archive = archivePath, sha = archiveSha, t3Home: string | null = null) =>
       [
         `HOME=${sh(`${work}/home`)}`,
         "export HOME",
-        buildWslRuntimeInstallScript(archive, runtimeId, sha),
+        buildWslRuntimeInstallScript(archive, runtimeId, sha, t3Home),
       ].join("\n");
     return {
       work,
@@ -544,7 +541,8 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       runtimeRoot: `${work}/home/.t3/wsl-runtime/${runtimeId}`,
       serverEntry: `${work}/home/.t3/wsl-runtime/${runtimeId}/t3`,
       installScript,
-      install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
+      install: (archive?: string, sha?: string, t3Home?: string | null) =>
+        runShell(installScript(archive, sha, t3Home)),
     };
   };
 
@@ -588,6 +586,24 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     const provider = runShell(`export PATH=${sh(resolvedPath ?? "")}\nnode provider.js`);
     expect(provider.status, provider.stderr).toBe(0);
     expect(provider.stdout).toBe("linux-node-provider\n");
+  });
+
+  it("stages the runtime under the login shell's T3CODE_HOME and reports it to the launcher", () => {
+    const fixture = createFixture();
+    const t3Home = `${fixture.work}/home/.config/t3 home`;
+    const install = fixture.install(undefined, undefined, t3Home);
+    expect(install.status, install.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(install.stdout)).toBe(`${t3Home}/wsl-runtime/${fixture.runtimeId}`);
+    expect(runShell(`test ! -e ${sh(`${fixture.work}/home/.t3`)}`).status).toBe(0);
+
+    const probe = runShell(
+      [
+        `bash() { ( export T3CODE_HOME=${sh(t3Home)}; eval "$2" ); }`,
+        buildWslRuntimeProbeScript(),
+      ].join("\n"),
+    );
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(parseT3Home(probe.stdout)).toBe(t3Home);
   });
 
   it("keeps the inherited PATH when bash is unavailable", () => {
@@ -773,7 +789,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `sh ${sh(`${fixture.work}/select.sh`)}`,
         `HOME=${sh(`${fixture.work}/home`)}`,
         "export HOME",
-        buildWslRuntimePruneScript("sha256-current"),
+        buildWslRuntimePruneScript("sha256-current", null),
         `test -d ${sh(fixture.runtimeRoot)}`,
       ].join("\n"),
     );
@@ -854,11 +870,15 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         const translated = yield* wsl.windowsToWslPath("Ubuntu", fixture.archivePath);
         expect(translated._tag).toBe("None");
 
-        const prepared = yield* wsl.prepareRuntime("Ubuntu", {
-          windowsPath: fixture.archivePath,
-          runtimeId: fixture.runtimeId,
-          sha256: fixture.archiveSha,
-        });
+        const prepared = yield* wsl.prepareRuntime(
+          "Ubuntu",
+          {
+            windowsPath: fixture.archivePath,
+            runtimeId: fixture.runtimeId,
+            sha256: fixture.archiveSha,
+          },
+          null,
+        );
 
         expect(prepared).toEqual({ ok: true, linuxAppRoot: fixture.runtimeRoot });
         const version = runShell(`${sh(fixture.serverEntry)} --version`);
@@ -891,7 +911,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         holdInstallLock('"$runtime_parent/.sha256-locked.install.lock"'),
         `HOME="$home"`,
         "export HOME",
-        buildWslRuntimePruneScript("sha256-current"),
+        buildWslRuntimePruneScript("sha256-current", null),
         'test -d "$runtime_parent/sha256-current"',
         'test -d "$runtime_parent/sha256-previous"',
         'test -d "$runtime_parent/sha256-active"',
