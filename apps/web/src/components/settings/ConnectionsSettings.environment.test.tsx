@@ -56,8 +56,10 @@ vi.mock("@tanstack/react-router", async (original) => ({
   useSearch: () => undefined,
 }));
 vi.mock("@effect/atom-react", () => ({
+  useAtom: () => hooks.useState(null),
   useAtomValue: (atom: unknown) => (atom === state.updateAtom ? { status: "idle" } : []),
 }));
+vi.mock("../../hooks/useMediaQuery", () => ({ useMediaQuery: () => false }));
 vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({
   useT3ConnectAuthPrompt: () => ({ openAuthPrompt: vi.fn() }),
 }));
