@@ -132,12 +132,17 @@ describe("sidebar header new thread", () => {
   });
 });
 
+function isolateComposerDrafts(): Disposable {
+  const previous = useComposerDraftStore.getState();
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  return { [Symbol.dispose]: () => useComposerDraftStore.setState(previous, true) };
+}
+
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
 describe("sidebar numbered jumps", () => {
   it("numbers the unsent draft at the top before the threads below it", async () => {
-    const initial = useComposerDraftStore.getState();
+    using _drafts = isolateComposerDrafts();
     using stack = new DisposableStack();
-    stack.defer(() => useComposerDraftStore.setState(initial, true));
     const previousSettings = getClientSettings();
     stack.defer(() => __setClientSettingsForTests(previousSettings));
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
@@ -158,11 +163,12 @@ describe("sidebar numbered jumps", () => {
       routeThreadRef: threadRef,
     });
     const draftId = DraftId.make("unsent-draft");
-    initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+    const drafts = useComposerDraftStore.getState();
+    drafts.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
       threadId: ThreadId.make("unsent-draft-thread"),
       createdAt: "2026-01-02T00:00:00.000Z",
     });
-    initial.setPrompt(draftId, "Unsent prompt");
+    drafts.setPrompt(draftId, "Unsent prompt");
 
     await using screen = await render(
       <SidebarProvider>
@@ -206,6 +212,7 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
 describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads
   it("does not re-render thread rows when a quick Mod shortcut opens and focuses the terminal", async () => {
+    using _drafts = isolateComposerDrafts();
     using stack = new DisposableStack();
     const activeProject = project("active");
     const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
