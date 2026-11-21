@@ -1028,7 +1028,6 @@ function CheckoutGitActionsControl({
     activeEnvironmentId,
     AuthSourceControlWriteScope,
   );
-  const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const { open: openInPreferredEditor, canOpen: canOpenEditor } = useEditorDispatch(
     activeEnvironmentId,
