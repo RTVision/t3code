@@ -89,6 +89,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // Once HTTP readiness succeeds, the manager uses it to retain this cache
   // plus the newest previous cache and prune older versions.
   readonly wslRuntimeId?: string;
+  readonly wslT3Home?: string | null;
 }
 
 export interface PreflightFailure {
@@ -997,6 +998,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* wslEnvironment.pruneRuntimes(
                 config.value.runningDistro,
                 config.value.wslRuntimeId,
+                config.value.wslT3Home ?? null,
               );
             }
           }),
