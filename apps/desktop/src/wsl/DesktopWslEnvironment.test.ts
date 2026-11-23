@@ -128,6 +128,13 @@ const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exit
   );
 
 function makeWslEnvironment(spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) {
+  const registry = registrySpawner([STORE_SERVICE]);
+  const wslSpawner = ChildProcessSpawner.make((command) =>
+    (command._tag === "StandardCommand" && command.command === "reg.exe"
+      ? registry
+      : spawner
+    ).spawn(command),
+  );
   return DesktopWslEnvironment.pipe(
     Effect.provide(
       wslEnvironmentLayer.pipe(
@@ -145,7 +152,7 @@ function makeWslEnvironment(spawner: ChildProcessSpawner.ChildProcessSpawner["Se
           }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
           DesktopManagedPolicy.layerTest(),
           FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, wslSpawner),
         ]),
       ),
     ),
@@ -944,8 +951,40 @@ describe("parseResolvedPath", () => {
 
 // Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
 const WSL_EXE = "/windows/System32/wsl.exe";
+const STORE_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService";
+const INBOX_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager";
 
-const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
+const registrySpawner = (keys: ReadonlyArray<string>) =>
+  ChildProcessSpawner.make((command) =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        exitCode: Effect.succeed(
+          ChildProcessSpawner.ExitCode(
+            command._tag === "StandardCommand" &&
+              command.command === "reg.exe" &&
+              keys.some((key) => command.args.includes(key))
+              ? 0
+              : 1,
+          ),
+        ),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      }),
+    ),
+  );
+
+const isAvailable = (
+  policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+  serviceKeys: ReadonlyArray<string> = [STORE_SERVICE],
+) =>
   makeIsAvailable("win32", "/windows").pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -954,9 +993,17 @@ const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[
         DesktopManagedPolicy.layerTest(policy),
       ),
     ),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, registrySpawner(serviceKeys)),
   );
 
 describe("makeIsAvailable", () => {
+  it.effect("needs a registered WSL service, not just the System32 install stub", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* isAvailable(undefined, []));
+      assert.isTrue(yield* isAvailable(undefined, [INBOX_SERVICE]));
+    }),
+  );
+
   it.effect("turns WSL off on a machine with a managed policy, even an invalid one", () =>
     Effect.gen(function* () {
       assert.isTrue(yield* isAvailable());
