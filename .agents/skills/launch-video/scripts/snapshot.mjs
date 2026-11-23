@@ -82,6 +82,60 @@ async function freeze(known) {
   });
   for (const el of clone.querySelectorAll("script, noscript, style, link, base")) el.remove();
 
+  // Open shadow roots (the diff viewer draws inside one) become declarative shadow DOM.
+  const sheetText = (root) =>
+    [...root.adoptedStyleSheets]
+      .map((sheet) => {
+        try {
+          return [...sheet.cssRules].map((r) => r.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+  const rootsIn = (root) =>
+    [...root.querySelectorAll("*")].flatMap((el) =>
+      el.shadowRoot ? [el.shadowRoot, ...rootsIn(el.shadowRoot)] : [],
+    );
+  const localizeShadowAssets = (fragment) => {
+    for (const style of fragment.querySelectorAll("style")) {
+      style.textContent = rewrite(style.textContent, location.href);
+    }
+    for (const el of fragment.querySelectorAll("[style]")) {
+      el.setAttribute("style", rewrite(el.getAttribute("style"), location.href));
+    }
+    for (const img of fragment.querySelectorAll("img[src]")) {
+      img.setAttribute("src", local(img.getAttribute("src"), location.href));
+    }
+    for (const template of fragment.querySelectorAll("template[shadowrootmode]")) {
+      localizeShadowAssets(template.content);
+    }
+  };
+  const shadowHtml = (root) => {
+    const nested = rootsIn(root);
+    // Adopted sheets do not serialize. Each root gets them as its last <style>, where they keep
+    // their precedence over the root's own styles, just for the serialization.
+    const added = [root, ...nested].map((r) => {
+      const style = document.createElement("style");
+      style.textContent = sheetText(r);
+      r.append(style);
+      return style;
+    });
+    const template = document.createElement("template");
+    template.setAttribute("shadowrootmode", "open");
+    try {
+      template.innerHTML = root.getHTML({ shadowRoots: nested });
+    } finally {
+      for (const style of added) style.remove();
+    }
+    localizeShadowAssets(template.content);
+    return template.outerHTML;
+  };
+  source.forEach((el, i) => {
+    if (!el.shadowRoot) return;
+    copies[i].insertAdjacentHTML("afterbegin", shadowHtml(el.shadowRoot));
+  });
+
   const head = clone.querySelector("head");
   const styleEl = document.createElement("style");
   styleEl.textContent = css;

@@ -1350,9 +1350,7 @@ describe("planComposerTurn", () => {
     expect(
       planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: false }),
     ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
-    expect(
-      planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
-    ).toMatchObject({
+    expect(planComposerTurn({ ...base, isScratchProject: true })).toMatchObject({
       missingWorktreeBaseBranch: false,
       baseBranchForWorktree: null,
     });

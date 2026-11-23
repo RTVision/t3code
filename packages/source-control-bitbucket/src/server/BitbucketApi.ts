@@ -122,6 +122,7 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
     retryAt: Schema.optional(Schema.Number),
+    userFacingDetail: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
@@ -440,7 +441,9 @@ function bitbucketStateFilter(states: ReadonlyArray<string>): string {
 }
 
 function parseBitbucketRepositorySlug(value: string): BitbucketRepositoryLocator | null {
-  const normalized = value.trim().replace(/\.git$/u, "");
+  const trimmed = value.trim();
+  const pathname = URL.parse(trimmed)?.pathname ?? trimmed.replace(/[?#].*$/u, "");
+  const normalized = pathname.replace(/\.git\/?$/u, "");
   const parts = normalized.split("/").filter((part) => part.length > 0);
   if (parts.length < 2) return null;
   const workspace = parts.at(-2);
@@ -1103,8 +1106,20 @@ export const make = Effect.gen(function* () {
     getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
       return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
     }),
-    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
-      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function* (input) {
+      const locator = yield* resolveRepository(input);
+      return yield* getRepositoryFromLocator(locator).pipe(
+        Effect.mapError((error) => {
+          if (error._tag !== "BitbucketResponseError" || error.status !== 404) return error;
+          return new BitbucketResponseError({
+            ...error,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(
+              `${locator.workspace}/${locator.repoSlug}`,
+            ),
+          });
+        }),
+        Effect.map(normalizeRepositoryCloneUrls),
+      );
     }),
     createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
       return requireRepositoryLocator(input.repository).pipe(

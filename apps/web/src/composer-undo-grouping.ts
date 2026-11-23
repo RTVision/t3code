@@ -18,6 +18,11 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
+export function isPasteTransaction(tr: Transaction): boolean {
+  const root: Transaction = tr.getMeta("appendedTransaction") ?? tr;
+  return root.getMeta("uiEvent") === "paste" || root.getMeta(CLIPBOARD_EDIT_META) === "paste";
+}
+
 /** Start a replacement undo group, keeping the IME edits together and prior typing separate. */
 export function markAsCompositionReplace(tr: Transaction): Transaction {
   return closeHistory(tr).setMeta(COMPOSITION_REPLACE_META, true);

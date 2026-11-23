@@ -459,7 +459,18 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
+      let executable = resolved;
+      if (!path.isAbsolute(resolved)) {
+        // procfs follows a renamed cwd. Keep ".." intact so symlink traversal still works.
+        const cwd = yield* fileSystem
+          .readLink("/proc/self/cwd")
+          .pipe(Effect.orElseSucceed(() => process.cwd()));
+        executable = `${cwd}${path.sep}${resolved}`;
+      }
+      return {
+        ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
+        unit,
+      };
     }),
     oomKilled,
     stop,

@@ -332,6 +332,7 @@ import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  offersWorkspaceModes,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -377,7 +378,6 @@ import {
   resolveFileAttachmentUrl,
   resolveComposerProviderSelection,
   resolveThreadMetadataUpdateForNextTurn,
-  resolveSendEnvMode,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
@@ -2370,12 +2370,13 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const worktreeRepositoryChoices = useWorktreeRepositoryChoices(activeProject);
-  const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
-  const sendEnvMode = resolveSendEnvMode({
-    requestedEnvMode: envMode,
+  const workspaceModesOffered = offersWorkspaceModes({
+    isScratchProject: activeProjectIsScratch,
     isGitRepo,
     tracksGitRepositories: worktreeRepositoryChoices.tracksGitRepositories,
   });
+  const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
+  const sendEnvMode = workspaceModesOffered ? envMode : "local";
   // Only a new thread's draft holds a choice; anything else leaves it to the server's default.
   const worktreeRepositories = resolveWorktreeRepositorySelection({
     choices: worktreeRepositoryChoices.choices,
@@ -3826,6 +3827,7 @@ export default function ChatView(props: ChatViewProps) {
                                 reportedModelSelection={reportedModelSelection}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
+                                  !activeProjectIsScratch &&
                                   serverConfig?.environment.capabilities
                                     .requiredWorktreeBootstrap === true
                                 }
@@ -4000,9 +4002,7 @@ export default function ChatView(props: ChatViewProps) {
                                   projectId={activeThread.projectId}
                                   worktreePath={activeThread.worktreePath}
                                   isServerThread={isServerThread}
-                                  showGitControls={
-                                    isGitRepo || worktreeRepositoryChoices.tracksGitRepositories
-                                  }
+                                  showGitControls={workspaceModesOffered}
                                   showBranchControls={isGitRepo}
                                   {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                   onEnvModeChange={onEnvModeChangeStable}
@@ -4121,6 +4121,7 @@ export default function ChatView(props: ChatViewProps) {
                   gitCwd={gitCwd}
                   workspaceMutationId={workspaceRevision.revision}
                   isGitRepo={isGitRepo}
+                  offersWorkspaceModes={workspaceModesOffered}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}

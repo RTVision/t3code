@@ -5,6 +5,7 @@ import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
+import { ComposerMarkdownSourceExtension } from "./composer-markdown-source";
 import {
   buildDocJson,
   ComposerBlockExtensions,
@@ -14,6 +15,7 @@ import {
   ComposerTaskListExtension,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
+import { isPasteTransaction, markAsClipboardEdit } from "./composer-undo-grouping";
 
 const mac = typeof navigator !== "undefined" && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 
@@ -113,6 +115,21 @@ describe("Tiptap's block shortcuts", () => {
 });
 
 describe("composer list normalization", () => {
+  it("places the caret past pasted Markdown markers when the paste creates a list", () => {
+    const editor = createEditor("", [ComposerMarkdownSourceExtension]);
+    editor.view.dispatch(editor.state.tr.insertText("- "));
+    const styled = editor.schema.text("DEV", [editor.schema.marks.bold!.create()]);
+    const { state, transactions } = editor.state.applyTransaction(
+      markAsClipboardEdit(editor.state.tr.replaceSelectionWith(styled, false), "paste"),
+    );
+    expect(transactions.length).toBeGreaterThan(1);
+    expect(transactions.every(isPasteTransaction)).toBe(true);
+    editor.view.updateState(state);
+    expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
+    editor.view.dispatch(editor.state.tr.insertText("!"));
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("- **DEV**!");
+  });
+
   it("converts a dash edited on an earlier line and keeps the view equal to Markdown", () => {
     const editor = createEditor("");
     editor.view.dispatch(editor.state.tr.insertText("-get md"));

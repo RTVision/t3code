@@ -301,6 +301,10 @@ export class PullRequestService extends Context.Service<
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
     /** Whether the project's checkout is on a forge T3 reads change requests from. */
     readonly servesProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** The project as `servesProject` sees it: identity resolved, its forge refined. */
+    readonly addressedProject: (
+      projectId: ProjectId,
+    ) => Effect.Effect<OrchestrationProjectShell | undefined, PullRequestError>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -407,6 +411,7 @@ export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
+  readonly kind: SourceControlProviderKind;
   readonly repository: string;
   readonly host: string;
   /**
@@ -417,6 +422,8 @@ export interface SupportedProject {
 }
 
 interface WorkspaceProjects {
+  /** Every project read, with its repository identity resolved. */
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly supported: ReadonlyArray<SupportedProject>;
   readonly unimplemented: ReadonlyMap<
     string,
@@ -1098,6 +1105,7 @@ export const make = Effect.gen(function* () {
             cursorKey: key,
             project,
             api: withRateLimitBackoff(api, host, rateLimits),
+            kind,
             repository,
             host,
             remote:
@@ -1109,7 +1117,7 @@ export const make = Effect.gen(function* () {
                 : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
-        return { supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
+        return { projects, supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
       }),
     );
 
@@ -1162,7 +1170,7 @@ export const make = Effect.gen(function* () {
               return Effect.gen(function* () {
                 const publicHost = sourceControlDefinitions.findByPublicHost(host);
                 const api = publicHost === undefined ? null : registry.get(publicHost.kind);
-                if (api?.readsPublicHostWithoutCheckout) {
+                if (publicHost !== undefined && api?.readsPublicHostWithoutCheckout) {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
                     Effect.mapError(
                       (cause) =>
@@ -1178,6 +1186,7 @@ export const make = Effect.gen(function* () {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
                       api: withRateLimitBackoff(api, host, rateLimits),
+                      kind: publicHost.kind,
                       repository,
                       host,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
@@ -1247,6 +1256,18 @@ export const make = Effect.gen(function* () {
     listWorkspaceProjects({ projectId }).pipe(
       Effect.map(({ supported }) => supported.length > 0),
       Effect.orElseSucceed(() => true),
+    );
+
+  const addressedProject: PullRequestService["Service"]["addressedProject"] = (projectId) =>
+    listWorkspaceProjects({ projectId }).pipe(
+      Effect.map(({ projects, supported }) => {
+        const own = supported[0];
+        if (own === undefined) return projects.find((project) => project.id === projectId);
+        const identity = own.project.repositoryIdentity;
+        return identity == null || identity.provider === own.kind
+          ? own.project
+          : { ...own.project, repositoryIdentity: { ...identity, provider: own.kind } };
+      }),
     );
 
   const changes: PullRequestService["Service"]["changes"] = (input) =>
@@ -4489,8 +4510,10 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const ref = yield* canonicalRef(input);
     yield* readCache.invalidate(refScope(ref));
+    // A refusal (e.g. a merge conflict) means readers hold stale state, so refresh them too.
     const { repository, summary } = yield* runAction(input).pipe(
       Effect.ensuring(readCache.invalidate(refScope(ref))),
+      Effect.tapError(() => invalidateReference(ref, true)),
     );
     yield* invalidateReference({ ...input, repository }, true);
     if (input.action === "merge") {
@@ -4685,6 +4708,7 @@ export const make = Effect.gen(function* () {
     dependencyContext,
     changes,
     servesProject,
+    addressedProject,
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),

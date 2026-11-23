@@ -40,6 +40,7 @@ const stopEarlierBackgroundWork = ({
   wakeAfterStop = false,
   failedStart = false,
   stopWithQueue,
+  laterRunStatus = "queued",
   olderStart = false,
   backgroundWorkAfterStop,
   stalledRun,
@@ -49,6 +50,7 @@ const stopEarlierBackgroundWork = ({
   readonly failedStart?: boolean;
   readonly backgroundWorkAfterStop?: "running" | "unknown";
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
+  readonly laterRunStatus?: "queued" | "rolled_back";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
   readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
@@ -989,12 +991,17 @@ const stopEarlierBackgroundWork = ({
         yield* sink.write({
           events: [
             {
-              id: EventId.make("queue-held"),
+              id: EventId.make("later-run-status"),
               type: "run.updated",
               threadId,
               runId: queued.id,
               occurredAt: now,
-              payload: { ...queued, queueHeld: true },
+              payload: {
+                ...queued,
+                status: laterRunStatus,
+                queueHeld: laterRunStatus === "queued",
+                completedAt: laterRunStatus === "rolled_back" ? now : null,
+              },
             },
             {
               id: EventId.make("latest-run-settled"),
@@ -1059,8 +1066,8 @@ const stopEarlierBackgroundWork = ({
         assert.equal(after.runs.find((run) => run.id === watcherRun.runId)?.status, "interrupted");
       }
       if (stopWithQueue !== undefined) {
-        assert.equal(after.runs.at(-1)?.status, "queued");
-        assert.equal(after.runs.at(-1)?.queueHeld, true);
+        assert.equal(after.runs.at(-1)?.status, laterRunStatus);
+        assert.equal(after.runs.at(-1)?.queueHeld, laterRunStatus === "queued");
         assert.lengthOf(started, 1);
       }
       assert.deepEqual(
@@ -1127,9 +1134,13 @@ it.effect("Stop preserves the roster when the background work probe fails", () =
   stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
 );
 
-it.effect.each(["thread.stop", "run.interrupt"] as const)(
-  "%s stops background work when a later message is queued",
-  (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType }),
+it.effect.each([
+  ["thread.stop", "queued"],
+  ["run.interrupt", "queued"],
+  ["thread.stop", "rolled_back"],
+  ["run.interrupt", "rolled_back"],
+] as const)("%s stops background work when a later run is %s", ([stopType, laterRunStatus]) =>
+  stopEarlierBackgroundWork({ stopWithQueue: stopType, laterRunStatus }),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
