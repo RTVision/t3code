@@ -376,6 +376,12 @@ function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
   node.style.height = `${rect.height}px`;
 }
 
+function clippingParent(element: Element): Element | null {
+  if (element.parentElement) return element.parentElement;
+  const root = element.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
 function visibleElementRect(element: Element): PreviewAnnotationRect {
   const rect = element.getBoundingClientRect();
   let left = Math.max(0, rect.left);
@@ -383,7 +389,7 @@ function visibleElementRect(element: Element): PreviewAnnotationRect {
   let right = Math.min(document.documentElement.clientWidth, rect.right);
   let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
   if (getComputedStyle(element).position !== "fixed") {
-    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    for (let ancestor = clippingParent(element); ancestor; ancestor = clippingParent(ancestor)) {
       if (ancestor === document.body || ancestor === document.documentElement) break;
       const style = getComputedStyle(ancestor);
       const bounds = ancestor.getBoundingClientRect();

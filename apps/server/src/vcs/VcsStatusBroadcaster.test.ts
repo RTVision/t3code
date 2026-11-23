@@ -2268,8 +2268,9 @@ describe("VcsStatusBroadcaster", () => {
       const path = yield* Path.Path;
       const gitDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-head-watch-" });
       const headPath = path.join(gitDir, "HEAD");
-      yield* fs.writeFileString(headPath, "ref: refs/heads/main\n");
+      yield* fs.writeFileString(headPath, "ref: refs/heads/repro\n");
       let branchReads = 0;
+      const liveLocalStatus = { ...baseLocalStatus, refName: "repro" };
       const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: baseLocalStatus,
         currentRemoteStatus: baseRemoteStatus,
@@ -2279,22 +2280,26 @@ describe("VcsStatusBroadcaster", () => {
         remoteInvalidationCalls: 0,
         headPath,
         headPathCalls: 0,
+        beforeInvalidate: Effect.sync(() => {
+          state.currentLocalStatus = liveLocalStatus;
+        }),
         branchRead: () =>
           Effect.sync(() => {
             branchReads += 1;
-            return baseLocalStatus.refName;
+            return liveLocalStatus.refName;
           }),
       };
 
       yield* Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const subscribe = Effect.gen(function* () {
-          const received = yield* Deferred.make<void>();
+          const received = yield* Deferred.make<VcsStatusLocalResult["refName"]>();
           const fiber = yield* Stream.runForEach(
             broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
-            () => Deferred.succeed(received, undefined),
+            (event) =>
+              Deferred.succeed(received, applyGitStatusStreamEvent(null, event)?.refName ?? null),
           ).pipe(Effect.forkScoped);
-          yield* Deferred.await(received);
+          assert.strictEqual(yield* Deferred.await(received), "repro");
           return fiber;
         });
 

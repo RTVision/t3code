@@ -378,7 +378,6 @@ import {
   resolveFileAttachmentUrl,
   resolveComposerProviderSelection,
   resolveThreadMetadataUpdateForNextTurn,
-  resolveSendEnvMode,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
@@ -2377,11 +2376,7 @@ export default function ChatView(props: ChatViewProps) {
     tracksGitRepositories: worktreeRepositoryChoices.tracksGitRepositories,
   });
   const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
-  const sendEnvMode = resolveSendEnvMode({
-    requestedEnvMode: envMode,
-    isGitRepo,
-    tracksGitRepositories: worktreeRepositoryChoices.tracksGitRepositories,
-  });
+  const sendEnvMode = workspaceModesOffered ? envMode : "local";
   // Only a new thread's draft holds a choice; anything else leaves it to the server's default.
   const worktreeRepositories = resolveWorktreeRepositorySelection({
     choices: worktreeRepositoryChoices.choices,
@@ -3832,6 +3827,7 @@ export default function ChatView(props: ChatViewProps) {
                                 reportedModelSelection={reportedModelSelection}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
+                                  !activeProjectIsScratch &&
                                   serverConfig?.environment.capabilities
                                     .requiredWorktreeBootstrap === true
                                 }

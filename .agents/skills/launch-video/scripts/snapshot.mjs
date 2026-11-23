@@ -94,31 +94,42 @@ async function freeze(known) {
       })
       .join("\n");
   const rootsIn = (root) =>
-    [...root.querySelectorAll("*")]
-      .filter((el) => el.shadowRoot)
-      .flatMap((el) => [el.shadowRoot, ...rootsIn(el.shadowRoot)]);
+    [...root.querySelectorAll("*")].flatMap((el) =>
+      el.shadowRoot ? [el.shadowRoot, ...rootsIn(el.shadowRoot)] : [],
+    );
+  const localizeShadowAssets = (fragment) => {
+    for (const style of fragment.querySelectorAll("style")) {
+      style.textContent = rewrite(style.textContent, location.href);
+    }
+    for (const el of fragment.querySelectorAll("[style]")) {
+      el.setAttribute("style", rewrite(el.getAttribute("style"), location.href));
+    }
+    for (const img of fragment.querySelectorAll("img[src]")) {
+      img.setAttribute("src", local(img.getAttribute("src"), location.href));
+    }
+    for (const template of fragment.querySelectorAll("template[shadowrootmode]")) {
+      localizeShadowAssets(template.content);
+    }
+  };
   const shadowHtml = (root) => {
     const nested = rootsIn(root);
     // Adopted sheets do not serialize. Each root gets them as its last <style>, where they keep
     // their precedence over the root's own styles, just for the serialization.
     const added = [root, ...nested].map((r) => {
       const style = document.createElement("style");
-      style.textContent = rewrite(sheetText(r), location.href);
+      style.textContent = sheetText(r);
       r.append(style);
       return style;
     });
-    let inner;
+    const template = document.createElement("template");
+    template.setAttribute("shadowrootmode", "open");
     try {
-      inner = root.getHTML({ shadowRoots: nested });
+      template.innerHTML = root.getHTML({ shadowRoots: nested });
     } finally {
       for (const style of added) style.remove();
     }
-    // The asset pass above never enters shadow trees, so localize their images here.
-    inner = inner.replace(
-      /(<img\b[^>]*?\ssrc=")([^"]+)"/g,
-      (_, head, url) => `${head}${local(url.replaceAll("&amp;", "&"), location.href)}"`,
-    );
-    return `<template shadowrootmode="open">${rewrite(inner, location.href)}</template>`;
+    localizeShadowAssets(template.content);
+    return template.outerHTML;
   };
   source.forEach((el, i) => {
     if (!el.shadowRoot) return;

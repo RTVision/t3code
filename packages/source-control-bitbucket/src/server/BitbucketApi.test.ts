@@ -794,7 +794,11 @@ it.effect.each([404, 403])("exposes repository lookup details only for HTTP 404 
   });
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
-    for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
+    for (const repository of [
+      "team/project",
+      "https://bitbucket.org/team/project.git",
+      "https://bitbucket.org/team/project.git?access_token=example-secret#section",
+    ]) {
       const error = yield* bitbucket
         .getRepositoryCloneUrls({ cwd: "/repo", repository })
         .pipe(Effect.flip);

@@ -712,8 +712,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
-export { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
-
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
   branch: string | null;
@@ -1451,7 +1449,6 @@ export function planComposerTurn(input: {
   readonly projectIsGitRepo: boolean;
   /** For such a plain folder: the branch its repositories start from where they have it. */
   readonly plainProjectBaseBranch?: string | undefined;
-  /** The server launches a No project worktree request at its root, so it needs no base. */
   readonly isScratchProject: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
@@ -1463,7 +1460,10 @@ export function planComposerTurn(input: {
   const isFirstMessage =
     !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
   const shouldCreateWorktree =
-    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
+    isFirstMessage &&
+    !input.isScratchProject &&
+    input.sendEnvMode === "worktree" &&
+    !input.worktreePath;
   // A stale Claude session compacts before this message so the turn does not re-read the
   // old history. The message queues behind the /compact run, since steering into it is
   // rejected.
@@ -1480,10 +1480,7 @@ export function planComposerTurn(input: {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch:
-      shouldCreateWorktree &&
-      input.projectIsGitRepo &&
-      !input.activeThreadBranch &&
-      !input.isScratchProject,
+      shouldCreateWorktree && input.projectIsGitRepo && !input.activeThreadBranch,
     // The launch schema requires a base ref; `HEAD` leaves each repository on its default branch.
     baseBranchForWorktree: !shouldCreateWorktree
       ? null

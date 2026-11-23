@@ -37,10 +37,20 @@ const script = Array.isArray(loaded) ? loaded : (loaded.turns ?? []);
 // Sign-ins outlive the process, like the real CLI's stored credentials.
 const signedInFile = `${process.env.FAKE_CLAUDE_SCRIPT}.signed-in.json`;
 const signedIn = new Set(readJson(signedInFile, []));
+const signedInDirectory = `${process.env.FAKE_CLAUDE_SCRIPT}.signed-in`;
+// Each completion writes its own marker, so processes never overwrite another sign-in.
+const signInMarker = (name) =>
+  NodePath.join(signedInDirectory, NodeCrypto.createHash("sha256").update(name).digest("hex"));
 const signInServers = new Map(
   (Array.isArray(loaded) ? [] : (loaded.servers ?? [])).map((server) => [
     server.name,
-    { ...server, status: signedIn.has(server.name) ? "connected" : "needs-auth" },
+    {
+      ...server,
+      status:
+        signedIn.has(server.name) || NodeFS.existsSync(signInMarker(server.name))
+          ? "connected"
+          : "needs-auth",
+    },
   ]),
 );
 const played = new Set();
@@ -212,8 +222,8 @@ const serverStatuses = () => [
 
 // One MCP tools/call over streamable HTTP against the server T3 registered.
 async function callTool(name, args) {
-  const [serverName, server] = Object.entries(mcpServers).find(([, s]) => s.url) ?? [];
-  if (!server) return { serverName: "t3-code", text: `No MCP server for ${name}` };
+  const server = Object.values(mcpServers).find((entry) => entry.url);
+  if (!server) return { text: `No MCP server for ${name}`, isError: true };
   let session;
   const post = async (body) => {
     const response = await fetch(server.url, {
@@ -246,7 +256,7 @@ async function callTool(name, args) {
   const text =
     (result?.result?.content ?? []).map((c) => c.text ?? "").join("\n") ||
     JSON.stringify(result?.error ?? result);
-  return { serverName, text };
+  return { text, isError: result?.error != null || result?.result?.isError === true };
 }
 
 async function playTurn(prompt) {
@@ -445,9 +455,9 @@ const controlResponse = (request) => {
       const state = new URL(request.callbackUrl).searchParams.get("state");
       if (!server || !server.state || state !== server.state)
         throw new Error("callback is not from this sign-in");
+      NodeFS.mkdirSync(signedInDirectory, { recursive: true });
+      NodeFS.writeFileSync(signInMarker(server.name), "");
       server.status = "connected";
-      signedIn.add(server.name);
-      NodeFS.writeFileSync(signedInFile, JSON.stringify([...signedIn]));
       return {};
     }
     case "mcp_reconnect":

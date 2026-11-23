@@ -520,6 +520,7 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateLocalStatus(cwd);
         return confirm(yield* loadLocalStatus(cwd, { publish: true }));
       }
+      if (watch !== undefined) yield* workflow.invalidateLocalStatus(cwd);
       return confirm(yield* loadLocalStatus(cwd));
     },
   );

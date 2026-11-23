@@ -225,7 +225,8 @@ const RunContextSelector = memo(function RunContextSelector({
         : resolveCurrentWorkspaceLabel(activeWorktreePath, m);
   const isPanel = displayMode === "panel";
   const workspaceModesLocked = envModeLocked || !offersWorkspaceModes;
-  const isLocked = envLocked || (workspaceModesLocked && (!isPanel || !showEnvironmentPicker));
+  const hasEnvironmentAction = showEnvironmentPicker || addTargets.length > 0;
+  const isLocked = envLocked || (workspaceModesLocked && (!isPanel || !hasEnvironmentAction));
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null

@@ -459,11 +459,14 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      // systemd-run does not search the caller's cwd, so anchor a relative path to it. Keep ".."
-      // as spelled: collapsing it would skip a symlinked parent directory.
-      const executable = path.isAbsolute(resolved)
-        ? resolved
-        : `${process.cwd()}${path.sep}${resolved}`;
+      let executable = resolved;
+      if (!path.isAbsolute(resolved)) {
+        // procfs follows a renamed cwd. Keep ".." intact so symlink traversal still works.
+        const cwd = yield* fileSystem
+          .readLink("/proc/self/cwd")
+          .pipe(Effect.orElseSucceed(() => process.cwd()));
+        executable = `${cwd}${path.sep}${resolved}`;
+      }
       return {
         ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
         unit,

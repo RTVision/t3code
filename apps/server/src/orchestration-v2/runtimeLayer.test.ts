@@ -8167,6 +8167,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       work: "awaited-command" as const,
       settles: false,
     },
+    {
+      name: "an awaited background command from before a rollback",
+      work: "awaited-before-rollback" as const,
+      settles: false,
+    },
     { name: "an unmarked background command", work: "command" as const, settles: true },
     { name: "a task delegated to another thread", work: "delegated" as const, settles: true },
   ])("settling a completed turn that left $name running settles: $settles", ({ work, settles }) =>
@@ -8264,7 +8269,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             ? subagentItem("provider_native")
             : work === "delegated"
               ? subagentItem("app_owned")
-              : roster(work === "awaited-command"),
+              : roster(work === "awaited-command" || work === "awaited-before-rollback"),
           {
             id: EventId.make(`${threadId}:completed`),
             type: "run.updated",
@@ -8275,6 +8280,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
         ],
       });
+      if (work === "awaited-before-rollback") {
+        const runId = RunId.make(`${threadId}:rolled-back`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:rolled-back`),
+              type: "run.created",
+              threadId,
+              runId,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                id: runId,
+                ordinal: run.ordinal + 1,
+                userMessageId: MessageId.make(`${threadId}:rolled-back`),
+                rootNodeId: null,
+                status: "rolled_back",
+                startedAt: now,
+                completedAt: now,
+              },
+            },
+          ],
+        });
+      }
 
       const settle = orchestrator.dispatch({
         type: "thread.settle",

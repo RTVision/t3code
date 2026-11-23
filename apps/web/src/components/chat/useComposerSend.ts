@@ -775,7 +775,7 @@ export function useComposerSend(input: ComposerSendInput) {
               readEnvironmentPresentation(activeThread.environmentId)?.serverConfig?.environment
                 .capabilities.requiredWorktreeBootstrap === true,
             isLocalDraftThread,
-            isGitRepo,
+            isGitRepo: isGitRepo && !activeProjectIsScratch,
             branch: activeThreadBranch,
           });
     if (multipleModelBlock === "server-outdated") {

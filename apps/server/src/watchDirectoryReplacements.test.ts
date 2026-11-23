@@ -6,10 +6,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
-it.live.skipIf(!symlinksSupported)(
+it.effect.skipIf(!symlinksSupported)(
   "backs off stopped watches for an unchanged linked directory",
   () =>
     Effect.gen(function* () {
@@ -42,29 +43,21 @@ it.live.skipIf(!symlinksSupported)(
         ),
         Effect.forkScoped,
       );
-      assert.deepEqual(
-        yield* Queue.takeN(events, 10),
-        // Each acquire stats too: the first, a retry after 1 tick, then after 2 more.
-        [
-          "probe",
-          "probe",
-          "refresh",
-          "probe",
-          "probe",
-          "refresh",
-          "probe",
-          "probe",
-          "probe",
-          "refresh",
-        ],
-      );
+      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
+      yield* TestClock.adjust("1 second");
+      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Queue.take(events), "probe");
+      yield* TestClock.adjust("1 second");
+      assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
 
       identity = secondIdentity;
+      yield* TestClock.adjust("1 second");
       assert.deepEqual(yield* Queue.takeN(events, 3), ["probe", "probe", "refresh"]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live.skipIf(!symlinksSupported)(
+it.effect.skipIf(!symlinksSupported)(
   "rebuilds when a probe sees a tree other than the one the watches were acquired on",
   () =>
     Effect.gen(function* () {
@@ -99,7 +92,11 @@ it.live.skipIf(!symlinksSupported)(
         ),
         Effect.forkScoped,
       );
-      yield* Queue.takeN(refreshes, 3);
+      yield* Queue.take(refreshes);
+      yield* TestClock.adjust("1 second");
+      yield* Queue.take(refreshes);
+      yield* TestClock.adjust("1 second");
+      yield* Queue.take(refreshes);
       assert.deepEqual(identities, []);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
