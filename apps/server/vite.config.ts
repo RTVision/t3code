@@ -98,6 +98,22 @@ export default mergeConfig(
     },
     pack: {
       plugins: [
+        ...(packMode === "bundle"
+          ? [
+              {
+                name: "t3code:sea-undici",
+                transform: {
+                  filter: { id: /[/\\]@effect[/\\]platform-node[/\\]dist[/\\]NodeHttpClient\.js$/ },
+                  handler(source: string) {
+                    // SEA resolves only built-ins through ESM; Undici ships beside the executable.
+                    return `import { createRequire as createUndiciRequire } from "node:module";
+const requireUndici = createUndiciRequire(import.meta.url);
+${source.replace('import("./Undici.js")', 'Promise.resolve().then(() => requireUndici("undici"))')}`;
+                  },
+                },
+              },
+            ]
+          : []),
         {
           // Every server module reads its version from this manifest import.
           name: "t3code:build-version",
