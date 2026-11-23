@@ -989,7 +989,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(secondAsar, firstAsar);
         const cacheDir = path.join(fixture.packagedAppDir, "resources/server-compile-cache");
         yield* fs.makeDirectory(cacheDir);
-        for (let count = result.fileCount; count < 102; count++) {
+        for (let count = result.fileCount; count < 110; count++) {
           yield* fs.writeFileString(path.join(cacheDir, String(count)), "bytecode");
         }
         const cachedPayload = yield* validateWindowsPackagedPayload({
@@ -998,7 +998,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64",
           appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
         });
-        assert.equal(cachedPayload.fileCount, 102);
+        assert.equal(cachedPayload.fileCount, 110);
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
