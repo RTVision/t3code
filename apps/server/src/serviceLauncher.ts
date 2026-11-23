@@ -11,6 +11,7 @@ import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeUtil from "node:util";
 import * as NodeZlib from "node:zlib";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./cloud/userManagerOom.ts";
 import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 
 import type {
@@ -235,8 +236,8 @@ async function serviceUnitFromEnvironment(
     );
   return {
     path: NodePath.join(unitDir, unitName),
-    reload: () =>
-      new Promise((resolve, reject) => {
+    reload: async () => {
+      await new Promise<void>((resolve, reject) => {
         NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
           stdio: "ignore",
           timeout: 30_000,
@@ -247,7 +248,16 @@ async function serviceUnitFromEnvironment(
               ? resolve()
               : reject(new Error(`systemctl --user daemon-reload exited with ${code ?? signal}`)),
           );
-      }),
+      });
+      await new Promise<void>((resolve) => {
+        NodeChildProcess.spawn("/bin/sh", ["-c", RESTORE_OOMD_WATCH_SCRIPT], {
+          stdio: "ignore",
+          timeout: 30_000,
+        })
+          .once("error", () => resolve())
+          .once("exit", () => resolve());
+      });
+    },
   };
 }
 
@@ -1572,9 +1582,10 @@ export class Launcher {
         }
         const contents = decodeServiceUnit(await NodeFSP.readFile(unit.path));
         const installedBaseDir = serviceUnitBaseDirOf(contents);
+        const real = (dir: string) => NodeFSP.realpath(dir).catch(() => NodePath.resolve(dir));
         if (
           installedBaseDir === undefined ||
-          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+          (await real(installedBaseDir)) !== (await real(this.#baseDir))
         ) {
           return;
         }

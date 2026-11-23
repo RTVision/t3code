@@ -14,9 +14,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -41,7 +39,7 @@ const withTrialDatabase = <E>(
     directory: string;
     sourcePath: string;
     destinationPath: string;
-  }) => Effect.Effect<void, E, FileSystem.FileSystem | Path.Path>,
+  }) => Effect.Effect<void, E, NodeServices.NodeServices>,
 ) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-trial-"));
   const sourcePath = NodePath.join(directory, "state.sqlite");
@@ -122,6 +120,8 @@ it.effect(
             ServiceLauncherClient.make({ currentVersion: pending.targetVersion }),
             pending,
           ).pipe(
+            // Exercise the launcher receipt without invoking the host's systemd user manager.
+            Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, {
               connected: true,
               on: (event, listener) => {
