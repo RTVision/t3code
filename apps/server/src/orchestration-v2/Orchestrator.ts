@@ -890,6 +890,10 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
+function latestRunForBackgroundWork(runs: ReadonlyArray<OrchestrationV2Run>) {
+  return runs.findLast((run) => run.status !== "queued" && run.status !== "rolled_back");
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -4692,9 +4696,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !runningRunExists &&
         backgroundWorkHoldsCompletion(
           derivePendingBackgroundWork({
-            latestRun: projection.runs.findLast(
-              (run) => run.status !== "queued" && run.status !== "rolled_back",
-            ),
+            latestRun: latestRunForBackgroundWork(projection.runs),
             providerThreads: projection.providerThreads,
             turnItems: projection.turnItems.filter(
               (item) => item.type !== "subagent" || item.origin !== "app_owned",
@@ -13915,7 +13917,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? undefined
         : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
     const hasBackgroundWork =
-      run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
+      run !== undefined &&
+      run.id === latestRunForBackgroundWork(projection.runs)?.id &&
       derivePendingBackgroundWork({
         latestRun: run,
         providerThreads: projection.providerThreads,
@@ -14519,12 +14522,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
-    const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+    const latestRun = latestRunForBackgroundWork(projection.runs);
     const target =
-      projection.runs.findLast(
-        (run) =>
-          run.status === "preparing" || run.status === "starting" || run.status === "running",
-      ) ??
+      projection.runs.findLast(isLiveRun) ??
       (derivePendingBackgroundWork({
         latestRun,
         providerThreads: projection.providerThreads,
