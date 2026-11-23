@@ -287,6 +287,7 @@ patchedDependencies:
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
   # The MCP Events extension (SEP-3415) on effect/ai, until Effect ships it.
   effect@4.1.5: patches/effect@4.1.5.patch
+  "@effect/platform-node@4.1.5": patches/@effect__platform-node@4.1.5.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

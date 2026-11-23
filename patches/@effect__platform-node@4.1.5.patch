@@ -1,0 +1,46 @@
+diff --git a/dist/NodeHttpClient.js b/dist/NodeHttpClient.js
+index 581807c43ab2d90eb32db9090f59bf3083c62f09..c016c520176e2fb05f68dd377fcfe5ee7b1d1295 100644
+--- a/dist/NodeHttpClient.js
++++ b/dist/NodeHttpClient.js
+@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import { pipeArguments } from "effect/Pipeable";
+ import * as Stream from "effect/Stream";
++import { createRequire } from "node:module";
+ import { Readable } from "node:stream";
+ import * as Consumers from "node:stream/consumers";
+ import { http, https } from "./internal/http.js";
+@@ -81,7 +82,9 @@ RequestInit } from "effect/http/FetchHttpClient";
+  * @since 4.0.0
+  */
+ export class Dispatcher extends /*#__PURE__*/Context.Service()("@effect/platform-node/NodeHttpClient/Dispatcher") {}
+-const loadUndici = /*#__PURE__*/Effect.promise(() => import("./Undici.js"));
++// Node single executables load file-backed packages through createRequire.
++const requireUndici = createRequire(import.meta.url);
++const loadUndici = /*#__PURE__*/Effect.promise(async () => requireUndici("undici"));
+ /**
+  * Acquires a new Undici `Agent` dispatcher configured with the supplied
+  * options and destroys it when the enclosing scope is finalized.
+diff --git a/src/NodeHttpClient.ts b/src/NodeHttpClient.ts
+index c7e6b7b0c84de5567469f1afb3602dc6529a8fdc..2b36212113ce879fbd912d94e56408597d62ee6d 100644
+--- a/src/NodeHttpClient.ts
++++ b/src/NodeHttpClient.ts
+@@ -34,6 +34,7 @@ import type * as Socket from "effect/socket/Socket"
+ import * as Stream from "effect/Stream"
+ import type * as Http from "node:http"
+ import type * as Https from "node:https"
++import { createRequire } from "node:module"
+ import { type Duplex, Readable } from "node:stream"
+ import * as Consumers from "node:stream/consumers"
+ import { http, https } from "./internal/http.ts"
+@@ -98,7 +99,9 @@ export class Dispatcher extends Context.Service<Dispatcher, Undici.Dispatcher>()
+   "@effect/platform-node/NodeHttpClient/Dispatcher"
+ ) {}
+ 
+-const loadUndici = Effect.promise(() => import("./Undici.ts"))
++// Node single executables load file-backed packages through createRequire.
++const requireUndici = createRequire(import.meta.url)
++const loadUndici = Effect.promise(async () => requireUndici("undici") as typeof Undici)
+ 
+ /**
+  * Acquires a new Undici `Agent` dispatcher configured with the supplied
