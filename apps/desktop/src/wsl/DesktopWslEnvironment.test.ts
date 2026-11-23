@@ -128,6 +128,13 @@ const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exit
   );
 
 function makeWslEnvironment(spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) {
+  const registry = registrySpawner([STORE_SERVICE]);
+  const wslSpawner = ChildProcessSpawner.make((command) =>
+    (command._tag === "StandardCommand" && command.command === "reg.exe"
+      ? registry
+      : spawner
+    ).spawn(command),
+  );
   return DesktopWslEnvironment.pipe(
     Effect.provide(
       wslEnvironmentLayer.pipe(
@@ -145,7 +152,7 @@ function makeWslEnvironment(spawner: ChildProcessSpawner.ChildProcessSpawner["Se
           }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
           DesktopManagedPolicy.layerTest(),
           FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, wslSpawner),
         ]),
       ),
     ),
