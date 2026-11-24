@@ -3,8 +3,6 @@ import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
-  ProviderInstanceId,
-  type ProviderOptionSelection,
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskSchedule,
@@ -25,7 +23,6 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { createModelSelection } from "@t3tools/shared/model";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
@@ -139,15 +136,10 @@ export interface DraftState {
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
-  /** `${instanceId}:${model}`; empty follows the project's default model. */
-  readonly modelKey: string;
-  /** Provider options (reasoning effort, …) for `modelKey`; cleared when the model changes. */
-  readonly modelOptions: ReadonlyArray<ProviderOptionSelection>;
+  readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
   /** Not editable in the dialog, but preserved so editing an agent-created task keeps it. */
   readonly interactionMode: ProviderInteractionMode;
-  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
-  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -351,11 +343,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath
         : "",
-    modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
-    modelOptions: task.modelSelection.options ?? [],
+    modelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,
@@ -431,26 +421,6 @@ export function scheduledTaskDestinationThreads(
         thread.title.toLocaleLowerCase().includes(search),
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-function splitModelKey(value: string): { instanceId: ProviderInstanceId; model: string } | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
-}
-
-/** The selection a draft saves: its picked model and options, else the default model. */
-export function draftModelSelection(
-  draft: Pick<DraftState, "modelKey" | "modelOptions">,
-  fallback: ModelSelection | null,
-): ModelSelection | null {
-  const picked = draft.modelKey ? splitModelKey(draft.modelKey) : null;
-  return picked
-    ? createModelSelection(picked.instanceId, picked.model, draft.modelOptions)
-    : fallback;
 }
 
 /** Use configured defaults before the catalog's advertised default model. */

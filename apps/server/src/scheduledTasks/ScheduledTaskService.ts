@@ -81,6 +81,10 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
+
+/** The task a create carrying this idempotency key writes, and rewrites when the key is replayed. */
+export const scheduledTaskIdForCommand = (commandId: CommandId) =>
+  ScheduledTaskId.make(`scheduled-task:${commandId}`);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
@@ -310,11 +314,6 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
-
-/** The id an idempotent create with this commandId gets, so a retry finds its task. */
-export function scheduledTaskIdForCommand(commandId: CommandId): ScheduledTaskId {
-  return ScheduledTaskId.make(`scheduled-task:${commandId}`);
-}
 
 function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({

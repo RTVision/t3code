@@ -38,6 +38,7 @@ import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
+import { attachMcpAppDocumentLink } from "./mcpAppDocumentLink";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 
 const commandFailure = (result: {
@@ -290,11 +291,11 @@ export function McpAppFrame(props: {
       }
       return approved;
     };
-    const target = () => frameRef.current?.contentWindow ?? null;
     const scope = () => {
       const { environmentId, threadId, itemId } = readLive().props;
       return { environmentId, input: { threadId, itemId } };
     };
+    const documentLink = attachMcpAppDocumentLink(frame, (data) => host.receive(data));
     const host = makeMcpAppHost({
       app,
       hostVersion: APP_VERSION,
@@ -304,9 +305,7 @@ export function McpAppFrame(props: {
         registry.get(
           mcpAppEnvironment.updateModelContext.permissionAtom(latest.current.props.environmentId),
         ),
-      // The document's origin is opaque, so "*" is the only target that reaches it;
-      // the window reference itself is what scopes delivery to this frame.
-      post: (message) => target()?.postMessage(message, "*"),
+      post: documentLink.post,
       hostContext,
       callTool: async ({ name, arguments: args }) => {
         const { environmentId, input } = scope();
@@ -439,12 +438,9 @@ export function McpAppFrame(props: {
       },
     });
     hostRef.current = host;
-    const receive = (event: MessageEvent) => {
-      if (event.source !== null && event.source === target()) host.receive(event.data);
-    };
-    window.addEventListener("message", receive);
+    window.addEventListener("message", documentLink.receive);
     return () => {
-      window.removeEventListener("message", receive);
+      window.removeEventListener("message", documentLink.receive);
       void host.teardown();
       hostRef.current = null;
       frameRef.current = null;
