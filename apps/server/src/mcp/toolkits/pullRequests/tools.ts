@@ -499,7 +499,7 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
 
 export const ThreadPullRequestInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  number: Schema.optional(PositiveInt.annotate({ description: "Default: the branch's PR." })),
+  number: Schema.optional(PositiveInt.annotate({ description: "Default: branch PR." })),
   repository: Schema.optional(TrimmedNonEmptyString),
 });
 export type ThreadPullRequestInput = typeof ThreadPullRequestInput.Type;
@@ -767,7 +767,7 @@ export type ReviewLineComment = typeof ReviewLineComment.Type;
 
 const ReviewPullRequestTool = Tool.make("pull_request_review", {
   description:
-    "Submit a review: approve, request changes, or comment, with optional line comments. Approving needs expectedHeadSha (headSha in pull_request_read). Refuses if the head moved from it.",
+    "Review with optional line comments. Approve with expectedHeadSha from pull_request_read.headSha. Refuses a stale expectedHeadSha.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     verdict: PullRequestReviewVerdict,
@@ -787,20 +787,19 @@ const ReviewPullRequestTool = Tool.make("pull_request_review", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 const MergePullRequestTool = Tool.make("pull_request_merge", {
-  description:
-    "Merge a PR. Refuses if the head moved from expectedHeadSha (headSha in pull_request_read).",
+  description: "Merge at expectedHeadSha from pull_request_read.headSha. Refuses a moved head.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     expectedHeadSha: TrimmedNonEmptyString,
     method: Schema.optional(PullRequestMergeMethod),
     auto: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge when required checks pass, including later pushes.",
+        description: "Merge after required checks pass, even on later pushes.",
       }),
     ),
     stack: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge this PR and every open stack layer below it at once.",
+        description: "Merge this PR and all its open layers below.",
       }),
     ),
   }),

@@ -400,9 +400,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
             />
           </TooltipTrigger>
-          <TooltipPopup side="top">
-            <T>Choose editor</T>
-          </TooltipPopup>
+          <TooltipPopup side="top">{gt("Choose editor")}</TooltipPopup>
         </Tooltip>
         <MenuPopup
           align="end"
