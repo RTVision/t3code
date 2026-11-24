@@ -670,6 +670,8 @@ export interface PullRequestProviderApi extends Partial<ProviderCiApi<PullReques
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** Hosts that can pin a review to a head commit do; the caller has already checked it. */
+      readonly expectedHeadSha?: string;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 
