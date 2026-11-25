@@ -45,7 +45,8 @@ vi.mock("~/state/pullRequests", () => ({
   },
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: state.toast } }));
-vi.mock("../ui/tooltip", () => ({
+vi.mock("../ui/tooltip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ui/tooltip")>()),
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render }: { render: ReactElement }) => render,
   TooltipPopup: () => null,

@@ -1,15 +1,26 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
+import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  ThreadId,
+  TurnItemId,
+  type AuthSessionState,
+} from "@t3tools/contracts";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { injectMcpAppDocumentBootstrap } from "@t3tools/shared/mcpApp";
 
+import { connectionAtomRuntime } from "~/connection/runtime";
 import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 
 // Asks to close twice when told to, and answers only the first teardown, so
 // the second one is left to finish on the host's timeout.
-const APP_HTML = `<script>
+const APP_HTML = injectMcpAppDocumentBootstrap(`<script>
 let answered = false;
 addEventListener("message", (event) => {
   const message = event.data;
@@ -22,7 +33,7 @@ addEventListener("message", (event) => {
   }
 });
 parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*");
-</script>`;
+</script>`);
 
 const sizeChanged = (height: number) =>
   `parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: ${height} } }, "*");`;
@@ -38,10 +49,33 @@ addEventListener("message", (event) => {
 parent.postMessage({ jsonrpc: "2.0", id: "init", method: "ui/initialize", params: {} }, "*");
 </script>`);
 
+// What an app asks its host for: a resource, a tool call and a model-context update.
+const HOST_REQUESTS = `
+const ask = (id, method, params) => parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+ask("init", "ui/initialize", {});
+ask(1, "resources/read", { uri: "ui://demo/other" });
+ask(2, "tools/call", { name: "list", arguments: {} });
+ask(3, "ui/update-model-context", { content: [{ type: "text", text: "note" }] });
+${sizeChanged(777)}`;
+const REQUESTING_URL = `data:text/html,${encodeURIComponent(`<script>${HOST_REQUESTS}</script><iframe srcdoc="x"></iframe>`)}`;
+
 const asset = vi.hoisted(() => ({ html: "" }));
+const commands = vi.hoisted(() => ({ calls: [] as Array<[label: string, name?: string]> }));
 const setup = (html: string) => {
   asset.html = html;
+  commands.calls = [];
 };
+
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: ((command: { readonly label: string }) =>
+    async ({ input }: { readonly input: { readonly name?: string } }) => {
+      commands.calls.push(input.name === undefined ? [command.label] : [command.label, input.name]);
+      return {
+        _tag: "Success",
+        value: { callable: true, readOnly: true, content: [], contents: [] },
+      };
+    }) as never,
+}));
 
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
   useLongLivedAssetUrl: () => ({
@@ -52,6 +86,35 @@ vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
 }));
 
 import { McpAppFrame } from "./McpAppFrame";
+
+const environmentId = EnvironmentId.make("environment");
+
+function grantAppOperations() {
+  const sessionAtom =
+    createEnvironmentSessionAtoms(connectionAtomRuntime).sessionStateAtom(environmentId);
+  const session: AuthSessionState = {
+    authenticated: true,
+    scopes: [AuthOrchestrationOperateScope],
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "t3_session",
+    },
+  };
+  const registry = AtomRegistry.make({
+    initialValues: [[sessionAtom, AsyncResult.success(session), { skipInitialRun: true }]],
+  });
+  const unmount = registry.mount(sessionAtom);
+  return {
+    render: (ui: ReactNode) =>
+      render(<RegistryContext.Provider value={registry}>{ui}</RegistryContext.Provider>),
+    [Symbol.dispose]() {
+      unmount();
+      registry.dispose();
+    },
+  };
+}
 
 const nextInitializedFrom = () =>
   new Promise<MessageEventSource>((resolve) => {
@@ -126,5 +189,75 @@ describe("McpAppFrame", () => {
       .element(screen.getByText("The Demo app left its page and was stopped"))
       .toBeInTheDocument();
     expect(row.style.height).toBe("321px");
+  });
+
+  // A server that predates the document bootstrap serves the app without it.
+  it.each([
+    ["the app's own page", `<script>${HOST_REQUESTS}</script>`],
+    [
+      "a page the app navigated to",
+      `<script>location.href = ${JSON.stringify(REQUESTING_URL)};</script>`,
+    ],
+  ])("gives no bridge to %s when the document bootstrap is missing", async (_page, html) => {
+    setup(html);
+    using session = grantAppOperations();
+    await using screen = await session.render(
+      <McpAppFrame
+        environmentId={environmentId}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+
+    await expect
+      .element(
+        screen.getByText(
+          "The Demo app needs a newer T3 Code server on this environment. Update the server to use it.",
+        ),
+      )
+      .toBeInTheDocument();
+    expect(screen.getByTitle("Demo app").query()).toBeNull();
+    expect(commands.calls).toEqual([["environment-command:mcp-apps:tool-info", "show"]]);
+  });
+
+  it("answers an app whose document carries the bootstrap", async () => {
+    setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`));
+    using session = grantAppOperations();
+    await using screen = await session.render(
+      <McpAppFrame
+        environmentId={environmentId}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+    const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
+    await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
+    await vi.waitFor(() =>
+      expect(commands.calls.toSorted()).toEqual([
+        ["environment-command:mcp-apps:call-tool", "list"],
+        ["environment-command:mcp-apps:read-resource"],
+        ["environment-command:mcp-apps:tool-info", "list"],
+        ["environment-command:mcp-apps:tool-info", "show"],
+        ["environment-command:mcp-apps:update-model-context"],
+      ]),
+    );
   });
 });

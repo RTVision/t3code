@@ -59,6 +59,7 @@ beforeEach(() => {
 
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", { activeElement: null });
+  vi.stubGlobal("Element", class extends EventTarget {});
 });
 afterEach(async () => {
   if (renderer) await act(() => renderer!.unmount());

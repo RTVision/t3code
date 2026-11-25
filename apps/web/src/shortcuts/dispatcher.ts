@@ -57,6 +57,10 @@ function isInsideConfirmation(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('[role="alertdialog"]') !== null;
 }
 
+function isInsideKeybindingCapture(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-keybinding-capture]") !== null;
+}
+
 function scopeCommandHandler(scope: CommandScope, event: KeyboardEvent) {
   const { commands, options } = scope;
   const command = resolveShortcutCommand(
@@ -115,6 +119,7 @@ export function dispatchCommand(command: KeybindingCommand, event: KeyboardEvent
 }
 
 function dispatchCaptureKeyDown(event: KeyboardEvent): void {
+  if (isInsideKeybindingCapture(event.target)) return;
   runScopes(captureScopes, event);
 }
 
