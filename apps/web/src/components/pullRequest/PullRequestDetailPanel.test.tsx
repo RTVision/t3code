@@ -92,7 +92,8 @@ vi.mock("~/state/usePullRequestStack", () => ({
   }),
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), update: vi.fn() } }));
-vi.mock("../ui/tooltip", () => ({
+vi.mock("../ui/tooltip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ui/tooltip")>()),
   TooltipProvider: Wrapper,
   Tooltip: Wrapper,
   TooltipTrigger: Trigger,
