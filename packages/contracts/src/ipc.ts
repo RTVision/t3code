@@ -6,6 +6,7 @@ import type {
   TerminalEditorLaunchResult,
 } from "./terminalEditor.ts";
 import * as Schema from "effect/Schema";
+import type { DatabaseMigrationProgress } from "./server.ts";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -1133,6 +1134,7 @@ export interface DesktopBridge {
   openTerminalEditor?: (input: TerminalEditorOpenRequest) => Promise<TerminalEditorLaunchResult>;
   setTerminalEditorSettings?: (input: TerminalEditorSettingsInput) => Promise<void>;
   getAppBranding: () => DesktopAppBranding | null;
+  getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;
