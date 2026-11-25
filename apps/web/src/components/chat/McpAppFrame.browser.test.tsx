@@ -1,9 +1,20 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
+import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  ThreadId,
+  TurnItemId,
+  type AuthSessionState,
+} from "@t3tools/contracts";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { injectMcpAppDocumentBootstrap } from "@t3tools/shared/mcpApp";
 
+import { connectionAtomRuntime } from "~/connection/runtime";
 import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 
@@ -49,20 +60,21 @@ ${sizeChanged(777)}`;
 const REQUESTING_URL = `data:text/html,${encodeURIComponent(`<script>${HOST_REQUESTS}</script><iframe srcdoc="x"></iframe>`)}`;
 
 const asset = vi.hoisted(() => ({ html: "" }));
-const commands = vi.hoisted(() => ({ labels: [] as Array<string> }));
+const commands = vi.hoisted(() => ({ calls: [] as Array<[label: string, name?: string]> }));
 const setup = (html: string) => {
   asset.html = html;
-  commands.labels = [];
+  commands.calls = [];
 };
 
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: ((command: { readonly label: string }) => async () => {
-    commands.labels.push(command.label);
-    return {
-      _tag: "Success",
-      value: { callable: true, readOnly: true, content: [], contents: [] },
-    };
-  }) as never,
+  useAtomCommand: ((command: { readonly label: string }) =>
+    async ({ input }: { readonly input: { readonly name?: string } }) => {
+      commands.calls.push(input.name === undefined ? [command.label] : [command.label, input.name]);
+      return {
+        _tag: "Success",
+        value: { callable: true, readOnly: true, content: [], contents: [] },
+      };
+    }) as never,
 }));
 
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
@@ -74,6 +86,35 @@ vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
 }));
 
 import { McpAppFrame } from "./McpAppFrame";
+
+const environmentId = EnvironmentId.make("environment");
+
+function grantAppOperations() {
+  const sessionAtom =
+    createEnvironmentSessionAtoms(connectionAtomRuntime).sessionStateAtom(environmentId);
+  const session: AuthSessionState = {
+    authenticated: true,
+    scopes: [AuthOrchestrationOperateScope],
+    auth: {
+      policy: "remote-reachable",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "t3_session",
+    },
+  };
+  const registry = AtomRegistry.make({
+    initialValues: [[sessionAtom, AsyncResult.success(session), { skipInitialRun: true }]],
+  });
+  const unmount = registry.mount(sessionAtom);
+  return {
+    render: (ui: ReactNode) =>
+      render(<RegistryContext.Provider value={registry}>{ui}</RegistryContext.Provider>),
+    [Symbol.dispose]() {
+      unmount();
+      registry.dispose();
+    },
+  };
+}
 
 const nextInitializedFrom = () =>
   new Promise<MessageEventSource>((resolve) => {
@@ -159,9 +200,10 @@ describe("McpAppFrame", () => {
     ],
   ])("gives no bridge to %s when the document bootstrap is missing", async (_page, html) => {
     setup(html);
-    await using screen = await render(
+    using session = grantAppOperations();
+    await using screen = await session.render(
       <McpAppFrame
-        environmentId={EnvironmentId.make("environment")}
+        environmentId={environmentId}
         threadId={ThreadId.make("thread")}
         conversationThreadId={ThreadId.make("thread")}
         itemId={TurnItemId.make("item")}
@@ -184,14 +226,15 @@ describe("McpAppFrame", () => {
       )
       .toBeInTheDocument();
     expect(screen.getByTitle("Demo app").query()).toBeNull();
-    expect(commands.labels).toEqual([]);
+    expect(commands.calls).toEqual([["environment-command:mcp-apps:tool-info", "show"]]);
   });
 
   it("answers an app whose document carries the bootstrap", async () => {
     setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`));
-    await using screen = await render(
+    using session = grantAppOperations();
+    await using screen = await session.render(
       <McpAppFrame
-        environmentId={EnvironmentId.make("environment")}
+        environmentId={environmentId}
         threadId={ThreadId.make("thread")}
         conversationThreadId={ThreadId.make("thread")}
         itemId={TurnItemId.make("item")}
@@ -208,11 +251,12 @@ describe("McpAppFrame", () => {
     const frame = screen.getByTitle("Demo app").element() as HTMLIFrameElement;
     await expect.element(frame.parentElement!.parentElement!).toHaveStyle({ height: "777px" });
     await vi.waitFor(() =>
-      expect(commands.labels.toSorted()).toEqual([
-        "environment-command:mcp-apps:call-tool",
-        "environment-command:mcp-apps:read-resource",
-        "environment-command:mcp-apps:tool-info",
-        "environment-command:mcp-apps:update-model-context",
+      expect(commands.calls.toSorted()).toEqual([
+        ["environment-command:mcp-apps:call-tool", "list"],
+        ["environment-command:mcp-apps:read-resource"],
+        ["environment-command:mcp-apps:tool-info", "list"],
+        ["environment-command:mcp-apps:tool-info", "show"],
+        ["environment-command:mcp-apps:update-model-context"],
       ]),
     );
   });
