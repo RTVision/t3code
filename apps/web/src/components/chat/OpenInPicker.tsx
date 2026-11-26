@@ -306,6 +306,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     );
   }
   const primaryControlLabel = compact ? gt("Open file in preferred editor") : toolbarLabel;
+  const chooseEditorLabel = gt("Choose editor");
   const primaryControl = (
     <ThreadDetailsControl
       aria-label={primaryControlLabel}
@@ -380,7 +381,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               disabled={isEditorMenuDenied}
               render={
                 <ThreadDetailsControl
-                  aria-label={gt("Choose editor")}
+                  aria-label={chooseEditorLabel}
                   data-toolbar-control=""
                   size={isPanel ? "sm" : "icon-xs"}
                   variant={isPanel ? "ghost" : "outline"}
@@ -390,11 +391,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               }
             />
           }
-          label={
-            <>
-              <T>Choose editor</T>
-            </>
-          }
+          label={chooseEditorLabel}
         >
           <ChevronDownIcon
             aria-hidden="true"
