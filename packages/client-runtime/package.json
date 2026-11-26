@@ -682,8 +682,7 @@
   },
   "scripts": {
     "typecheck": "node ../../scripts/typecheck.mjs",
-    "test": "vp test run",
-    "bench": "vp test bench"
+    "test": "vp test run"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",

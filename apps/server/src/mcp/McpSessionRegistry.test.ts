@@ -33,6 +33,7 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
@@ -248,6 +249,7 @@ it.effect(
           McpHttpServer.layerThreadToolkit.pipe(
             Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
             Layer.provide(threadsLayer),
+            Layer.provide(ProviderRegistryMock.layer()),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
             Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
