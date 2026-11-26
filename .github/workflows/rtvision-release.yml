@@ -208,7 +208,9 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/smoke-cli-archive.ts --archive "release-cli/t3-$VERSION-win32-x64.zip" --expect-version "$VERSION"
+        run: >-
+          node scripts/smoke-cli-archive.ts --archive "release-cli/t3-$VERSION-win32-x64.zip"
+          --expect-version "$VERSION" --serve-timeout-seconds 90
 
   cli:
     needs: [prepare, desktop, windows-cli-smoke]
