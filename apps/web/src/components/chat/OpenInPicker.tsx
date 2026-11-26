@@ -32,7 +32,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { NeovimIcon } from "../Icons";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { type EditorIconOption, editorIconOptions } from "../editorIcons";
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
@@ -306,6 +306,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     );
   }
   const primaryControlLabel = compact ? gt("Open file in preferred editor") : toolbarLabel;
+  const chooseEditorLabel = gt("Choose editor");
   const primaryControl = (
     <ThreadDetailsControl
       aria-label={primaryControlLabel}
@@ -361,10 +362,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
-      <Tooltip>
-        <TooltipTrigger render={primaryControl} />
-        <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={primaryControl} label={primaryControlLabel} />
       {isPanel ? (
         <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
       ) : (
@@ -377,31 +375,29 @@ export const OpenInPicker = memo(function OpenInPicker({
           if (open) void dispatch.terminal.refresh();
         }}
       >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                disabled={isEditorMenuDenied}
-                render={
-                  <ThreadDetailsControl
-                    aria-label={gt("Choose editor")}
-                    data-toolbar-control=""
-                    size={isPanel ? "sm" : "icon-xs"}
-                    variant={isPanel ? "ghost" : "outline"}
-                    part="secondary"
-                    panel={isPanel}
-                  />
-                }
-              />
-            }
-          >
-            <ChevronDownIcon
-              aria-hidden="true"
-              className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger
+              disabled={isEditorMenuDenied}
+              render={
+                <ThreadDetailsControl
+                  aria-label={chooseEditorLabel}
+                  data-toolbar-control=""
+                  size={isPanel ? "sm" : "icon-xs"}
+                  variant={isPanel ? "ghost" : "outline"}
+                  part="secondary"
+                  panel={isPanel}
+                />
+              }
             />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{gt("Choose editor")}</TooltipPopup>
-        </Tooltip>
+          }
+          label={chooseEditorLabel}
+        >
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
+          />
+        </SharedTooltipTrigger>
         <MenuPopup
           align="end"
           {...(isPanel ? { anchor: panelAnchorRef } : {})}

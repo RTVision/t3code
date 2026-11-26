@@ -222,7 +222,8 @@ vi.mock("~/components/ui/popover", () => ({
   PopoverPopup: "PopoverPopup",
   PopoverTrigger: "PopoverTrigger",
 }));
-vi.mock("~/components/ui/tooltip", () => ({
+vi.mock("~/components/ui/tooltip", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/components/ui/tooltip")>()),
   Tooltip: "Tooltip",
   TooltipPopup: "TooltipPopup",
   TooltipTrigger: "TooltipTrigger",
