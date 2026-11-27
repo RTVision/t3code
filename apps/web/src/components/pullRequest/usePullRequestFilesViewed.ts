@@ -39,9 +39,8 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
-  readonly paths?: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
-  const { environmentId, reference, enabled, paths = [] } = options;
+  const { environmentId, reference, enabled } = options;
   const canWrite = useAtomValue(
     pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
   );
@@ -65,7 +64,7 @@ export function usePullRequestFilesViewed(options: {
       scope.setViewed(path, viewed, revision);
       return true;
     },
-    viewedCount: countViewedFiles(paths, states, overlay),
+    viewedCount: countViewedFiles(states, overlay),
     truncated: query.data?.truncated === true,
     error: query.error,
     refresh: query.refresh,

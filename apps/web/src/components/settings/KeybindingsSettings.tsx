@@ -43,7 +43,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../../env";
 import { useEditorDispatch } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutKeyParts, formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -87,7 +87,6 @@ import {
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   groupKeybindingRows,
-  shortcutToKeybindingParts,
   type KeybindingCommandOption,
   type KeybindingGroup,
   type KeybindingRow,
@@ -104,33 +103,12 @@ import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  const parts = shortcutToKeybindingParts(shortcut);
-  const modifierParts = parts.slice(0, -1);
-  const keyPart = parts.at(-1);
-
+  const parts = formatShortcutKeyParts(shortcut);
   return (
     <KbdGroup>
-      {modifierParts.map((part) => (
-        <Kbd key={part}>
-          {part === "mod"
-            ? isMac
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? isMac
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part}
-        </Kbd>
+      {parts.map((part, index) => (
+        <Kbd key={index === parts.length - 1 ? "key" : part}>{part}</Kbd>
       ))}
-      {keyPart !== undefined ? (
-        <Kbd key="key">{keyPart.length === 1 ? keyPart.toUpperCase() : keyPart}</Kbd>
-      ) : null}
     </KbdGroup>
   );
 }
