@@ -61,6 +61,7 @@ const runExecutable = Effect.fn("runExecutable")(function* (
 const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
+  readonly serveTimeoutSeconds: number;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -161,6 +162,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
           TMPDIR: scratch,
           TEMP: scratch,
           T3CODE_HOME: home,
+          ...(platform === "win32" ? { T3CODE_LOG_LEVEL: "Debug" } : {}),
           // The archive has a release channel built in, so its events would
           // look like a real new install.
           T3CODE_TELEMETRY_ENABLED: "false",
@@ -186,7 +188,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     return true;
   });
   const ready = yield* pollUntilReady.pipe(
-    Effect.timeout(Duration.seconds(30)),
+    Effect.timeout(Duration.seconds(input.serveTimeoutSeconds)),
     Effect.orElseSucceed(() => false),
   );
   yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
@@ -198,7 +200,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   if (!ready) {
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
-      detail: `no 200 from / within 30s\n${stdout}${stderr}`,
+      detail: `no 200 from / within ${input.serveTimeoutSeconds}s\n${stdout}${stderr}`,
     });
   }
   yield* Effect.log(
@@ -211,6 +213,11 @@ const command = Command.make(
   {
     archive: Flag.String("archive"),
     expectVersion: Flag.String("expect-version"),
+    serveTimeoutSeconds: Flag.Int("serve-timeout-seconds").pipe(
+      Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+      Flag.withDefault(30),
+      Flag.withDescription("Maximum seconds to wait for HTTP 200 from the extracted server."),
+    ),
   },
   (input) => smokeCliArchive(input).pipe(Effect.scoped),
 ).pipe(Command.withDescription("Extract a CLI archive and run its executable."));
