@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -62,6 +63,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
   readonly serveTimeoutSeconds: number;
+  readonly windowsOsEnvironment: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -149,19 +151,38 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");
+  const windowsEnv =
+    platform === "win32" && input.windowsOsEnvironment
+      ? yield* Config.all({
+          SystemRoot: Config.String("SystemRoot"),
+          WINDIR: Config.String("WINDIR"),
+          ComSpec: Config.String("ComSpec"),
+        })
+      : {};
   const server = yield* spawner.spawn(
     ChildProcess.make(
       executable,
-      ["serve", "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
+      [
+        "--log-level",
+        "debug",
+        "serve",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(port),
+        "--no-browser",
+      ],
       {
         cwd: contentDir,
         env: {
+          ...windowsEnv,
           PATH: "",
           HOME: home,
           USERPROFILE: home,
           TMPDIR: scratch,
           TEMP: scratch,
           T3CODE_HOME: home,
+          NODE_DEBUG: "net",
           ...(platform === "win32" ? { T3CODE_LOG_LEVEL: "Debug" } : {}),
           // The archive has a release channel built in, so its events would
           // look like a real new install.
@@ -175,9 +196,13 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     Effect.all([collect(server.stdout), collect(server.stderr)]),
   );
   const httpClient = yield* HttpClient.HttpClient;
+  let lastProbe = "no response";
   // Probes can hang during server initialization; bound each request as SSH readiness does.
   const probe = httpClient.execute(HttpClientRequest.get(`http://127.0.0.1:${String(port)}/`)).pipe(
-    Effect.map((response) => response.status === 200),
+    Effect.map((response) => {
+      lastProbe = `HTTP ${response.status}`;
+      return response.status === 200;
+    }),
     Effect.timeout(Duration.seconds(2)),
     Effect.orElseSucceed(() => false),
   );
@@ -200,7 +225,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   if (!ready) {
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
-      detail: `no 200 from / within ${input.serveTimeoutSeconds}s\n${stdout}${stderr}`,
+      detail: `no 200 from / within ${input.serveTimeoutSeconds}s (${lastProbe})\n${stdout}${stderr}`,
     });
   }
   yield* Effect.log(
@@ -213,6 +238,7 @@ const command = Command.make(
   {
     archive: Flag.String("archive"),
     expectVersion: Flag.String("expect-version"),
+    windowsOsEnvironment: Flag.Boolean("windows-os-environment"),
     serveTimeoutSeconds: Flag.Int("serve-timeout-seconds").pipe(
       Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
       Flag.withDefault(30),

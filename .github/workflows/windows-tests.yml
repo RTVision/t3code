@@ -19,12 +19,21 @@ on:
         description: "Space-separated test files relative to the package directory. Empty runs the package's whole suite. Requires package."
         type: string
         default: ""
+      archive_run:
+        description: "Release workflow run ID for a Windows CLI archive to probe."
+        type: string
+        default: ""
+      baseline_run:
+        description: "Optional known-good release workflow run ID to probe on the same runner."
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: inputs.archive_run == ''
     name: Test (${{ inputs.package || 'all non-server' }})
     runs-on: windows-2025
     timeout-minutes: 45
@@ -79,3 +88,52 @@ jobs:
             Set-Location $package
             vp test run $files.Split(' ')
           }
+
+  probe-archive:
+    if: inputs.archive_run != ''
+    runs-on: windows-2025
+    timeout-minutes: 12
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          run-install: |
+            args:
+              - --frozen-lockfile
+              - --filter=@t3tools/scripts...
+      - uses: actions/download-artifact@v8
+        with:
+          name: rtvision-cli-win32-x64
+          path: candidate-archive
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.archive_run }}
+      - if: inputs.baseline_run != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: rtvision-cli-win32-x64
+          path: baseline-archive
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_run }}
+      - name: Probe baseline and candidate archives
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          function Invoke-ArchiveProbe([string]$directory, [string[]]$extraFlags = @()) {
+            $archives = @(Get-ChildItem -Path $directory -Filter 't3-*-win32-x64.zip')
+            if ($archives.Length -ne 1) {
+              throw "Expected one stable Windows CLI archive in $directory"
+            }
+            $match = [regex]::Match($archives[0].Name, '^t3-(\d+\.\d+\.\d+)-win32-x64\.zip$')
+            if (!$match.Success) { throw "Unexpected archive name $($archives[0].Name)" }
+            $version = $match.Groups[1].Value
+            & node scripts/smoke-cli-archive.ts --archive $archives[0].FullName --expect-version $version --serve-timeout-seconds 90 @extraFlags
+            Write-Host "Probe $directory ($extraFlags) exit $LASTEXITCODE"
+          }
+
+          if (Test-Path baseline-archive) { Invoke-ArchiveProbe baseline-archive }
+          Invoke-ArchiveProbe candidate-archive
+          Invoke-ArchiveProbe candidate-archive @('--windows-os-environment')
