@@ -10,7 +10,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
-import { createElement, Profiler, useEffect, type ReactElement } from "react";
+import { createElement, Profiler, useEffect, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -328,7 +328,9 @@ vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({
   AgentBrowserCursor: () => createElement("agent-cursor"),
 }));
-vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
+vi.mock("~/browser/BrowserSurfaceSlot", () => ({
+  BrowserSurfaceSlot: ({ children }: { children?: ReactNode }) => children,
+}));
 vi.mock("./usePreviewSession", () => ({
   usePreviewSession: vi.fn(),
   useDesktopHostedPreviewSessions: vi.fn(),
