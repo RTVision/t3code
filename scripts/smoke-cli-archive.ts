@@ -151,14 +151,10 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");
-  const windowsEnv =
+  const systemRoot =
     platform === "win32" && input.windowsOsEnvironment
-      ? yield* Config.all({
-          SystemRoot: Config.String("SystemRoot"),
-          WINDIR: Config.String("WINDIR"),
-          ComSpec: Config.String("ComSpec"),
-        })
-      : {};
+      ? yield* Config.String("SystemRoot")
+      : undefined;
   const server = yield* spawner.spawn(
     ChildProcess.make(
       executable,
@@ -175,7 +171,13 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
       {
         cwd: contentDir,
         env: {
-          ...windowsEnv,
+          ...(systemRoot
+            ? {
+                SystemRoot: systemRoot,
+                WINDIR: systemRoot,
+                ComSpec: path.join(systemRoot, "System32", "cmd.exe"),
+              }
+            : {}),
           PATH: "",
           HOME: home,
           USERPROFILE: home,
@@ -238,7 +240,7 @@ const command = Command.make(
   {
     archive: Flag.String("archive"),
     expectVersion: Flag.String("expect-version"),
-    windowsOsEnvironment: Flag.Boolean("windows-os-environment"),
+    windowsOsEnvironment: Flag.Boolean("windows-os-environment").pipe(Flag.withDefault(false)),
     serveTimeoutSeconds: Flag.Int("serve-timeout-seconds").pipe(
       Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
       Flag.withDefault(30),
