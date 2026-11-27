@@ -41,7 +41,7 @@ const fixture = Effect.fn(function* () {
   ] as const) {
     yield* fs.writeFileString(path.join(directory, "login"), contents);
   }
-  for (const command of ["tea", "fj"]) {
+  for (const command of ["tea", "fj", "gt"]) {
     const executable = path.join(binaries, command);
     yield* fs.writeFileString(
       executable,
@@ -79,13 +79,13 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     Effect.gen(function* () {
       const { root, personal } = yield* fixture();
       const cli = yield* ForgejoCli.make;
-      for (const command of [undefined, "tea", "fj"] as const) {
+      for (const command of [undefined, "tea", "fj", "gt"] as const) {
         const result = yield* cli.execute({
           ...(command ? { command } : {}),
           cwd: root,
           args: [],
         });
-        expect(result.stdout).toBe(command === "fj" ? "personal-login" : "managed-login");
+        expect(result.stdout).toBe(command === "tea" ? "managed-login" : "personal-login");
       }
       expect((yield* HostProcess.Environment).XDG_CONFIG_HOME).toBe(personal);
     }).pipe(Effect.provide(layer), Effect.scoped),
@@ -99,7 +99,9 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       for (const configHome of [undefined, "", "   "]) {
         vi.stubEnv("T3CODE_TEA_CONFIG_HOME", configHome);
         const cli = yield* ForgejoCli.make;
-        expect((yield* cli.execute({ cwd: root, args: [] })).stdout).toBe("personal-login");
+        expect((yield* cli.execute({ cwd: root, command: "tea", args: [] })).stdout).toBe(
+          "personal-login",
+        );
       }
     }).pipe(Effect.provide(layer), Effect.scoped),
 );

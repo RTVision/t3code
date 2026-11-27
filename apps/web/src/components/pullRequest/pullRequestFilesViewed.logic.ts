@@ -29,21 +29,20 @@ export function isFileViewed(
 }
 
 export function countViewedFiles(
-  paths: ReadonlyArray<string>,
   states: FileViewedStates | null,
   overlay: FileViewedOverlay,
 ): number {
-  return paths.reduce(
-    (total, path) => (isFileViewed(path, states, overlay) ? total + 1 : total),
-    0,
-  );
+  let count = 0;
+  for (const [path, state] of states ?? []) {
+    if (overlay.get(path) ?? isViewedState(state)) count++;
+  }
+  for (const [path, viewed] of overlay) {
+    if (viewed && !states?.has(path)) count++;
+  }
+  return count;
 }
 
-/**
- * A press is held until a read that could have seen it comes back, rather than cleared when the
- * write succeeds: that read is a separate round trip, and dropping the press in between flashes
- * the checkbox back.
- */
+/** Retain presses until a read could have observed the write. */
 export function settleFileViewedOverlay(
   overlay: FileViewedOverlay,
   states: FileViewedStates | null,

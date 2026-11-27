@@ -7,6 +7,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type EditorChoice,
   EnvironmentId,
+  type GitRunStackedActionResult,
   ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
@@ -137,12 +138,15 @@ vi.mock("~/state/sourceControlActions", () => ({
       return {
         _tag: "Success",
         value: {
+          action: "commit",
           branch: featureBranch
             ? { status: "created", name: "feature" }
             : { status: "skipped_not_requested" },
+          commit: { status: "created" },
+          push: { status: "skipped_not_requested" },
           pr: { status: "skipped_not_requested" },
           toast: { title: "Committed", description: "Committed", cta: { kind: "none" } },
-        },
+        } satisfies GitRunStackedActionResult,
       };
     },
   }),
