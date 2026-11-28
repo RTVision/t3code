@@ -234,6 +234,9 @@ jobs:
           pattern: rtvision-resource-*
           path: resource-monitors
       - name: Pack CLI with resource monitors
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           for directory in resource-monitors/rtvision-resource-*; do
             key=${directory##*/rtvision-resource-}
@@ -243,6 +246,10 @@ jobs:
           done
           mkdir -p release-npm
           node apps/server/scripts/cli.ts publish --pack-destination release-npm --verbose
+          # The registry receives a base64-encoded tarball in the publish request.
+          archive="release-npm/rtvision-t3-$VERSION.tgz"
+          gzip -dc "$archive" | gzip -9n > "$archive.tmp"
+          mv "$archive.tmp" "$archive"
       - uses: actions/upload-artifact@v7
         with:
           name: rtvision-npm
