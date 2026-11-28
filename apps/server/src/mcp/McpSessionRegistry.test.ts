@@ -241,7 +241,7 @@ it.effect(
         });
         expect(writes).toBe(0);
         const current = yield* call(scope!);
-        expect(current.isError).toBe(false);
+        expect(current.isError, JSON.stringify(current.content)).toBe(false);
         expect(current.structuredContent).toEqual({ sequence: 1 });
         expect(writes).toBe(1);
       }).pipe(
@@ -265,6 +265,7 @@ it.effect(
             Layer.provide(Layer.mergeAll(SqlitePersistence.layerMemory, NodeCrypto.layerDigest)),
           ),
           NodeServices.layer,
+          NodeCrypto.layerSecureRandom,
         ),
       ),
     ),
