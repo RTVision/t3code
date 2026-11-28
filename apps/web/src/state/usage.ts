@@ -1,16 +1,21 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthProvidersManageScope,
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type AuthSessionState,
   type EnvironmentId,
   type UsageBucket,
+  type UsageAccessRequest,
   type UsageSummary,
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
-import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import {
+  resolveUsageAccess,
+  unansweredUsageAccessRequests,
+} from "@t3tools/client-runtime/state/usage-access";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg } from "gt-react";
 import { useState } from "react";
@@ -18,7 +23,7 @@ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/sh
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import { m } from "../i18n/messages";
 
 export interface EnvironmentUsageStatus {
@@ -27,6 +32,8 @@ export interface EnvironmentUsageStatus {
   readonly isPending: boolean;
   readonly canReadDiagnostics: boolean;
   readonly session: AuthSessionState | null;
+  /** Agents still waiting for a usage access answer that this session may save. */
+  readonly accessRequests: readonly UsageAccessRequest[];
   readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
@@ -40,11 +47,14 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const isConnected = presentation.connection.phase === "connected";
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const session = AsyncResult.getOrElse(sessionResult, () => null);
-      const access = resolveUsageAccess({
-        connectionPhase: presentation.connection.phase,
-        session,
-        hasSessionError: sessionResult._tag === "Failure",
-      });
+      const access = resolveUsageAccess(
+        {
+          connectionPhase: presentation.connection.phase,
+          session,
+          hasSessionError: sessionResult._tag === "Failure",
+        },
+        m,
+      );
       if (!access.canReadDiagnostics) {
         statuses.push({
           environmentId,
@@ -52,6 +62,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           isConnected,
           session,
           ...access,
+          accessRequests: [],
           summary: null,
         });
         continue;
@@ -72,6 +83,11 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         isPending: result.waiting,
         canReadDiagnostics: true,
         session,
+        accessRequests: unansweredUsageAccessRequests({
+          canAnswer: sessionHasScope(sessionResult, AuthProvidersManageScope),
+          summary,
+          config: get(serverEnvironment.configValueAtom(environmentId)),
+        }),
         isConnected,
         error:
           result._tag === "Failure" ? m(msg("This environment could not report usage.")) : null,
