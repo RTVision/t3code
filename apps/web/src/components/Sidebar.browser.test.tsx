@@ -552,8 +552,10 @@ describe("sidebar thread menu on a phone", () => {
   });
 
   it("closes the sheet when Add project opens the picker, as New thread does", async () => {
+    using _drafts = isolateComposerDrafts();
     await using _viewport = await usePhoneViewport();
     vi.mocked(useProjects).mockReturnValue([]);
+    vi.mocked(useServerConfigs).mockReturnValue(new Map());
     vi.mocked(useQuietThreadShells).mockReturnValue([]);
     vi.mocked(useThreadRouteTarget).mockReturnValue(null);
     vi.mocked(useHandleNewThread).mockReturnValue({
@@ -573,6 +575,7 @@ describe("sidebar thread menu on a phone", () => {
       </SidebarProvider>,
     );
     await userEvent.click(screen.getByRole("button", { name: "Sheet closed" }));
+    await expect.element(screen.getByRole("button", { name: "Sheet open" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add project" }));
     expect(openCommandPalette).toHaveBeenCalledExactlyOnceWith({ open: "add-project" });
     await expect.element(screen.getByRole("button", { name: "Sheet closed" })).toBeInTheDocument();

@@ -505,6 +505,7 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
 
 it("opens a remote environment's localhost link in the system browser through a forward", async () => {
   using _setup = setup();
+  state.terminalAllowed = true;
   await using screen = await renderMarkdown("[App](http://localhost:3000/docs?x=1#top)");
   // Keeps the test page from following the link; React's handlers run before this.
   const stopNavigation = (event: Event) => event.preventDefault();
