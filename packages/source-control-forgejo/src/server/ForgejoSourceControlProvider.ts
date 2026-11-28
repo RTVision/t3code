@@ -629,7 +629,7 @@ export const make = Effect.gen(function* () {
             {
               ...input,
               path:
-                owner === user.login
+                owner?.toLowerCase() === user.login.toLowerCase()
                   ? "user/repos"
                   : `orgs/${encodeURIComponent(owner ?? "")}/repos`,
               method: "POST",

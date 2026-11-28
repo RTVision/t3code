@@ -57,7 +57,7 @@ const makeRegistry = (now: (() => number) | undefined, httpServer = fakeHttpServ
     .pipe(
       Effect.provideService(HttpServer.HttpServer, httpServer),
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeCrypto.layer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
@@ -241,7 +241,7 @@ it.effect(
         });
         expect(writes).toBe(0);
         const current = yield* call(scope!);
-        expect(current.isError).toBe(false);
+        expect(current.isError, JSON.stringify(current.content)).toBe(false);
         expect(current.structuredContent).toEqual({ sequence: 1 });
         expect(writes).toBe(1);
       }).pipe(
@@ -261,9 +261,11 @@ it.effect(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ProjectionStore.layer.pipe(
+            Layer.provide(Layer.mergeAll(SqlitePersistence.layerMemory, NodeCrypto.layerDigest)),
+          ),
           NodeServices.layer,
-          NodeCrypto.layer,
+          NodeCrypto.layerSecureRandom,
         ),
       ),
     ),
